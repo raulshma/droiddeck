@@ -1,0 +1,420 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="DroidDeck.App.Views.DevicesPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid Padding="24" RowSpacing="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Spacing="2">
+                <TextBlock Text="Devices" Style="{StaticResource TitleTextBlockStyle}" />
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <TextBlock
+                        Text="{Binding ConnectionSummary}"
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock
+                        Text="·"
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock
+                        Text="{Binding CountText}"
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </StackPanel>
+            </StackPanel>
+            <StackPanel
+                Grid.Column="1"
+                Orientation="Horizontal"
+                Spacing="8"
+                VerticalAlignment="Center">
+                <Button
+                    Content="Refresh list"
+                    Click="OnRefreshClick"
+                    IsEnabled="{Binding IsNotBusy}"
+                    AutomationProperties.AutomationId="RefreshDevicesButton" />
+                <Button
+                    Content="Restart adb"
+                    Click="OnRestartAdbClick"
+                    IsEnabled="{Binding IsNotBusy}"
+                    AutomationProperties.AutomationId="RestartAdbButton" />
+            </StackPanel>
+        </Grid>
+
+        <StackPanel Grid.Row="1" Spacing="8">
+            <InfoBar
+                IsOpen="{Binding HasConnectionProblem}"
+                Severity="Warning"
+                Title="ADB connection problem"
+                Message="{Binding ConnectionProblemText}"
+                AutomationProperties.AutomationId="AdbProblemInfoBar" />
+            <InfoBar
+                IsOpen="{Binding HasError}"
+                Severity="Error"
+                Title="Device action failed"
+                Message="{Binding ErrorMessage}"
+                AutomationProperties.AutomationId="DevicesErrorInfoBar" />
+            <InfoBar
+                IsOpen="{Binding HasActionMessage}"
+                Severity="Success"
+                Title="Done"
+                Message="{Binding ActionMessage}"
+                AutomationProperties.AutomationId="DevicesActionInfoBar" />
+        </StackPanel>
+
+        <Grid Grid.Row="2" ColumnSpacing="16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="340" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Border Style="{StaticResource CardBorderStyle}" Padding="0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <TextBlock
+                        Text="Connected devices"
+                        Style="{StaticResource SectionHeaderStyle}"
+                        Margin="16,14,16,6" />
+                    <ListView
+                        x:Name="DeviceList"
+                        Grid.Row="1"
+                        ItemsSource="{Binding Devices}"
+                        SelectedItem="{Binding SelectedDevice, Mode=TwoWay}"
+                        SelectionMode="Single"
+                        Padding="4,0,4,4"
+                        AutomationProperties.AutomationId="DeviceList">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="Padding" Value="0" />
+                                <Setter Property="Margin" Value="4,1" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <Grid
+                                    Padding="10,8"
+                                    ColumnSpacing="10"
+                                    AutomationProperties.Name="{Binding DisplayName}"
+                                    AutomationProperties.AutomationId="{Binding Serial}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock
+                                        Text="●"
+                                        FontSize="14"
+                                        VerticalAlignment="Center"
+                                        Foreground="{Binding State, Converter={StaticResource DeviceStateToBrush}}" />
+                                    <StackPanel Grid.Column="1" Spacing="2">
+                                        <TextBlock
+                                            Text="{Binding DisplayName}"
+                                            FontWeight="SemiBold"
+                                            TextTrimming="CharacterEllipsis" />
+                                        <TextBlock
+                                            Text="{Binding ListSubtitle}"
+                                            FontSize="12"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                    <TextBlock
+                                        Grid.Column="2"
+                                        Text="{Binding StateLabel}"
+                                        FontSize="12"
+                                        VerticalAlignment="Center"
+                                        Foreground="{Binding State, Converter={StaticResource DeviceStateToBrush}}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                    <StackPanel
+                        Grid.Row="1"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Spacing="8"
+                        MaxWidth="280"
+                        Padding="16"
+                        Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVisibility}}">
+                        <FontIcon
+                            Glyph="&#xE8EA;"
+                            FontSize="28"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock
+                            x:Name="EmptyStateTitle"
+                            Text="{Binding EmptyStateTitle}"
+                            Style="{StaticResource SectionHeaderStyle}"
+                            TextAlignment="Center"
+                            AutomationProperties.AutomationId="DevicesEmptyStateTitle" />
+                        <TextBlock
+                            Text="{Binding EmptyStateDescription}"
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextAlignment="Center"
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="1" Style="{StaticResource CardBorderStyle}" Padding="0">
+                <Grid>
+                    <ScrollViewer
+                        Padding="20"
+                        VerticalScrollBarVisibility="Auto"
+                        Visibility="{Binding HasSelection, Converter={StaticResource BoolToVisibility}}"
+                        AutomationProperties.AutomationId="DeviceDetailPane">
+                        <StackPanel Spacing="16">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="2">
+                                    <TextBlock
+                                        Text="{Binding SelectedDevice.DisplayName}"
+                                        FontSize="24"
+                                        FontWeight="SemiBold"
+                                        TextWrapping="Wrap" />
+                                    <TextBlock
+                                        Text="{Binding SelectedDevice.ManufacturerLine}"
+                                        FontSize="12"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <TextBlock
+                                        Text="{Binding SelectedDevice.Serial}"
+                                        FontSize="12"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        IsTextSelectionEnabled="True" />
+                                </StackPanel>
+                                <Border
+                                    Grid.Column="1"
+                                    Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                    CornerRadius="12"
+                                    Padding="10,4"
+                                    VerticalAlignment="Top">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <TextBlock
+                                            Text="●"
+                                            FontSize="10"
+                                            VerticalAlignment="Center"
+                                            Foreground="{Binding SelectedDevice.State, Converter={StaticResource DeviceStateToBrush}}" />
+                                        <TextBlock
+                                            Text="{Binding SelectedDevice.StateLabel}"
+                                            FontSize="12"
+                                            VerticalAlignment="Center"
+                                            AutomationProperties.AutomationId="DeviceStateLabel" />
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+
+                            <InfoBar
+                                IsOpen="{Binding SelectedDevice.HasAttention}"
+                                Severity="Warning"
+                                Title="{Binding SelectedDevice.AttentionTitle}"
+                                Message="{Binding SelectedDevice.Guidance}"
+                                AutomationProperties.AutomationId="DeviceAttentionInfoBar" />
+
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button
+                                    Content="Refresh metadata"
+                                    Click="OnRefreshMetadataClick"
+                                    IsEnabled="{Binding IsNotBusy}"
+                                    AutomationProperties.AutomationId="RefreshMetadataButton" />
+                                <Button
+                                    Content="Copy summary"
+                                    Click="OnCopySummaryClick"
+                                    AutomationProperties.AutomationId="CopyDeviceSummaryButton" />
+                                <Button
+                                    Content="Copy serial"
+                                    Click="OnCopySerialClick"
+                                    AutomationProperties.AutomationId="CopySerialButton" />
+                            </StackPanel>
+
+                            <Grid ColumnSpacing="12" RowSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <Border Style="{StaticResource SubtleCardStyle}">
+                                    <StackPanel Spacing="8">
+                                        <TextBlock Text="Device" Style="{StaticResource SectionHeaderStyle}" />
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Product" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBlock Text="{Binding SelectedDevice.ProductLabel}" Style="{StaticResource FieldValueStyle}" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Emulator / AVD" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBlock Text="{Binding SelectedDevice.AvdLabel}" Style="{StaticResource FieldValueStyle}" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Transport" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBlock Text="{Binding SelectedDevice.TransportLabel}" Style="{StaticResource FieldValueStyle}" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Last seen" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBlock Text="{Binding SelectedDevice.LastSeenLabel}" Style="{StaticResource FieldValueStyle}" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Tags" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBlock Text="{Binding SelectedDevice.TagsSummary}" Style="{StaticResource FieldValueStyle}" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Grid.Column="1" Style="{StaticResource SubtleCardStyle}">
+                                    <StackPanel Spacing="8">
+                                        <TextBlock Text="System" Style="{StaticResource SectionHeaderStyle}" />
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Android" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBlock Text="{Binding SelectedDevice.AndroidLabel}" Style="{StaticResource FieldValueStyle}" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Primary ABI" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBlock Text="{Binding SelectedDevice.AbiLabel}" Style="{StaticResource FieldValueStyle}" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="All ABIs" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBlock Text="{Binding SelectedDevice.AbiListLabel}" Style="{StaticResource FieldValueStyle}" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Build" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBlock Text="{Binding SelectedDevice.BuildLabel}" Style="{StaticResource FieldValueStyle}" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Debuggable" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBlock Text="{Binding SelectedDevice.DebuggableLabel}" Style="{StaticResource FieldValueStyle}" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Characteristics" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBlock Text="{Binding SelectedDevice.CharacteristicsLabel}" Style="{StaticResource FieldValueStyle}" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Grid.Row="1" Style="{StaticResource SubtleCardStyle}">
+                                    <StackPanel Spacing="8">
+                                        <TextBlock Text="Power and connectivity" Style="{StaticResource SectionHeaderStyle}" />
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Battery" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBlock Text="{Binding SelectedDevice.BatteryLabel}" Style="{StaticResource FieldValueStyle}" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Wi-Fi IP" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBlock Text="{Binding SelectedDevice.IpLabel}" Style="{StaticResource FieldValueStyle}" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Screen" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBlock Text="{Binding SelectedDevice.ScreenLabel}" Style="{StaticResource FieldValueStyle}" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Connection" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBlock Text="{Binding SelectedDevice.ConnectionLabel}" Style="{StaticResource FieldValueStyle}" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource SubtleCardStyle}">
+                                    <StackPanel Spacing="8">
+                                        <TextBlock Text="Storage and metadata" Style="{StaticResource SectionHeaderStyle}" />
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Data partition" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBlock Text="{Binding SelectedDevice.StorageLabel}" Style="{StaticResource FieldValueStyle}" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Metadata" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBlock
+                                                Text="{Binding SelectedDevice.MetadataLabel}"
+                                                Style="{StaticResource FieldValueStyle}"
+                                                AutomationProperties.AutomationId="DeviceMetadataLabel" />
+                                        </StackPanel>
+                                        <InfoBar
+                                            IsOpen="{Binding SelectedDevice.HasMetadataNote}"
+                                            Severity="Informational"
+                                            Message="{Binding SelectedDevice.MetadataNote}"
+                                            IsClosable="False" />
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+
+                            <Border Style="{StaticResource SubtleCardStyle}">
+                                <StackPanel Spacing="12">
+                                    <TextBlock Text="Notes and tags" Style="{StaticResource SectionHeaderStyle}" />
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Text="Notes (stored on this computer)" Style="{StaticResource FieldLabelStyle}" />
+                                        <TextBox
+                                            Text="{Binding SelectedDevice.Notes, Mode=TwoWay}"
+                                            AcceptsReturn="True"
+                                            TextWrapping="Wrap"
+                                            MinHeight="72"
+                                            MaxHeight="140"
+                                            PlaceholderText="Private notes about this device."
+                                            AutomationProperties.AutomationId="DeviceNotesBox" />
+                                        <Button
+                                            Content="Save notes"
+                                            Click="OnSaveNotesClick"
+                                            IsEnabled="{Binding IsNotBusy}"
+                                            HorizontalAlignment="Left"
+                                            AutomationProperties.AutomationId="SaveNotesButton" />
+                                    </StackPanel>
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Text="Tags (comma separated)" Style="{StaticResource FieldLabelStyle}" />
+                                        <TextBox
+                                            Text="{Binding SelectedDevice.TagsText, Mode=TwoWay}"
+                                            PlaceholderText="phone, test device"
+                                            AutomationProperties.AutomationId="DeviceTagsBox" />
+                                        <Button
+                                            Content="Save tags"
+                                            Click="OnSaveTagsClick"
+                                            IsEnabled="{Binding IsNotBusy}"
+                                            HorizontalAlignment="Left"
+                                            AutomationProperties.AutomationId="SaveTagsButton" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <StackPanel
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Spacing="8"
+                        MaxWidth="320"
+                        Padding="24"
+                        Visibility="{Binding HasSelection, Converter={StaticResource BoolToVisibility}, ConverterParameter=invert}">
+                        <FontIcon
+                            Glyph="&#xE7F4;"
+                            FontSize="28"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock
+                            Text="Select a device"
+                            Style="{StaticResource SectionHeaderStyle}"
+                            TextAlignment="Center" />
+                        <TextBlock
+                            Text="Choose a device on the left to see its overview, notes, and diagnostics."
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextAlignment="Center"
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</Page>

@@ -1,0 +1,214 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="DroidDeck.App.Views.SettingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:viewModels="using:DroidDeck.App.ViewModels">
+
+    <ScrollViewer Padding="24">
+        <StackPanel Spacing="16">
+            <StackPanel Spacing="2">
+                <TextBlock Text="Settings" Style="{StaticResource TitleTextBlockStyle}" />
+                <TextBlock
+                    Text="Settings are saved locally in your DroidDeck data folder."
+                    FontSize="12"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            </StackPanel>
+
+            <InfoBar
+                x:Name="LoadNoticeBar"
+                Severity="Warning"
+                Title="Settings recovered"
+                IsOpen="False"
+                IsClosable="True"
+                AutomationProperties.AutomationId="SettingsLoadNotice" />
+            <InfoBar
+                x:Name="ActionBar"
+                Severity="Success"
+                IsOpen="False"
+                IsClosable="True"
+                AutomationProperties.AutomationId="SettingsActionBar" />
+
+            <Border Style="{StaticResource CardBorderStyle}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="Appearance" Style="{StaticResource SectionHeaderStyle}" />
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Theme" Style="{StaticResource FieldLabelStyle}" />
+                        <ComboBox
+                            x:Name="ThemeCombo"
+                            Width="220"
+                            SelectionChanged="OnThemeChanged"
+                            AutomationProperties.AutomationId="ThemeSelector" />
+                        <TextBlock
+                            x:Name="ThemeSourceText"
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorderStyle}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="Tools" Style="{StaticResource SectionHeaderStyle}" />
+                    <TextBlock
+                        Text="Set explicit tool paths to override auto-detection. Leave a field empty to detect the tool automatically. Run Check toolchain after saving to refresh results."
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                    <ItemsControl x:Name="ToolPathsList" AutomationProperties.AutomationId="SettingsToolPaths">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="viewModels:ToolPathRow">
+                                <StackPanel Spacing="4" Margin="0,0,0,8">
+                                    <TextBlock Text="{x:Bind Label}" Style="{StaticResource FieldLabelStyle}" />
+                                    <Grid ColumnSpacing="8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox
+                                            Text="{x:Bind Path, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                            PlaceholderText="{x:Bind Placeholder}"
+                                            AutomationProperties.AutomationId="{x:Bind BoxId}" />
+                                        <Button
+                                            Grid.Column="1"
+                                            Content="Save"
+                                            Click="OnSaveToolPathClick"
+                                            AutomationProperties.AutomationId="{x:Bind SaveId}" />
+                                        <Button
+                                            Grid.Column="2"
+                                            Content="Auto-detect"
+                                            Click="OnResetToolPathClick"
+                                            AutomationProperties.AutomationId="{x:Bind ResetId}" />
+                                    </Grid>
+                                    <TextBlock
+                                        Text="{x:Bind Source, Mode=OneWay}"
+                                        FontSize="12"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        TextWrapping="Wrap"
+                                        AutomationProperties.AutomationId="{x:Bind SourceId}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <Button
+                        x:Name="CheckToolchainButton"
+                        Content="Check toolchain"
+                        Click="OnCheckToolchainClick"
+                        AutomationProperties.AutomationId="SettingsCheckToolchainButton" />
+                    <TextBlock
+                        x:Name="ToolchainStatusText"
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap"
+                        AutomationProperties.AutomationId="SettingsToolchainStatus" />
+                    <ItemsControl
+                        x:Name="ToolchainList"
+                        AutomationProperties.AutomationId="SettingsToolchainList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Padding="0,4" ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="150" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock
+                                        Text="{Binding DisplayName}"
+                                        FontWeight="SemiBold"
+                                        TextTrimming="CharacterEllipsis"
+                                        VerticalAlignment="Top" />
+                                    <TextBlock
+                                        Grid.Column="1"
+                                        Text="{Binding Details}"
+                                        FontSize="12"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        TextWrapping="Wrap"
+                                        IsTextSelectionEnabled="True" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <Button
+                        x:Name="CopyToolchainGuidanceButton"
+                        Content="Copy fix guidance"
+                        Click="OnCopyToolchainGuidanceClick"
+                        IsEnabled="False"
+                        AutomationProperties.AutomationId="SettingsCopyToolchainGuidanceButton" />
+                    <TextBlock
+                        Text="Tool paths are also used by metadata refreshes, the adb CLI fallback, and adb restart actions."
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorderStyle}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="Data and diagnostics" Style="{StaticResource SectionHeaderStyle}" />
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Data folder" Style="{StaticResource FieldLabelStyle}" />
+                        <TextBlock
+                            x:Name="DataFolderText"
+                            Style="{StaticResource FieldValueStyle}"
+                            IsTextSelectionEnabled="True"
+                            FontFamily="Consolas"
+                            FontSize="12" />
+                    </StackPanel>
+                    <TextBlock
+                        x:Name="DiagnosticsIdText"
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button
+                            Content="Open data folder"
+                            Click="OnOpenDataFolderClick"
+                            AutomationProperties.AutomationId="OpenDataFolderButton" />
+                        <Button
+                            Content="Copy diagnostics"
+                            Click="OnCopyDiagnosticsClick"
+                            AutomationProperties.AutomationId="SettingsCopyDiagnosticsButton" />
+                        <Button
+                            Content="Open diagnostics"
+                            Click="OnOpenDiagnosticsClick"
+                            AutomationProperties.AutomationId="SettingsOpenDiagnosticsButton" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorderStyle}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="Advanced" Style="{StaticResource SectionHeaderStyle}" />
+                    <ToggleSwitch
+                        x:Name="SafeModeToggle"
+                        Header="Safe mode"
+                        OnContent="On"
+                        OffContent="Off"
+                        Toggled="OnSafeModeToggled"
+                        AutomationProperties.AutomationId="SafeModeToggle" />
+                    <ToggleSwitch
+                        x:Name="DeveloperModeToggle"
+                        Header="Developer mode"
+                        OnContent="On"
+                        OffContent="Off"
+                        Toggled="OnDeveloperModeToggled"
+                        AutomationProperties.AutomationId="DeveloperModeToggle" />
+                    <TextBlock
+                        Text="Safe mode disables third-party plugins for the next launch. Developer mode enables extra diagnostics detail."
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorderStyle}">
+                <StackPanel Spacing="6">
+                    <TextBlock Text="About" Style="{StaticResource SectionHeaderStyle}" />
+                    <TextBlock x:Name="VersionText" Style="{StaticResource FieldValueStyle}" />
+                    <TextBlock x:Name="RuntimeText" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock x:Name="OsText" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

@@ -1,0 +1,16 @@
+{
+  "id": "com.example.sample",
+  "name": "Sample Command Plugin",
+  "version": "1.0.0",
+  "author": "DroidDeck",
+  "description": "A minimal sample plugin that registers one command.",
+  "apiVersion": "1.0",
+  "minHostVersion": "0.1.0",
+  "entryAssembly": "SampleCommandPlugin.dll",
+  "entryType": "SampleCommandPlugin.SamplePlugin",
+  "capabilities": [
+    "command"
+  ],
+  "homepage": "https://github.com/raulshma/droiddeck",
+  "license": "MIT"
+}

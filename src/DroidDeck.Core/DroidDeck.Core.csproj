@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>$(DroidDeckWindowsTargetFramework)</TargetFramework>
+    <SupportedOSPlatformVersion>$(DroidDeckWindowsMinVersion)</SupportedOSPlatformVersion>
+    <RootNamespace>DroidDeck.Core</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DroidDeck.Plugin.Abstractions\DroidDeck.Plugin.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Configuration\defaults.json" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,490 @@
+using System.Runtime.InteropServices;
+using DroidDeck.Adb;
+using DroidDeck.Adb.Devices;
+using DroidDeck.Adb.Protocol;
+using DroidDeck.Adb.Tracking;
+using DroidDeck.App.Services;
+using DroidDeck.App.Views;
+using DroidDeck.Core;
+using DroidDeck.Core.Configuration;
+using DroidDeck.Core.Devices;
+using DroidDeck.Core.Diagnostics;
+using DroidDeck.Core.Infrastructure;
+using DroidDeck.Core.Processes;
+using DroidDeck.Core.Security;
+using DroidDeck.Core.Toolchain;
+using DroidDeck.Plugins;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Windows.ApplicationModel.DataTransfer;
+
+namespace DroidDeck.App;
+
+/// <summary>
+/// The application object and composition root. Services are resolved before
+/// the main window is created, and background work starts after the shell is
+/// interactive so startup stays inside its budget.
+/// </summary>
+public partial class App : Application, IDisposable
+{
+    private readonly AppOptions _options;
+    private readonly AppPaths _paths;
+    private readonly AppInstanceCoordinator _instance;
+    private readonly BoundedLogBuffer _logBuffer = new();
+    private readonly SessionContext _session = new();
+    private ILoggerFactory? _loggerFactory;
+    private ConfigurationService? _configuration;
+    private ServiceProvider? _services;
+    private PluginHost? _pluginHost;
+    private MainWindow? _window;
+    private AdbDeviceTracker? _adbTracker;
+    private AdbDeviceMetadataSource? _adbMetadata;
+    private bool _shutdownStarted;
+    private bool _disposed;
+
+    /// <summary>Creates the application.</summary>
+    public App(AppOptions options, AppPaths paths, AppInstanceCoordinator instance)
+    {
+        _options = options ?? throw new ArgumentNullException(nameof(options));
+        _paths = paths ?? throw new ArgumentNullException(nameof(paths));
+        _instance = instance ?? throw new ArgumentNullException(nameof(instance));
+        InitializeComponent();
+        UnhandledException += OnUnhandledException;
+        _instance.ActivationRequested += OnActivationRequested;
+    }
+
+    /// <summary>Gets the running application instance.</summary>
+    public static App Instance => (App)Current;
+
+    /// <summary>Gets the resolved data paths.</summary>
+    public AppPaths Paths => _paths;
+
+    /// <summary>Gets the launch options.</summary>
+    public AppOptions Options => _options;
+
+    /// <summary>Gets the current launch's identifier.</summary>
+    public SessionContext Session => _session;
+
+    /// <summary>Gets the service provider once composition completes.</summary>
+    public IServiceProvider Services => _services
+        ?? throw new InvalidOperationException("The application services are not ready yet.");
+
+    /// <summary>Navigates the main window to a page key.</summary>
+    public void Navigate(string key) => _window?.Navigate(key);
+
+    /// <summary>Applies a theme to the main window.</summary>
+    public void ApplyTheme(AppTheme theme) => _window?.ApplyTheme(theme);
+
+    /// <inheritdoc />
+    protected override void OnLaunched(LaunchActivatedEventArgs args) => _ = LaunchAsync();
+
+    /// <summary>Disposes services and closes the window, then exits the process.</summary>
+    public async Task RequestShutdownAsync(MainWindow window)
+    {
+        if (_shutdownStarted)
+        {
+            return;
+        }
+
+        _shutdownStarted = true;
+        try
+        {
+            await window.SavePlacementAsync();
+        }
+        catch (Exception exception)
+        {
+            _loggerFactory?.CreateLogger<App>().LogWarning(exception, "Window placement could not be saved.");
+        }
+
+        try
+        {
+            if (_services is not null)
+            {
+                await _services.DisposeAsync();
+            }
+        }
+        catch (Exception exception)
+        {
+            var logger = _loggerFactory?.CreateLogger<App>();
+            logger?.LogWarning(exception, "Service shutdown failed.");
+        }
+
+        Dispose();
+
+        if (_options.UsesTemporaryDataDirectory)
+        {
+            TryDeleteTemporaryData();
+        }
+
+        window.AllowClose();
+        window.Close();
+        Exit();
+    }
+
+    private async Task LaunchAsync()
+    {
+        try
+        {
+            InitializeLogging();
+            var loggerFactory = _loggerFactory!;
+            var logger = loggerFactory.CreateLogger<App>();
+            if (logger.IsEnabled(LogLevel.Information))
+            {
+                logger.LogInformation(
+                    "DroidDeck {Version} starting. Session {SessionId}, diagnostics {DiagnosticsId}, data {DataDirectory}.",
+                    AppInfo.Version,
+                    _session.SessionId,
+                    _session.DiagnosticsId,
+                    _paths.DataDirectory);
+            }
+
+            _configuration = new ConfigurationService(
+                _paths,
+                loggerFactory.CreateLogger<ConfigurationService>());
+            await _configuration.InitializeAsync();
+            if (_configuration.LastLoadNotice is { } notice)
+            {
+                logger.LogWarning("Settings notice: {Message}", notice.Message);
+            }
+
+            _services = BuildServices(loggerFactory, _configuration);
+            _configuration.Changed += OnConfigurationChanged;
+            _window = _services.GetRequiredService<MainWindow>();
+            _window.Closed += OnWindowClosed;
+            _window.Activate();
+
+            foreach (var pending in _instance.TakePendingActivations())
+            {
+                HandleActivation(pending);
+            }
+
+            HandleActivation(_options.RawArguments);
+            _ = InitializeBackgroundAsync();
+        }
+        catch (Exception exception)
+        {
+            var logger = _loggerFactory?.CreateLogger<App>();
+            logger?.LogCritical(exception, "DroidDeck failed to start.");
+            ShowStartupFailure(exception);
+        }
+    }
+
+    private void InitializeLogging()
+    {
+        _loggerFactory = LoggerFactory.Create(builder =>
+        {
+            builder.SetMinimumLevel(LogLevel.Information);
+            builder.AddProvider(new InMemoryLoggerProvider(_logBuffer, _session.SessionId));
+            builder.AddProvider(new RollingFileLoggerProvider(
+                _paths.LogsDirectory,
+                "app",
+                retentionDays: 14,
+                sessionId: _session.SessionId));
+        });
+    }
+
+    private ServiceProvider BuildServices(ILoggerFactory loggerFactory, ConfigurationService configuration)
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(_paths);
+        services.AddSingleton<ILoggerFactory>(loggerFactory);
+        services.AddSingleton(typeof(ILogger<>), typeof(Logger<>));
+        services.AddSingleton<IConfigurationService>(configuration);
+        services.AddSingleton(_logBuffer);
+        services.AddSingleton(_session);
+
+        services.AddSingleton<IProcessRunner>(
+            _ => new ProcessRunner(logger: loggerFactory.CreateLogger<ProcessRunner>()));
+        services.AddSingleton<ISecretStore, DpapiSecretStore>();
+        services.AddSingleton<IDeviceRecordStore, JsonDeviceRecordStore>();
+        services.AddSingleton<IAdbSocketClient>(_ => new AdbSocketClient());
+        services.AddSingleton<IToolchainService, ToolchainDoctor>();
+        services.AddSingleton<PluginRegistry>();
+
+        services.AddSingleton(provider =>
+        {
+            var registry = provider.GetRequiredService<PluginRegistry>();
+            var loader = new PluginLoader(registry, loggerFactory);
+            return new PluginHost(
+                registry,
+                loader,
+                _paths,
+                loggerFactory.CreateLogger<PluginHost>());
+        });
+
+        services.AddSingleton<IDeviceService>(provider =>
+        {
+            var adbPath = configuration.Current.Settings.Tools.AdbPath;
+            if (string.IsNullOrWhiteSpace(adbPath))
+            {
+                adbPath = "adb";
+            }
+
+            var runner = provider.GetRequiredService<IProcessRunner>();
+            var socketClient = provider.GetRequiredService<IAdbSocketClient>();
+            var tracker = new AdbDeviceTracker(
+                runner,
+                new AdbTrackerOptions
+                {
+                    Endpoint = AdbEndpoint.Resolve(),
+                    AdbExecutable = adbPath,
+                },
+                socketClient,
+                loggerFactory.CreateLogger<AdbDeviceTracker>());
+            var metadata = new AdbDeviceMetadataSource(
+                runner,
+                adbPath,
+                logger: loggerFactory.CreateLogger<AdbDeviceMetadataSource>());
+            _adbTracker = tracker;
+            _adbMetadata = metadata;
+            return new DeviceService(
+                tracker,
+                provider.GetRequiredService<IDeviceRecordStore>(),
+                metadata,
+                logger: loggerFactory.CreateLogger<DeviceService>());
+        });
+        services.AddSingleton<IDiagnosticsService, DiagnosticsService>();
+        services.AddTransient<ViewModels.DevicesViewModel>();
+
+        services.AddSingleton<MainWindow>();
+        services.AddTransient<HomePage>();
+        services.AddTransient<DevicesPage>();
+        services.AddTransient<ActivityPage>();
+        services.AddTransient<ExtensionsPage>();
+        services.AddTransient<SettingsPage>();
+        services.AddTransient<DiagnosticsPage>();
+
+        return services.BuildServiceProvider(new ServiceProviderOptions
+        {
+            ValidateOnBuild = true,
+            ValidateScopes = true,
+        });
+    }
+
+    private async Task InitializeBackgroundAsync()
+    {
+        var logger = _loggerFactory!.CreateLogger<App>();
+        try
+        {
+            var toolchain = _services!.GetRequiredService<IToolchainService>();
+            await toolchain.LoadCachedAsync();
+            _ = CheckToolchainAsync(toolchain);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            logger.LogWarning(exception, "The cached toolchain snapshot could not be loaded.");
+        }
+
+        var services = _services!;
+        var configuration = _configuration!;
+        _pluginHost = services.GetRequiredService<PluginHost>();
+        var safeMode = _options.SafeMode || configuration.Current.Settings.Features.SafeMode;
+        var pluginsDisabled = _options.NoPlugins || safeMode;
+        var reason = _options.NoPlugins
+            ? "--no-plugins"
+            : safeMode
+                ? "safe mode"
+                : null;
+        _ = InitializePluginsAsync(_pluginHost, pluginsDisabled, reason, logger);
+
+        try
+        {
+            await services.GetRequiredService<IDeviceService>().StartAsync();
+        }
+        catch (Exception exception) when (exception is IOException or InvalidOperationException)
+        {
+            logger.LogError(exception, "Device tracking failed to start.");
+        }
+    }
+
+    private static async Task InitializePluginsAsync(
+        PluginHost host,
+        bool disabled,
+        string? reason,
+        Microsoft.Extensions.Logging.ILogger logger)
+    {
+        try
+        {
+            await host.InitializeAsync(disabled, reason);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            logger.LogError(exception, "Plugin initialization failed.");
+        }
+    }
+
+    private async Task CheckToolchainAsync(IToolchainService toolchain)
+    {
+        try
+        {
+            await toolchain.CheckAsync();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            var logger = _loggerFactory?.CreateLogger<App>();
+            logger?.LogWarning(exception, "Toolchain check failed.");
+        }
+    }
+
+    private void OnActivationRequested(object? sender, ActivationRequestedEventArgs e)
+    {
+        if (_window is null)
+        {
+            return;
+        }
+
+        _window.DispatcherQueue.TryEnqueue(() => HandleActivation(e.Arguments));
+    }
+
+    private void HandleActivation(IReadOnlyList<string> arguments)
+    {
+        var forwarded = AppOptions.Parse(arguments);
+        if (forwarded.OpenDiagnostics)
+        {
+            _window?.Navigate("diagnostics");
+        }
+
+        _window?.BringToFront();
+    }
+
+    private void OnWindowClosed(object sender, WindowEventArgs args)
+    {
+        _instance.ActivationRequested -= OnActivationRequested;
+    }
+
+    private void OnConfigurationChanged(object? sender, ConfigChangedEventArgs e)
+    {
+        if (!string.Equals(e.Path, SettingsPaths.AdbPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var adbPath = _configuration?.Current.Settings.Tools.AdbPath;
+        if (string.IsNullOrWhiteSpace(adbPath))
+        {
+            adbPath = "adb";
+        }
+
+        _adbTracker?.UpdateAdbExecutable(adbPath);
+        _adbMetadata?.UpdateAdbExecutable(adbPath);
+        var logger = _loggerFactory?.CreateLogger<App>();
+        if (logger?.IsEnabled(LogLevel.Information) == true)
+        {
+            logger.LogInformation("The adb executable path changed and applies to new commands.");
+        }
+    }
+
+    private void OnUnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs e)
+    {
+        var logger = _loggerFactory?.CreateLogger<App>();
+        if (logger?.IsEnabled(LogLevel.Critical) == true)
+        {
+            logger.LogCritical(e.Exception, "Unhandled UI exception in session {SessionId}.", _session.SessionId);
+        }
+        try
+        {
+            _paths.EnsureCreated();
+            var reportPath = Path.Combine(
+                _paths.DiagnosticsDirectory,
+                $"crash-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}-{_session.SessionId}.txt");
+            File.WriteAllText(
+                reportPath,
+                $"Diagnostics ID: {_session.DiagnosticsId}{Environment.NewLine}" +
+                $"Session ID: {_session.SessionId}{Environment.NewLine}{e.Exception}");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // Crash reporting must not hide the original failure.
+        }
+
+        e.Handled = true;
+    }
+
+    private void ShowStartupFailure(Exception exception)
+    {
+        var window = new Window { Title = "DroidDeck" };
+        var panel = new StackPanel
+        {
+            Padding = new Thickness(28),
+            Spacing = 12,
+        };
+        panel.Children.Add(new TextBlock
+        {
+            Text = "DroidDeck could not start",
+            Style = (Style)Application.Current.Resources["TitleTextBlockStyle"],
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = $"Diagnostics ID: {_session.DiagnosticsId}. Quote this identifier when requesting support.",
+            TextWrapping = TextWrapping.Wrap,
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = exception.Message,
+            TextWrapping = TextWrapping.Wrap,
+            IsTextSelectionEnabled = true,
+        });
+        var copyButton = new Button { Content = "Copy diagnostics" };
+        copyButton.Click += (_, _) =>
+        {
+            try
+            {
+                var package = new DataPackage();
+                package.SetText(
+                    $"DroidDeck startup failure{Environment.NewLine}" +
+                    $"Diagnostics ID: {_session.DiagnosticsId}{Environment.NewLine}" +
+                    $"Session ID: {_session.SessionId}{Environment.NewLine}" +
+                    exception);
+                Clipboard.SetContent(package);
+                Clipboard.Flush();
+            }
+            catch (COMException)
+            {
+            }
+        };
+        panel.Children.Add(copyButton);
+        window.Content = new ScrollViewer { Content = panel };
+        window.Activate();
+
+        if (_options.UsesTemporaryDataDirectory)
+        {
+            TryDeleteTemporaryData();
+        }
+    }
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        if (_configuration is not null)
+        {
+            _configuration.Changed -= OnConfigurationChanged;
+        }
+
+        _configuration?.Dispose();
+        _loggerFactory?.Dispose();
+        GC.SuppressFinalize(this);
+    }
+
+    private void TryDeleteTemporaryData()
+    {
+        try
+        {
+            if (Directory.Exists(_paths.DataDirectory))
+            {
+                Directory.Delete(_paths.DataDirectory, recursive: true);
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // The OS temp cleaner handles leftovers.
+        }
+    }
+}

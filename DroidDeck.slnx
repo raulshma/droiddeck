@@ -1,0 +1,25 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DroidDeck.App/DroidDeck.App.csproj" />
+    <Project Path="src/DroidDeck.Core/DroidDeck.Core.csproj" />
+    <Project Path="src/DroidDeck.Adb/DroidDeck.Adb.csproj" />
+    <Project Path="src/DroidDeck.Projects/DroidDeck.Projects.csproj" />
+    <Project Path="src/DroidDeck.Screen/DroidDeck.Screen.csproj" />
+    <Project Path="src/DroidDeck.Plugins/DroidDeck.Plugins.csproj" />
+    <Project Path="src/DroidDeck.Plugin.Abstractions/DroidDeck.Plugin.Abstractions.csproj" />
+    <Project Path="src/DroidDeck.Plugin.UI/DroidDeck.Plugin.UI.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DroidDeck.Core.Tests/DroidDeck.Core.Tests.csproj" />
+    <Project Path="tests/DroidDeck.Adb.Tests/DroidDeck.Adb.Tests.csproj" />
+    <Project Path="tests/DroidDeck.Projects.Tests/DroidDeck.Projects.Tests.csproj" />
+    <Project Path="tests/DroidDeck.Screen.Tests/DroidDeck.Screen.Tests.csproj" />
+    <Project Path="tests/DroidDeck.Plugins.Tests/DroidDeck.Plugins.Tests.csproj" />
+    <Project Path="tests/DroidDeck.Architecture.Tests/DroidDeck.Architecture.Tests.csproj" />
+    <Project Path="tests/DroidDeck.UiAutomation.Tests/DroidDeck.UiAutomation.Tests.csproj" />
+    <Project Path="tests/DroidDeck.TestSupport/DroidDeck.TestSupport.csproj" />
+    <Project Path="tests/DroidDeck.Testing.ProcessHelper/DroidDeck.Testing.ProcessHelper.csproj" />
+    <Project Path="tests/DroidDeck.Testing.FakeAdb/DroidDeck.Testing.FakeAdb.csproj" />
+    <Project Path="tests/DroidDeck.PluginSamples/SampleCommandPlugin/SampleCommandPlugin.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>$(DroidDeckWindowsTargetFramework)</TargetFramework>
+    <RootNamespace>DroidDeck.TestSupport</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\DroidDeck.Core\DroidDeck.Core.csproj" />
+    <ProjectReference Include="..\..\src\DroidDeck.Adb\DroidDeck.Adb.csproj" />
+    <ProjectReference Include="..\..\src\DroidDeck.Plugin.Abstractions\DroidDeck.Plugin.Abstractions.csproj" />
+  </ItemGroup>
+</Project>

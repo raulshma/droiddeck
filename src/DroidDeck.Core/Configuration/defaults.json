@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "appearance": {
+    "theme": "system",
+    "density": "comfortable",
+    "motion": "full"
+  },
+  "tools": {
+    "adbPath": null,
+    "androidSdkPath": null,
+    "aapt2Path": null,
+    "emulatorPath": null,
+    "javaHome": null,
+    "gradlePath": null,
+    "flutterPath": null,
+    "nodePath": null,
+    "scrcpyPath": null,
+    "unityPath": null
+  },
+  "logging": {
+    "level": "information",
+    "maxUiLines": 20000,
+    "retentionDays": 14
+  },
+  "diagnostics": {
+    "inMemoryLogEntries": 2000,
+    "recentErrorCount": 100
+  },
+  "features": {
+    "developerMode": false,
+    "safeMode": false
+  },
+  "window": {
+    "width": 1280,
+    "height": 800,
+    "x": null,
+    "y": null,
+    "isMaximized": false
+  }
+}

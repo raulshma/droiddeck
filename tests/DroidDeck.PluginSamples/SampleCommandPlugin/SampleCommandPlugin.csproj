@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>SampleCommandPlugin</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\DroidDeck.Plugin.Abstractions\DroidDeck.Plugin.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="plugin.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

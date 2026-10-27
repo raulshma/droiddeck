@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build-test:
+    name: Build, test, and publish
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+          cache: true
+          cache-dependency-path: |
+            global.json
+            Directory.Packages.props
+
+      - name: Restore
+        run: dotnet restore DroidDeck.slnx
+
+      - name: Build Debug
+        run: dotnet build DroidDeck.slnx -c Debug --no-restore
+
+      - name: Test Debug
+        run: >-
+          dotnet test DroidDeck.slnx
+          -c Debug
+          --no-build
+          --filter "Category!=UI"
+          --logger "trx;LogFileName=test-results.trx"
+          --results-directory TestResults
+
+      - name: Build Release
+        run: dotnet build DroidDeck.slnx -c Release --no-restore
+
+      - name: Test Release
+        run: >-
+          dotnet test DroidDeck.slnx
+          -c Release
+          --no-build
+          --filter "Category!=UI"
+          --logger "trx;LogFileName=test-results-release.trx"
+          --results-directory TestResults
+
+      - name: Publish portable app
+        run: >-
+          dotnet publish src/DroidDeck.App/DroidDeck.App.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -p:WindowsPackageType=None
+          -p:PublishReadyToRun=false
+          -o artifacts/DroidDeck-portable
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults/*.trx
+          if-no-files-found: ignore
+
+      - name: Upload portable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DroidDeck-portable
+          path: artifacts/DroidDeck-portable
+          if-no-files-found: error

@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="DroidDeck.App.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Grid x:Name="RootGrid" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="48" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="34" />
+        </Grid.RowDefinitions>
+
+        <Grid
+            x:Name="TitleBarDragRegion"
+            Grid.Row="0"
+            Padding="16,0,150,0"
+            Background="Transparent">
+            <StackPanel
+                Orientation="Horizontal"
+                Spacing="10"
+                VerticalAlignment="Center">
+                <TextBlock
+                    Text="DroidDeck"
+                    FontSize="14"
+                    FontWeight="SemiBold"
+                    VerticalAlignment="Center" />
+                <TextBlock
+                    x:Name="TitleStatusText"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    FontSize="12"
+                    VerticalAlignment="Center" />
+            </StackPanel>
+        </Grid>
+
+        <NavigationView
+            x:Name="Navigation"
+            Grid.Row="1"
+            IsBackButtonVisible="Collapsed"
+            IsSettingsVisible="False"
+            PaneDisplayMode="Left"
+            IsPaneToggleButtonVisible="True"
+            OpenPaneLength="220"
+            SelectionChanged="OnNavigationSelectionChanged"
+            AutomationProperties.AutomationId="MainNavigation">
+            <NavigationView.MenuItems>
+                <NavigationViewItem Content="Home" Tag="home" AutomationProperties.AutomationId="NavHome">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Home" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Devices" Tag="devices" AutomationProperties.AutomationId="NavDevices">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Phone" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Activity" Tag="activity" AutomationProperties.AutomationId="NavActivity">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="List" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Extensions" Tag="extensions" AutomationProperties.AutomationId="NavExtensions">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="AllApps" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.MenuItems>
+            <NavigationView.FooterMenuItems>
+                <NavigationViewItem Content="Settings" Tag="settings" AutomationProperties.AutomationId="NavSettings">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Setting" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Diagnostics" Tag="diagnostics" AutomationProperties.AutomationId="NavDiagnostics">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Repair" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.FooterMenuItems>
+            <NavigationView.Content>
+                <ContentControl
+                    x:Name="PageHost"
+                    HorizontalContentAlignment="Stretch"
+                    VerticalContentAlignment="Stretch"
+                    AutomationProperties.AutomationId="PageHost" />
+            </NavigationView.Content>
+        </NavigationView>
+
+        <Grid
+            Grid.Row="2"
+            Padding="12,0"
+            Background="{ThemeResource LayerFillColorDefaultBrush}"
+            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+            BorderThickness="0,1,0,0">
+            <StackPanel
+                Orientation="Horizontal"
+                Spacing="16"
+                VerticalAlignment="Center">
+                <TextBlock
+                    x:Name="AdbStatusText"
+                    Text="ADB starting"
+                    FontSize="12"
+                    VerticalAlignment="Center"
+                    AutomationProperties.AutomationId="AdbStatus" />
+                <TextBlock
+                    x:Name="DeviceCountText"
+                    Text="0 devices"
+                    FontSize="12"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    VerticalAlignment="Center"
+                    AutomationProperties.AutomationId="DeviceCount" />
+                <TextBlock
+                    x:Name="FallbackStatusText"
+                    Text=""
+                    FontSize="12"
+                    Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                    VerticalAlignment="Center" />
+                <TextBlock
+                    x:Name="StatusMessageText"
+                    Text=""
+                    FontSize="12"
+                    Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                    VerticalAlignment="Center" />
+            </StackPanel>
+            <StackPanel
+                Orientation="Horizontal"
+                Spacing="10"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Center">
+                <TextBlock
+                    x:Name="DiagnosticsIdText"
+                    FontSize="12"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    VerticalAlignment="Center"
+                    AutomationProperties.AutomationId="DiagnosticsId" />
+                <Button
+                    x:Name="CopyDiagnosticsButton"
+                    Content="Copy diagnostics"
+                    FontSize="12"
+                    Padding="10,2"
+                    Click="OnCopyDiagnosticsClick"
+                    AutomationProperties.AutomationId="CopyDiagnosticsButton" />
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>
