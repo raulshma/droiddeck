@@ -373,6 +373,9 @@ public sealed class ShellAutomationTests
               "schemaVersion": 1,
               "tools": {
                 "adbPath": "{{adbPath}}"
+              },
+              "onboarding": {
+                "completed": true
               }
             }
             """);
