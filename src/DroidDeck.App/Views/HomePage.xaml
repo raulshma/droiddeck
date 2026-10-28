@@ -4,17 +4,44 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-    <ScrollViewer Padding="24">
-        <StackPanel Spacing="16">
+    <Grid Padding="24" RowSpacing="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
             <StackPanel Spacing="2">
                 <TextBlock Text="Home" Style="{StaticResource TitleTextBlockStyle}" />
                 <TextBlock
                     x:Name="SubtitleText"
                     Text="Starting up."
                     FontSize="12"
-                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    AutomationProperties.AutomationId="HomeSubtitle" />
             </StackPanel>
+            <StackPanel
+                Grid.Column="1"
+                Orientation="Horizontal"
+                Spacing="8"
+                VerticalAlignment="Center">
+                <Button
+                    Content="Copy diagnostics"
+                    Click="OnCopyDiagnosticsClick"
+                    AutomationProperties.AutomationId="HomeCopyDiagnosticsButton" />
+                <Button
+                    Content="Refresh"
+                    Click="OnRefreshClick"
+                    AutomationProperties.AutomationId="HomeRefreshButton" />
+            </StackPanel>
+        </Grid>
 
+        <StackPanel Grid.Row="1" Spacing="8">
             <InfoBar
                 x:Name="LoadNoticeBar"
                 Severity="Warning"
@@ -28,104 +55,533 @@
                 IsOpen="False"
                 IsClosable="True"
                 AutomationProperties.AutomationId="HomeActionBar" />
-
-            <Grid ColumnSpacing="12" RowSpacing="12">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
-
-                <Border Style="{StaticResource CardBorderStyle}">
-                    <StackPanel Spacing="10">
-                        <TextBlock Text="Devices" Style="{StaticResource SectionHeaderStyle}" />
-                        <TextBlock
-                            x:Name="DeviceSummaryText"
-                            Text="No devices connected."
-                            Style="{StaticResource FieldValueStyle}"
-                            AutomationProperties.AutomationId="HomeDevicesSummary" />
-                        <TextBlock
-                            x:Name="AdbSummaryText"
-                            Text="ADB is starting."
-                            FontSize="12"
-                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                            TextWrapping="Wrap" />
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <Button
-                                x:Name="RefreshDevicesButton"
-                                Content="Refresh devices"
-                                Click="OnRefreshDevicesClick"
-                                AutomationProperties.AutomationId="HomeRefreshDevicesButton" />
-                            <Button
-                                Content="Open devices"
-                                Click="OnOpenDevicesClick"
-                                AutomationProperties.AutomationId="HomeOpenDevicesButton" />
-                        </StackPanel>
-                    </StackPanel>
-                </Border>
-
-                <Border Grid.Column="1" Style="{StaticResource CardBorderStyle}">
-                    <StackPanel Spacing="10">
-                        <TextBlock Text="Toolchain" Style="{StaticResource SectionHeaderStyle}" />
-                        <TextBlock
-                            x:Name="ToolchainSummaryText"
-                            Text="Toolchain check is starting."
-                            Style="{StaticResource FieldValueStyle}"
-                            AutomationProperties.AutomationId="HomeToolchainSummary" />
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <Button
-                                x:Name="CheckToolchainButton"
-                                Content="Check toolchain"
-                                Click="OnCheckToolchainClick"
-                                AutomationProperties.AutomationId="HomeCheckToolchainButton" />
-                            <Button
-                                Content="Tool settings"
-                                Click="OnOpenSettingsClick"
-                                AutomationProperties.AutomationId="HomeOpenSettingsButton" />
-                        </StackPanel>
-                    </StackPanel>
-                </Border>
-
-                <Border Grid.Row="1" Style="{StaticResource CardBorderStyle}">
-                    <StackPanel Spacing="10">
-                        <TextBlock Text="Extensions" Style="{StaticResource SectionHeaderStyle}" />
-                        <TextBlock
-                            x:Name="ExtensionsSummaryText"
-                            Text="Plugin scan is starting."
-                            Style="{StaticResource FieldValueStyle}"
-                            AutomationProperties.AutomationId="HomePluginsSummary" />
-                        <Button
-                            Content="Open extensions"
-                            Click="OnOpenExtensionsClick"
-                            HorizontalAlignment="Left"
-                            AutomationProperties.AutomationId="HomeOpenExtensionsButton" />
-                    </StackPanel>
-                </Border>
-
-                <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource CardBorderStyle}">
-                    <StackPanel Spacing="10">
-                        <TextBlock Text="Diagnostics" Style="{StaticResource SectionHeaderStyle}" />
-                        <TextBlock
-                            x:Name="DiagnosticsSummaryText"
-                            Text="Preparing diagnostics."
-                            Style="{StaticResource FieldValueStyle}"
-                            AutomationProperties.AutomationId="HomeDiagnosticsSummary" />
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <Button
-                                Content="Copy diagnostics"
-                                Click="OnCopyDiagnosticsClick"
-                                AutomationProperties.AutomationId="HomeCopyDiagnosticsButton" />
-                            <Button
-                                Content="Open diagnostics"
-                                Click="OnOpenDiagnosticsClick"
-                                AutomationProperties.AutomationId="HomeOpenDiagnosticsButton" />
-                        </StackPanel>
-                    </StackPanel>
-                </Border>
-            </Grid>
         </StackPanel>
-    </ScrollViewer>
+
+        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+            <StackPanel Spacing="16">
+
+                <Border Style="{StaticResource CardBorderStyle}" AutomationProperties.AutomationId="HomeQuickRunRegion">
+                    <StackPanel Spacing="10">
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="Quick run" Style="{StaticResource SectionHeaderStyle}" />
+                            <TextBlock
+                                Text="Runs the last configuration on the last device."
+                                FontSize="12"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+
+                        <StackPanel x:Name="QuickRunSkeleton" Spacing="8" AutomationProperties.AutomationId="HomeQuickRunSkeleton">
+                            <Border Style="{StaticResource SkeletonLineStyle}" MaxWidth="280" HorizontalAlignment="Left" />
+                            <Border Style="{StaticResource SkeletonLineStyle}" MaxWidth="280" HorizontalAlignment="Left" />
+                            <Border Style="{StaticResource SkeletonLineStyle}" MaxWidth="280" HorizontalAlignment="Left" />
+                        </StackPanel>
+
+                        <StackPanel x:Name="QuickRunContent" Spacing="10" Visibility="Collapsed">
+                            <StackPanel Spacing="4" MaxWidth="420">
+                                <TextBlock Text="Project" Style="{StaticResource FieldLabelStyle}" />
+                                <ComboBox
+                                    x:Name="ProjectCombo"
+                                    DisplayMemberPath="Name"
+                                    HorizontalAlignment="Stretch"
+                                    SelectionChanged="OnQuickRunProjectChanged"
+                                    AutomationProperties.AutomationId="HomeQuickRunProject" />
+                            </StackPanel>
+                            <StackPanel Spacing="4" MaxWidth="420">
+                                <TextBlock Text="Configuration" Style="{StaticResource FieldLabelStyle}" />
+                                <ComboBox
+                                    x:Name="ConfigurationCombo"
+                                    DisplayMemberPath="Name"
+                                    HorizontalAlignment="Stretch"
+                                    SelectionChanged="OnQuickRunConfigurationChanged"
+                                    AutomationProperties.AutomationId="HomeQuickRunConfiguration" />
+                            </StackPanel>
+                            <StackPanel Spacing="4" MaxWidth="420">
+                                <TextBlock Text="Device" Style="{StaticResource FieldLabelStyle}" />
+                                <ComboBox
+                                    x:Name="DeviceCombo"
+                                    DisplayMemberPath="DisplayName"
+                                    HorizontalAlignment="Stretch"
+                                    SelectionChanged="OnQuickRunDeviceChanged"
+                                    AutomationProperties.AutomationId="HomeQuickRunDevice" />
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button
+                                    x:Name="QuickRunButton"
+                                    Content="Run"
+                                    Style="{StaticResource AccentButtonStyle}"
+                                    Click="OnQuickRunClick"
+                                    AutomationProperties.AutomationId="HomeQuickRunButton" />
+                                <Button
+                                    Content="Open project"
+                                    Click="OnOpenQuickRunProjectClick"
+                                    AutomationProperties.AutomationId="HomeOpenQuickRunProjectButton" />
+                            </StackPanel>
+                            <TextBlock
+                                x:Name="QuickRunBlockText"
+                                FontSize="12"
+                                Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                                TextWrapping="Wrap"
+                                Visibility="Collapsed"
+                                AutomationProperties.AutomationId="HomeQuickRunBlockText" />
+                        </StackPanel>
+
+                        <StackPanel x:Name="QuickRunEmptyPanel" Spacing="8" Visibility="Collapsed">
+                            <TextBlock
+                                x:Name="QuickRunEmptyText"
+                                Style="{StaticResource FieldValueStyle}"
+                                AutomationProperties.AutomationId="HomeQuickRunEmptyText" />
+                            <Button
+                                Content="Add a project"
+                                Click="OnOpenProjectsClick"
+                                HorizontalAlignment="Left"
+                                AutomationProperties.AutomationId="HomeAddProjectButton" />
+                        </StackPanel>
+
+                        <TextBlock
+                            x:Name="QuickRunErrorText"
+                            FontSize="12"
+                            Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                            TextWrapping="Wrap"
+                            Visibility="Collapsed"
+                            AutomationProperties.AutomationId="HomeQuickRunErrorText" />
+                    </StackPanel>
+                </Border>
+
+                <Grid ColumnSpacing="16" RowSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Spacing="16">
+                        <Border Style="{StaticResource CardBorderStyle}" AutomationProperties.AutomationId="HomeSessionsRegion">
+                            <StackPanel Spacing="10">
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Active sessions" Style="{StaticResource SectionHeaderStyle}" />
+                                    <Button
+                                        Grid.Column="1"
+                                        Content="See all"
+                                        Click="OnSeeAllSessionsClick"
+                                        AutomationProperties.AutomationId="HomeSeeAllSessionsButton" />
+                                </Grid>
+
+                                <ListView
+                                    x:Name="SessionList"
+                                    SelectionMode="None"
+                                    Padding="0"
+                                    Visibility="Collapsed"
+                                    AutomationProperties.AutomationId="HomeSessionList">
+                                    <ListView.ItemContainerStyle>
+                                        <Style TargetType="ListViewItem">
+                                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                            <Setter Property="Padding" Value="0" />
+                                            <Setter Property="Margin" Value="0,1" />
+                                        </Style>
+                                    </ListView.ItemContainerStyle>
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Style="{StaticResource SubtleCardStyle}">
+                                                <Grid ColumnSpacing="10">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <StackPanel Spacing="2">
+                                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                                            <TextBlock
+                                                                Text="{Binding Title}"
+                                                                FontWeight="SemiBold"
+                                                                TextTrimming="CharacterEllipsis" />
+                                                            <TextBlock
+                                                                Text="{Binding StateLabel}"
+                                                                FontSize="12"
+                                                                Foreground="{Binding StateBrush}" />
+                                                        </StackPanel>
+                                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                                            <TextBlock
+                                                                Text="{Binding DeviceLabel}"
+                                                                FontSize="12"
+                                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                            <TextBlock
+                                                                Text="·"
+                                                                FontSize="12"
+                                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                            <TextBlock
+                                                                Text="{Binding ElapsedLabel}"
+                                                                FontSize="12"
+                                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                            <TextBlock
+                                                                Text="{Binding StepLabel}"
+                                                                FontSize="12"
+                                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                                TextTrimming="CharacterEllipsis"
+                                                                Visibility="{Binding HasStep, Converter={StaticResource BoolToVisibility}}" />
+                                                        </StackPanel>
+                                                    </StackPanel>
+                                                    <Button
+                                                        Grid.Column="1"
+                                                        Content="Open"
+                                                        VerticalAlignment="Center"
+                                                        Click="OnOpenSessionClick"
+                                                        AutomationProperties.AutomationId="{Binding OpenId}" />
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+
+                                <TextBlock
+                                    x:Name="SessionsEmptyText"
+                                    Text="No runs in progress."
+                                    FontSize="12"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Visibility="Collapsed"
+                                    AutomationProperties.AutomationId="HomeSessionsEmptyText" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource CardBorderStyle}" AutomationProperties.AutomationId="HomeProjectsRegion">
+                            <StackPanel Spacing="10">
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Recent projects" Style="{StaticResource SectionHeaderStyle}" />
+                                    <Button
+                                        Grid.Column="1"
+                                        Content="All projects"
+                                        Click="OnOpenProjectsClick"
+                                        AutomationProperties.AutomationId="HomeOpenProjectsButton" />
+                                </Grid>
+
+                                <StackPanel x:Name="ProjectsSkeleton" Spacing="8" AutomationProperties.AutomationId="HomeProjectsSkeleton">
+                                    <Border Style="{StaticResource SkeletonLineStyle}" />
+                                    <Border Style="{StaticResource SkeletonLineStyle}" MaxWidth="200" HorizontalAlignment="Left" />
+                                </StackPanel>
+
+                                <ListView
+                                    x:Name="ProjectList"
+                                    SelectionMode="None"
+                                    Padding="0"
+                                    Visibility="Collapsed"
+                                    AutomationProperties.AutomationId="HomeProjectList">
+                                    <ListView.ItemContainerStyle>
+                                        <Style TargetType="ListViewItem">
+                                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                            <Setter Property="Padding" Value="0" />
+                                            <Setter Property="Margin" Value="0,1" />
+                                        </Style>
+                                    </ListView.ItemContainerStyle>
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Style="{StaticResource SubtleCardStyle}">
+                                                <Grid ColumnSpacing="10">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <StackPanel Spacing="2">
+                                                        <TextBlock
+                                                            Text="{Binding Name}"
+                                                            FontWeight="SemiBold"
+                                                            TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock
+                                                            Text="{Binding Subtitle}"
+                                                            FontSize="12"
+                                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                            TextTrimming="CharacterEllipsis" />
+                                                    </StackPanel>
+                                                    <StackPanel
+                                                        Grid.Column="1"
+                                                        Orientation="Horizontal"
+                                                        Spacing="6"
+                                                        VerticalAlignment="Center">
+                                                        <Button
+                                                            Content="Run"
+                                                            Click="OnRunProjectClick"
+                                                            IsEnabled="{Binding CanRun}"
+                                                            AutomationProperties.AutomationId="{Binding RunId}" />
+                                                        <Button
+                                                            Content="Open"
+                                                            Click="OnOpenProjectClick"
+                                                            AutomationProperties.AutomationId="{Binding OpenId}" />
+                                                    </StackPanel>
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+
+                                <TextBlock
+                                    x:Name="ProjectsEmptyText"
+                                    Text="No projects added yet. Add one to build, install, and launch from Home."
+                                    FontSize="12"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    TextWrapping="Wrap"
+                                    Visibility="Collapsed"
+                                    AutomationProperties.AutomationId="HomeProjectsEmptyText" />
+                                <TextBlock
+                                    x:Name="ProjectsErrorText"
+                                    FontSize="12"
+                                    Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                    TextWrapping="Wrap"
+                                    Visibility="Collapsed"
+                                    AutomationProperties.AutomationId="HomeProjectsErrorText" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1" Spacing="16">
+                        <Border Style="{StaticResource CardBorderStyle}" AutomationProperties.AutomationId="HomeDevicesRegion">
+                            <StackPanel Spacing="10">
+                                <TextBlock Text="Devices" Style="{StaticResource SectionHeaderStyle}" />
+                                <TextBlock
+                                    x:Name="DeviceConnectionText"
+                                    Text="Waiting for adb."
+                                    FontSize="12"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    TextWrapping="Wrap"
+                                    AutomationProperties.AutomationId="HomeDeviceConnectionText" />
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <Button
+                                        Content="Refresh"
+                                        Click="OnRefreshDevicesClick"
+                                        AutomationProperties.AutomationId="HomeRefreshDevicesButton" />
+                                    <Button
+                                        Content="Open devices"
+                                        Click="OnOpenDevicesClick"
+                                        AutomationProperties.AutomationId="HomeOpenDevicesButton" />
+                                </StackPanel>
+
+                                <StackPanel x:Name="DevicesSkeleton" Spacing="8" AutomationProperties.AutomationId="HomeDevicesSkeleton">
+                                    <Border Style="{StaticResource SkeletonLineStyle}" />
+                                    <Border Style="{StaticResource SkeletonLineStyle}" MaxWidth="200" HorizontalAlignment="Left" />
+                                </StackPanel>
+
+                                <ListView
+                                    x:Name="DeviceList"
+                                    SelectionMode="None"
+                                    Padding="0"
+                                    Visibility="Collapsed"
+                                    AutomationProperties.AutomationId="HomeDeviceList">
+                                    <ListView.ItemContainerStyle>
+                                        <Style TargetType="ListViewItem">
+                                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                            <Setter Property="Padding" Value="0" />
+                                            <Setter Property="Margin" Value="0,1" />
+                                        </Style>
+                                    </ListView.ItemContainerStyle>
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Style="{StaticResource SubtleCardStyle}">
+                                                <Grid
+                                                    ColumnSpacing="10"
+                                                    AutomationProperties.Name="{Binding DisplayName}"
+                                                    AutomationProperties.AutomationId="{Binding Serial}">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock
+                                                        Text="●"
+                                                        FontSize="14"
+                                                        VerticalAlignment="Center"
+                                                        Foreground="{Binding State, Converter={StaticResource DeviceStateToBrush}}" />
+                                                    <StackPanel Grid.Column="1" Spacing="2">
+                                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                                            <TextBlock
+                                                                Text="{Binding DisplayName}"
+                                                                FontWeight="SemiBold"
+                                                                TextTrimming="CharacterEllipsis" />
+                                                            <TextBlock
+                                                                Text="{Binding StateLabel}"
+                                                                FontSize="12"
+                                                                Foreground="{Binding State, Converter={StaticResource DeviceStateToBrush}}" />
+                                                        </StackPanel>
+                                                        <TextBlock
+                                                            Text="{Binding ListSubtitle}"
+                                                            FontSize="12"
+                                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                            TextTrimming="CharacterEllipsis" />
+                                                    </StackPanel>
+                                                    <StackPanel
+                                                        Grid.Column="2"
+                                                        Orientation="Horizontal"
+                                                        Spacing="6"
+                                                        VerticalAlignment="Center">
+                                                        <Button
+                                                            Content="Mirror"
+                                                            IsEnabled="False"
+                                                            ToolTipService.ToolTip="Screen mirroring arrives with the screen tools milestone."
+                                                            AutomationProperties.AutomationId="HomeMirrorDeviceButton" />
+                                                        <Button
+                                                            Content="Open"
+                                                            Click="OnOpenDeviceClick"
+                                                            AutomationProperties.AutomationId="HomeOpenDeviceButton" />
+                                                    </StackPanel>
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+
+                                <TextBlock
+                                    x:Name="DevicesEmptyText"
+                                    Text="No devices connected. Plug in a device with USB debugging enabled, or start an emulator."
+                                    FontSize="12"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    TextWrapping="Wrap"
+                                    Visibility="Collapsed"
+                                    AutomationProperties.AutomationId="HomeDevicesEmptyText" />
+                                <TextBlock
+                                    x:Name="DevicesErrorText"
+                                    FontSize="12"
+                                    Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                                    TextWrapping="Wrap"
+                                    Visibility="Collapsed"
+                                    AutomationProperties.AutomationId="HomeDevicesErrorText" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource CardBorderStyle}" AutomationProperties.AutomationId="HomeEnvironmentRegion">
+                            <StackPanel Spacing="10">
+                                <TextBlock Text="Environment" Style="{StaticResource SectionHeaderStyle}" />
+                                <TextBlock
+                                    x:Name="EnvironmentFreshnessText"
+                                    Text="Waiting for the doctor."
+                                    FontSize="12"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    TextWrapping="Wrap"
+                                    AutomationProperties.AutomationId="HomeEnvironmentFreshness" />
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <Button
+                                        x:Name="CheckToolchainButton"
+                                        Content="Check now"
+                                        Click="OnCheckToolchainClick"
+                                        AutomationProperties.AutomationId="HomeCheckToolchainButton" />
+                                    <Button
+                                        Content="Tool settings"
+                                        Click="OnOpenSettingsClick"
+                                        AutomationProperties.AutomationId="HomeOpenSettingsButton" />
+                                </StackPanel>
+
+                                <StackPanel x:Name="EnvironmentSkeleton" Spacing="8" AutomationProperties.AutomationId="HomeEnvironmentSkeleton">
+                                    <Border Style="{StaticResource SkeletonLineStyle}" />
+                                    <Border Style="{StaticResource SkeletonLineStyle}" MaxWidth="200" HorizontalAlignment="Left" />
+                                </StackPanel>
+
+                                <ListView
+                                    x:Name="EnvironmentList"
+                                    SelectionMode="None"
+                                    Padding="0"
+                                    Visibility="Collapsed"
+                                    AutomationProperties.AutomationId="HomeEnvironmentList">
+                                    <ListView.ItemContainerStyle>
+                                        <Style TargetType="ListViewItem">
+                                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                            <Setter Property="Padding" Value="0" />
+                                            <Setter Property="Margin" Value="0,1" />
+                                            <Setter Property="MinHeight" Value="0" />
+                                        </Style>
+                                    </ListView.ItemContainerStyle>
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid
+                                                ColumnSpacing="8"
+                                                Padding="0,2"
+                                                AutomationProperties.AutomationId="{Binding ChipId}"
+                                                ToolTipService.ToolTip="{Binding Detail}">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="140" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock
+                                                    Text="●"
+                                                    FontSize="10"
+                                                    VerticalAlignment="Center"
+                                                    Foreground="{Binding StatusBrush}" />
+                                                <TextBlock
+                                                    Grid.Column="1"
+                                                    Text="{Binding Name}"
+                                                    FontSize="12"
+                                                    VerticalAlignment="Center"
+                                                    TextTrimming="CharacterEllipsis" />
+                                                <TextBlock
+                                                    Grid.Column="2"
+                                                    Text="{Binding Value}"
+                                                    FontSize="12"
+                                                    VerticalAlignment="Center"
+                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                    TextTrimming="CharacterEllipsis" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+
+                                <TextBlock
+                                    x:Name="EnvironmentMessageText"
+                                    FontSize="12"
+                                    Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                                    TextWrapping="Wrap"
+                                    Visibility="Collapsed"
+                                    AutomationProperties.AutomationId="HomeEnvironmentMessageText" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource CardBorderStyle}" AutomationProperties.AutomationId="HomePluginsRegion">
+                            <StackPanel Spacing="10">
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Plugin widgets" Style="{StaticResource SectionHeaderStyle}" />
+                                    <Button
+                                        Grid.Column="1"
+                                        Content="Manage extensions"
+                                        Click="OnOpenExtensionsClick"
+                                        AutomationProperties.AutomationId="HomeOpenExtensionsButton" />
+                                </Grid>
+
+                                <StackPanel x:Name="PluginsSkeleton" Spacing="8" AutomationProperties.AutomationId="HomePluginsSkeleton">
+                                    <Border Style="{StaticResource SkeletonLineStyle}" MaxWidth="240" HorizontalAlignment="Left" />
+                                </StackPanel>
+
+                                <Border
+                                    x:Name="PluginWidgetHost"
+                                    Style="{StaticResource SubtleCardStyle}"
+                                    MinHeight="72"
+                                    Visibility="Collapsed"
+                                    AutomationProperties.AutomationId="HomePluginWidgetHost">
+                                    <TextBlock
+                                        x:Name="PluginWidgetPlaceholderText"
+                                        Text="Plugin home widgets mount here."
+                                        FontSize="12"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        TextWrapping="Wrap"
+                                        VerticalAlignment="Center"
+                                        AutomationProperties.AutomationId="HomePluginWidgetPlaceholder" />
+                                </Border>
+
+                                <TextBlock
+                                    x:Name="PluginsSummaryText"
+                                    FontSize="12"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    TextWrapping="Wrap"
+                                    Visibility="Collapsed"
+                                    AutomationProperties.AutomationId="HomePluginsSummary" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Grid>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
 </Page>

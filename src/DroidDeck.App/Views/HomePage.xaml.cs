@@ -1,9 +1,14 @@
+using System.Collections.ObjectModel;
 using System.Runtime.InteropServices;
 using DroidDeck.App.Services;
+using DroidDeck.App.ViewModels;
 using DroidDeck.Core.Configuration;
 using DroidDeck.Core.Devices;
 using DroidDeck.Core.Diagnostics;
+using DroidDeck.Core.Projects;
+using DroidDeck.Core.Runs;
 using DroidDeck.Core.Toolchain;
+using DroidDeck.Plugin.Abstractions;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
@@ -12,16 +17,40 @@ using Windows.ApplicationModel.DataTransfer;
 
 namespace DroidDeck.App.Views;
 
-/// <summary>The landing page with a live status summary and quick actions.</summary>
+/// <summary>
+/// The daily landing page. Every region loads on its own so a slow or failed
+/// region shows its own skeleton or label instead of blocking the page.
+/// </summary>
 public sealed partial class HomePage : Page, IRefreshablePage, IDisposable
 {
+    private static readonly TimeSpan TickInterval = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan StaleEnvironment = TimeSpan.FromHours(24);
+    private const int RecentProjectCount = 5;
+
     private readonly IDeviceService _devices;
     private readonly IToolchainService _toolchain;
     private readonly PluginHost _plugins;
     private readonly IDiagnosticsService _diagnostics;
     private readonly IConfigurationService _configuration;
+    private readonly IProjectService _projects;
+    private readonly IRunSessionService _runs;
+    private readonly QuickRunMemory _quickRun;
+    private readonly SessionWorkspace _workspace;
     private readonly ILogger<HomePage> _logger;
     private readonly DispatcherQueue? _dispatcher;
+    private readonly DispatcherTimer _ticker;
+    private readonly ObservableCollection<ActiveSessionRow> _sessionRows = [];
+    private readonly BulkObservableCollection<DeviceRowViewModel> _deviceRows = [];
+    private readonly BulkObservableCollection<RecentProjectRow> _projectRows = [];
+    private readonly BulkObservableCollection<EnvironmentToolRow> _environmentRows = [];
+    private QuickRunSelection? _selection;
+    private string? _devicesProblem;
+    private string? _projectsProblem;
+    private bool _devicesLoaded;
+    private bool _projectsLoaded;
+    private bool _environmentChecked;
+    private bool _syncingSelection;
+    private bool _startingRun;
     private bool _disposed;
 
     /// <summary>Creates the home page.</summary>
@@ -31,6 +60,10 @@ public sealed partial class HomePage : Page, IRefreshablePage, IDisposable
         PluginHost plugins,
         IDiagnosticsService diagnostics,
         IConfigurationService configuration,
+        IProjectService projects,
+        IRunSessionService runs,
+        QuickRunMemory quickRun,
+        SessionWorkspace workspace,
         ILogger<HomePage> logger)
     {
         _devices = devices ?? throw new ArgumentNullException(nameof(devices));
@@ -38,27 +71,32 @@ public sealed partial class HomePage : Page, IRefreshablePage, IDisposable
         _plugins = plugins ?? throw new ArgumentNullException(nameof(plugins));
         _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+        _projects = projects ?? throw new ArgumentNullException(nameof(projects));
+        _runs = runs ?? throw new ArgumentNullException(nameof(runs));
+        _quickRun = quickRun ?? throw new ArgumentNullException(nameof(quickRun));
+        _workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _dispatcher = DispatcherQueue.GetForCurrentThread();
+        _ticker = new DispatcherTimer { Interval = TickInterval };
+        _ticker.Tick += OnTick;
 
         InitializeComponent();
+        SessionList.ItemsSource = _sessionRows;
+        DeviceList.ItemsSource = _deviceRows;
+        ProjectList.ItemsSource = _projectRows;
+        EnvironmentList.ItemsSource = _environmentRows;
+
         _devices.DevicesChanged += OnDevicesChanged;
+        _devices.DeviceUpdated += OnDeviceUpdated;
         _toolchain.SnapshotChanged += OnToolchainChanged;
         _plugins.ResultsChanged += OnPluginsChanged;
+        _projects.ProjectsChanged += OnProjectsChanged;
+        _runs.SessionChanged += OnSessionChanged;
         Refresh();
     }
 
     /// <inheritdoc />
-    public void Refresh()
-    {
-        UpdateDevices();
-        UpdateToolchain();
-        UpdatePlugins();
-        UpdateDiagnostics();
-        var notice = _configuration.LastLoadNotice;
-        LoadNoticeBar.IsOpen = notice is not null;
-        LoadNoticeBar.Message = notice?.Message ?? string.Empty;
-    }
+    public void Refresh() => Reload(force: false);
 
     /// <inheritdoc />
     public void Dispose()
@@ -69,115 +107,589 @@ public sealed partial class HomePage : Page, IRefreshablePage, IDisposable
         }
 
         _disposed = true;
+        _ticker.Stop();
+        _ticker.Tick -= OnTick;
         _devices.DevicesChanged -= OnDevicesChanged;
+        _devices.DeviceUpdated -= OnDeviceUpdated;
         _toolchain.SnapshotChanged -= OnToolchainChanged;
         _plugins.ResultsChanged -= OnPluginsChanged;
+        _projects.ProjectsChanged -= OnProjectsChanged;
+        _runs.SessionChanged -= OnSessionChanged;
+    }
+
+    private void Reload(bool force)
+    {
+        UpdateSubtitle();
+        UpdateNotice();
+        UpdateSessions();
+        UpdatePlugins();
+
+        if (force || !_devicesLoaded)
+        {
+            _ = LoadDevicesRegionAsync();
+        }
+        else
+        {
+            UpdateDevices();
+        }
+
+        if (force || !_projectsLoaded)
+        {
+            _ = LoadProjectsRegionAsync();
+        }
+        else
+        {
+            UpdateProjects();
+            UpdateQuickRun();
+        }
+
+        if (_toolchain.CachedSnapshot is null)
+        {
+            _ = LoadEnvironmentRegionAsync();
+        }
+        else
+        {
+            UpdateEnvironment();
+        }
+    }
+
+    private void UpdateSubtitle() =>
+        SubtitleText.Text = $"Session {_diagnostics.SessionId} · Diagnostics {_diagnostics.DiagnosticsId}";
+
+    private void UpdateNotice()
+    {
+        var notice = _configuration.LastLoadNotice;
+        LoadNoticeBar.IsOpen = notice is not null;
+        LoadNoticeBar.Message = notice?.Message ?? string.Empty;
+    }
+
+    private async Task LoadDevicesRegionAsync()
+    {
+        ShowLoading(DevicesSkeleton, DeviceList, DevicesEmptyText, DevicesErrorText);
+        try
+        {
+            await _devices.RefreshAsync().ConfigureAwait(false);
+            _devicesProblem = null;
+        }
+        catch (Exception exception)
+        {
+            LogRegionFailure("device list", exception);
+            _devicesProblem = exception.Message;
+        }
+
+        _devicesLoaded = true;
+        Dispatch(UpdateDevices);
     }
 
     private void UpdateDevices()
     {
-        SubtitleText.Text =
-            $"Session {_diagnostics.SessionId} · Diagnostics {_diagnostics.DiagnosticsId}";
+        _deviceRows.ResetAll(_devices.Devices.Select(device => new DeviceRowViewModel(device)));
 
-        var devices = _devices.Devices;
-        DeviceSummaryText.Text = devices.Count == 0
-            ? "No devices connected."
-            : string.Join(
-                Environment.NewLine,
-                devices.Take(4).Select(device => $"{device.DisplayName} ({StateLabel(device.State)})"));
-
-        var connection = _devices.IsAdbConnected
-            ? "ADB socket tracker connected"
+        DeviceConnectionText.Text = _devices.IsAdbConnected
+            ? "ADB tracker connected · updates live"
             : _devices.IsUsingCliFallback
-                ? "ADB is using the CLI fallback"
+                ? "ADB via CLI fallback · updates live"
                 : "ADB is disconnected";
-        AdbSummaryText.Text = string.IsNullOrWhiteSpace(_devices.LastError)
-            ? $"{connection}."
-            : $"{connection}. {_devices.LastError}";
+
+        var problem = _devicesProblem
+                      ?? (_devices.IsAdbConnected || _devices.IsUsingCliFallback ? null : _devices.LastError);
+        ShowResult(
+            DevicesSkeleton,
+            DeviceList,
+            DevicesEmptyText,
+            DevicesErrorText,
+            _deviceRows.Count > 0,
+            problem is null ? null : $"{problem} The device list may be out of date.");
     }
 
-    private void UpdateToolchain()
+    private async Task LoadProjectsRegionAsync()
+    {
+        ShowLoading(ProjectsSkeleton, ProjectList, ProjectsEmptyText, ProjectsErrorText);
+        ShowLoading(QuickRunSkeleton, QuickRunContent, QuickRunEmptyPanel, QuickRunErrorText);
+        try
+        {
+            await _projects.InitializeAsync().ConfigureAwait(false);
+            _projectsProblem = null;
+        }
+        catch (Exception exception)
+        {
+            LogRegionFailure("project list", exception);
+            _projectsProblem = exception.Message;
+        }
+
+        _projectsLoaded = true;
+        Dispatch(() =>
+        {
+            UpdateProjects();
+            UpdateQuickRun();
+        });
+    }
+
+    private void UpdateProjects()
+    {
+        _projectRows.ResetAll(_projects.Projects
+            .OrderByDescending(project => project.LastOpenedAt ?? DateTimeOffset.MinValue)
+            .ThenByDescending(project => project.CreatedAt)
+            .Take(RecentProjectCount)
+            .Select(RecentProjectRow.From));
+
+        ShowResult(
+            ProjectsSkeleton,
+            ProjectList,
+            ProjectsEmptyText,
+            ProjectsErrorText,
+            _projectRows.Count > 0,
+            _projectsProblem is null ? null : $"Projects could not be loaded: {_projectsProblem}");
+    }
+
+    private void UpdateQuickRun()
+    {
+        if (_projectsProblem is not null)
+        {
+            ShowResult(
+                QuickRunSkeleton,
+                QuickRunContent,
+                QuickRunEmptyPanel,
+                QuickRunErrorText,
+                hasContent: false,
+                $"Quick run is unavailable: {_projectsProblem}");
+            return;
+        }
+
+        var projects = _projects.Projects.ToArray();
+        var devices = _devices.Devices.ToArray();
+        var selection = _quickRun.Resolve(projects, devices);
+        _selection = selection;
+
+        if (selection.Block == QuickRunBlock.NoProjects)
+        {
+            QuickRunEmptyText.Text = "No projects yet. Add one to build, install, and launch it from Home.";
+            ShowResult(
+                QuickRunSkeleton,
+                QuickRunContent,
+                QuickRunEmptyPanel,
+                QuickRunErrorText,
+                hasContent: false);
+            return;
+        }
+
+        _syncingSelection = true;
+        try
+        {
+            ProjectCombo.ItemsSource = projects;
+            ProjectCombo.SelectedItem = selection.Project;
+            ConfigurationCombo.ItemsSource = selection.Project?.RunConfigurations.ToArray();
+            ConfigurationCombo.SelectedItem = selection.Configuration;
+            DeviceCombo.ItemsSource = devices.Where(device => device.State == DeviceState.Device).ToArray();
+            DeviceCombo.SelectedItem = selection.Device;
+        }
+        finally
+        {
+            _syncingSelection = false;
+        }
+
+        QuickRunBlockText.Text = selection.Block switch
+        {
+            QuickRunBlock.NoConfigurations =>
+                $"\"{selection.Project?.Name}\" has no run configuration. Add one on the projects page.",
+            QuickRunBlock.NoReadyDevices =>
+                "No connected device is ready. Authorize or reconnect a device, then run again.",
+            _ => string.Empty,
+        };
+        QuickRunBlockText.Visibility = QuickRunBlockText.Text.Length == 0
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        QuickRunButton.IsEnabled = selection.CanRun;
+
+        ShowResult(
+            QuickRunSkeleton,
+            QuickRunContent,
+            QuickRunEmptyPanel,
+            QuickRunErrorText,
+            hasContent: true);
+    }
+
+    private void UpdateSessions()
+    {
+        var active = _runs.Sessions.Where(session => !session.IsFinished).ToArray();
+        for (var index = _sessionRows.Count - 1; index >= 0; index--)
+        {
+            if (!active.Any(session => string.Equals(session.Id, _sessionRows[index].Id, StringComparison.Ordinal)))
+            {
+                _sessionRows.RemoveAt(index);
+            }
+        }
+
+        for (var index = 0; index < active.Length; index++)
+        {
+            var session = active[index];
+            var existing = _sessionRows.FirstOrDefault(row =>
+                string.Equals(row.Id, session.Id, StringComparison.Ordinal));
+            if (existing is null)
+            {
+                _sessionRows.Insert(index, new ActiveSessionRow(session));
+                continue;
+            }
+
+            var currentIndex = _sessionRows.IndexOf(existing);
+            if (currentIndex != index)
+            {
+                _sessionRows.RemoveAt(currentIndex);
+                _sessionRows.Insert(index, existing);
+            }
+
+            existing.Update(session);
+        }
+
+        SessionList.Visibility = _sessionRows.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        SessionsEmptyText.Visibility = _sessionRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (_sessionRows.Count == 0)
+        {
+            _ticker.Stop();
+        }
+        else
+        {
+            _ticker.Start();
+        }
+    }
+
+    private async Task LoadEnvironmentRegionAsync()
+    {
+        ShowLoading(EnvironmentSkeleton, EnvironmentList, EnvironmentMessageText);
+        try
+        {
+            await _toolchain.LoadCachedAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            LogRegionFailure("toolchain cache", exception);
+            Dispatch(() => ShowResult(
+                EnvironmentSkeleton,
+                EnvironmentList,
+                EnvironmentMessageText,
+                hasContent: false,
+                $"The cached toolchain check could not be read: {exception.Message}"));
+            return;
+        }
+
+        Dispatch(UpdateEnvironment);
+    }
+
+    private void UpdateEnvironment()
     {
         var snapshot = _toolchain.CachedSnapshot;
         if (snapshot is null || snapshot.Tools.Count == 0)
         {
-            ToolchainSummaryText.Text = "Toolchain check has not completed yet.";
+            EnvironmentFreshnessText.Text = "Not checked yet.";
+            ShowResult(
+                EnvironmentSkeleton,
+                EnvironmentList,
+                EnvironmentMessageText,
+                hasContent: false,
+                "The doctor has not produced a result yet. Run a check to see which tools are missing.");
             return;
         }
 
-        var adb = snapshot.Get(ToolKind.Adb);
-        var adbText = adb is null
-            ? "adb unknown"
-            : adb.IsAvailable
-                ? $"adb {adb.Version ?? "available"}"
-                : "adb missing";
-        var available = snapshot.Tools.Count(tool => tool.IsAvailable);
+        _environmentRows.ResetAll(snapshot.Tools.Select(EnvironmentToolRow.From));
+        EnvironmentFreshnessText.Text = DescribeFreshness(snapshot.CheckedAt);
+
         var missing = snapshot.Tools
             .Where(tool => !tool.IsAvailable)
             .Select(tool => tool.DisplayName)
-            .Take(4)
             .ToArray();
-        var missingText = missing.Length == 0
-            ? "All tools found."
-            : $"Missing: {string.Join(", ", missing)}.";
-        ToolchainSummaryText.Text =
-            $"{adbText} · {available}/{snapshot.Tools.Count} tools available. {missingText}";
+        ShowResult(
+            EnvironmentSkeleton,
+            EnvironmentList,
+            EnvironmentMessageText,
+            hasContent: true,
+            missing.Length == 0
+                ? null
+                : $"Missing: {string.Join(", ", missing)}. Runs fail until these tools are available.");
+    }
+
+    private string DescribeFreshness(DateTimeOffset checkedAt)
+    {
+        if (checkedAt == DateTimeOffset.MinValue)
+        {
+            return "Never checked.";
+        }
+
+        var when = RelativeTime.Ago(checkedAt);
+        if (_environmentChecked)
+        {
+            return $"Checked {when}";
+        }
+
+        return DateTimeOffset.UtcNow - checkedAt > StaleEnvironment
+            ? $"Cached from {when} · may be out of date"
+            : $"Cached from {when}";
     }
 
     private void UpdatePlugins()
     {
-        if (_plugins.PluginsDisabled)
+        if (!_plugins.PluginsDisabled && !_plugins.IsInitialized)
         {
-            ExtensionsSummaryText.Text = $"Plugins are disabled ({_plugins.DisabledReason ?? "safe mode"}).";
+            PluginsSkeleton.Visibility = Visibility.Visible;
+            PluginWidgetHost.Visibility = Visibility.Collapsed;
+            PluginsSummaryText.Visibility = Visibility.Collapsed;
             return;
         }
 
-        if (!_plugins.IsInitialized)
-        {
-            ExtensionsSummaryText.Text = "Scanning installed plugins…";
-            return;
-        }
+        var widgets = _plugins.Results
+            .Where(result => result.Succeeded && !_plugins.IsDisabled(result.Plugin!.Id))
+            .Where(result => result.Plugin!.Capabilities.HasFlag(PluginCapability.HomeWidget))
+            .Select(result => result.Plugin!.Name)
+            .ToArray();
+        PluginWidgetPlaceholderText.Text = widgets.Length == 0
+            ? "Plugin home widgets mount here. No installed plugin provides one yet."
+            : $"Waiting to mount: {string.Join(", ", widgets)}. Widgets appear here once the widget host lands.";
 
+        PluginsSummaryText.Text = _plugins.PluginsDisabled
+            ? $"Plugins are disabled ({_plugins.DisabledReason ?? "safe mode"})."
+            : $"{_plugins.LoadedCount} plugin(s) loaded" +
+              $"{FailureSummary()}. {_plugins.Registry.Commands.Count} commands available.";
+
+        PluginsSkeleton.Visibility = Visibility.Collapsed;
+        PluginWidgetHost.Visibility = Visibility.Visible;
+        PluginsSummaryText.Visibility = Visibility.Visible;
+    }
+
+    private string FailureSummary()
+    {
         var failed = _plugins.Results.Count(result => !result.Succeeded);
-        var failureText = failed == 0 ? string.Empty : $", {failed} failed";
-        ExtensionsSummaryText.Text =
-            $"{_plugins.LoadedCount} plugin(s) loaded{failureText}. " +
-            $"{_plugins.Registry.Commands.Count} commands available.";
+        return failed == 0 ? string.Empty : $", {failed} failed";
     }
 
-    private void UpdateDiagnostics()
-    {
-        DiagnosticsSummaryText.Text =
-            $"Diagnostics {_diagnostics.DiagnosticsId}. " +
-            "Copy a redacted report with devices, toolchain, and recent errors. Nothing is uploaded automatically.";
-    }
+    private async void OnQuickRunProjectChanged(object sender, SelectionChangedEventArgs e) =>
+        await RememberSelectionAsync();
 
-    private async void OnRefreshDevicesClick(object sender, RoutedEventArgs e)
+    private async void OnQuickRunConfigurationChanged(object sender, SelectionChangedEventArgs e) =>
+        await RememberSelectionAsync();
+
+    private async void OnQuickRunDeviceChanged(object sender, SelectionChangedEventArgs e) =>
+        await RememberSelectionAsync();
+
+    private async Task RememberSelectionAsync()
     {
-        RefreshDevicesButton.IsEnabled = false;
+        if (_syncingSelection)
+        {
+            return;
+        }
+
+        var project = ProjectCombo.SelectedItem as ProjectModel;
+        if (project is null)
+        {
+            return;
+        }
+
+        // The configuration combo still lists the previous project's entries until UpdateQuickRun rebuilds it.
+        var configuration = ConfigurationCombo.SelectedItem as RunConfiguration;
+        if (configuration is not null && !project.RunConfigurations.Contains(configuration))
+        {
+            configuration = null;
+        }
+
+        var device = DeviceCombo.SelectedItem as DeviceInfo;
+
         try
         {
-            await _devices.RefreshAsync();
-            ShowAction("Device list refreshed.");
+            await _quickRun.RememberAsync(project.Id, configuration?.Id, device?.Serial).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
-            ReportFailure("Refreshing devices", exception);
+            LogRegionFailure("remembering the quick run target", exception);
+        }
+
+        Dispatch(UpdateQuickRun);
+    }
+
+    private async void OnQuickRunClick(object sender, RoutedEventArgs e)
+    {
+        var selection = _selection;
+        if (selection is null)
+        {
+            return;
+        }
+
+        await StartRunAsync(selection.Project, selection.Configuration, selection.Device);
+    }
+
+    private async void OnRunProjectClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not RecentProjectRow row)
+        {
+            return;
+        }
+
+        var project = _projects.Get(row.Id);
+        if (project is null)
+        {
+            ShowAction("That project is no longer available.", isError: true);
+            return;
+        }
+
+        var configuration = project.RunConfigurations.FirstOrDefault(candidate => candidate.IsDefault)
+                            ?? project.RunConfigurations.FirstOrDefault();
+        var serial = configuration?.DeviceSerial;
+        var device = string.IsNullOrWhiteSpace(serial)
+            ? _devices.Devices.FirstOrDefault(candidate => candidate.State == DeviceState.Device)
+            : _devices.Devices.FirstOrDefault(candidate =>
+                string.Equals(candidate.Serial, serial, StringComparison.Ordinal));
+        await StartRunAsync(project, configuration, device ?? _selection?.Device);
+    }
+
+    private async Task StartRunAsync(ProjectModel? project, RunConfiguration? configuration, DeviceInfo? device)
+    {
+        if (_startingRun)
+        {
+            return;
+        }
+
+        if (project is null || configuration is null)
+        {
+            ShowAction("Select a project and run configuration first.", isError: true);
+            return;
+        }
+
+        var serial = device?.Serial ?? configuration.DeviceSerial;
+        if (string.IsNullOrWhiteSpace(serial))
+        {
+            ShowAction("Connect a device before running.", isError: true);
+            return;
+        }
+
+        var validation = RunConfigurationValidator.Validate(project, configuration);
+        if (!validation.IsValid)
+        {
+            ShowAction(
+                "The run configuration is invalid: " +
+                string.Join("; ", validation.Errors.Select(error => $"{error.Field}: {error.Message}")),
+                isError: true);
+            return;
+        }
+
+        _startingRun = true;
+        QuickRunButton.IsEnabled = false;
+        try
+        {
+            await _quickRun.RememberAsync(project.Id, configuration.Id, serial);
+
+            var request = new RunRequest
+            {
+                Project = project,
+                Configuration = configuration,
+                Device = device,
+                DeviceSerial = serial,
+            };
+
+            string? sessionId = null;
+            void OnChanged(object? sender, RunSessionChangedEventArgs args)
+            {
+                if (sessionId is null &&
+                    string.Equals(args.Session.ProjectId, project.Id, StringComparison.Ordinal) &&
+                    string.Equals(args.Session.ConfigurationId, configuration.Id, StringComparison.Ordinal))
+                {
+                    sessionId = args.Session.Id;
+                }
+            }
+
+            Task<RunSession> run;
+            _runs.SessionChanged += OnChanged;
+            try
+            {
+                run = _runs.RunAsync(request);
+            }
+            finally
+            {
+                _runs.SessionChanged -= OnChanged;
+            }
+
+            if (sessionId is not null)
+            {
+                _workspace.OpenProject(project.Id);
+                _workspace.OpenSession(sessionId);
+                App.Instance.Navigate("session");
+            }
+
+            await run;
+        }
+        catch (Exception exception)
+        {
+            ReportFailure("Starting the run", exception);
         }
         finally
         {
-            RefreshDevicesButton.IsEnabled = true;
-            UpdateDevices();
+            _startingRun = false;
+            QuickRunButton.IsEnabled = _selection?.CanRun ?? false;
         }
+    }
+
+    private void OnOpenQuickRunProjectClick(object sender, RoutedEventArgs e)
+    {
+        if (_selection?.Project is { } project)
+        {
+            _workspace.OpenProject(project.Id);
+        }
+
+        App.Instance.Navigate("projects");
+    }
+
+    private void OnOpenProjectClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is RecentProjectRow row)
+        {
+            _workspace.OpenProject(row.Id);
+        }
+
+        App.Instance.Navigate("projects");
+    }
+
+    private void OnOpenSessionClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is ActiveSessionRow row)
+        {
+            _workspace.OpenSession(row.Id);
+            App.Instance.Navigate("session");
+        }
+    }
+
+    private void OnOpenDeviceClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is DeviceRowViewModel row)
+        {
+            _workspace.OpenDevice(row.Serial);
+        }
+
+        App.Instance.Navigate("devices");
+    }
+
+    private void OnSeeAllSessionsClick(object sender, RoutedEventArgs e) => App.Instance.Navigate("history");
+
+    private void OnOpenProjectsClick(object sender, RoutedEventArgs e) => App.Instance.Navigate("projects");
+
+    private void OnOpenDevicesClick(object sender, RoutedEventArgs e) => App.Instance.Navigate("devices");
+
+    private void OnOpenSettingsClick(object sender, RoutedEventArgs e) => App.Instance.Navigate("settings");
+
+    private void OnOpenExtensionsClick(object sender, RoutedEventArgs e) => App.Instance.Navigate("extensions");
+
+    private void OnRefreshClick(object sender, RoutedEventArgs e) => Reload(force: true);
+
+    private async void OnRefreshDevicesClick(object sender, RoutedEventArgs e)
+    {
+        _devicesLoaded = false;
+        await LoadDevicesRegionAsync();
+        UpdateQuickRun();
     }
 
     private async void OnCheckToolchainClick(object sender, RoutedEventArgs e)
     {
         CheckToolchainButton.IsEnabled = false;
-        ToolchainSummaryText.Text = "Checking the toolchain…";
+        EnvironmentFreshnessText.Text = "Checking the toolchain…";
         try
         {
             await _toolchain.CheckAsync();
+            _environmentChecked = true;
             ShowAction("Toolchain check finished.");
         }
         catch (Exception exception)
@@ -187,7 +699,7 @@ public sealed partial class HomePage : Page, IRefreshablePage, IDisposable
         finally
         {
             CheckToolchainButton.IsEnabled = true;
-            UpdateToolchain();
+            UpdateEnvironment();
         }
     }
 
@@ -208,38 +720,41 @@ public sealed partial class HomePage : Page, IRefreshablePage, IDisposable
         }
     }
 
-    private void OnOpenDevicesClick(object sender, RoutedEventArgs e) => App.Instance.Navigate("devices");
-
-    private void OnOpenSettingsClick(object sender, RoutedEventArgs e) => App.Instance.Navigate("settings");
-
-    private void OnOpenExtensionsClick(object sender, RoutedEventArgs e) => App.Instance.Navigate("extensions");
-
-    private void OnOpenDiagnosticsClick(object sender, RoutedEventArgs e) => App.Instance.Navigate("diagnostics");
-
-    private void ShowAction(string message, bool isError = false)
+    private void OnDevicesChanged(object? sender, DeviceListChangedEventArgs e) => Dispatch(() =>
     {
-        ActionBar.Severity = isError ? InfoBarSeverity.Error : InfoBarSeverity.Success;
-        ActionBar.Message = message;
-        ActionBar.IsOpen = true;
-    }
+        UpdateDevices();
+        UpdateQuickRun();
+    });
 
-    private void ReportFailure(string action, Exception exception)
+    private void OnDeviceUpdated(object? sender, DeviceInfo device) => Dispatch(() =>
     {
-        if (_logger.IsEnabled(LogLevel.Warning))
-        {
-            _logger.LogWarning(exception, "{Action} failed.", action);
-        }
+        _deviceRows.FirstOrDefault(row => string.Equals(row.Serial, device.Serial, StringComparison.Ordinal))
+            ?.Update(device);
+    });
 
-        ShowAction(
-            $"{action} failed: {exception.Message} (Diagnostics ID {_diagnostics.DiagnosticsId}).",
-            isError: true);
-    }
-
-    private void OnDevicesChanged(object? sender, DeviceListChangedEventArgs e) => Dispatch(UpdateDevices);
-
-    private void OnToolchainChanged(object? sender, ToolchainSnapshot snapshot) => Dispatch(UpdateToolchain);
+    private void OnToolchainChanged(object? sender, ToolchainSnapshot snapshot) => Dispatch(() =>
+    {
+        _environmentChecked = true;
+        UpdateEnvironment();
+    });
 
     private void OnPluginsChanged(object? sender, EventArgs e) => Dispatch(UpdatePlugins);
+
+    private void OnProjectsChanged(object? sender, EventArgs e) => Dispatch(() =>
+    {
+        UpdateProjects();
+        UpdateQuickRun();
+    });
+
+    private void OnSessionChanged(object? sender, RunSessionChangedEventArgs e) => Dispatch(UpdateSessions);
+
+    private void OnTick(object? sender, object e)
+    {
+        foreach (var row in _sessionRows.ToArray())
+        {
+            row.Tick();
+        }
+    }
 
     private void Dispatch(Action action)
     {
@@ -252,17 +767,60 @@ public sealed partial class HomePage : Page, IRefreshablePage, IDisposable
         _dispatcher.TryEnqueue(() => action());
     }
 
-    private static string StateLabel(DeviceState state) => state switch
+    private void LogRegionFailure(string region, Exception exception)
     {
-        DeviceState.Device => "ready",
-        DeviceState.Unauthorized => "unauthorized",
-        DeviceState.Authorizing => "authorizing",
-        DeviceState.Offline => "offline",
-        DeviceState.Connecting => "connecting",
-        DeviceState.Recovery => "recovery",
-        DeviceState.Sideload => "sideload",
-        DeviceState.Bootloader => "bootloader",
-        DeviceState.Disconnected => "disconnected",
-        _ => "unknown",
-    };
+        if (_logger.IsEnabled(LogLevel.Warning))
+        {
+            _logger.LogWarning(exception, "The home {Region} region failed.", region);
+        }
+    }
+
+    private void ShowAction(string message, bool isError = false)
+    {
+        ActionBar.Severity = isError ? InfoBarSeverity.Error : InfoBarSeverity.Success;
+        ActionBar.Message = message;
+        ActionBar.IsOpen = true;
+    }
+
+    private void ReportFailure(string action, Exception exception)
+    {
+        LogRegionFailure(action, exception);
+        ShowAction(
+            $"{action} failed: {exception.Message} (Diagnostics ID {_diagnostics.DiagnosticsId}).",
+            isError: true);
+    }
+
+    private static void ShowLoading(UIElement skeleton, params UIElement[] hidden)
+    {
+        skeleton.Visibility = Visibility.Visible;
+        foreach (var element in hidden)
+        {
+            element.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private static void ShowResult(
+        UIElement skeleton,
+        UIElement content,
+        UIElement empty,
+        TextBlock error,
+        bool hasContent,
+        string? errorText = null)
+    {
+        empty.Visibility = !hasContent && errorText is null ? Visibility.Visible : Visibility.Collapsed;
+        ShowResult(skeleton, content, error, hasContent, errorText);
+    }
+
+    private static void ShowResult(
+        UIElement skeleton,
+        UIElement content,
+        TextBlock error,
+        bool hasContent,
+        string? errorText = null)
+    {
+        skeleton.Visibility = Visibility.Collapsed;
+        content.Visibility = hasContent ? Visibility.Visible : Visibility.Collapsed;
+        error.Text = errorText ?? string.Empty;
+        error.Visibility = errorText is null ? Visibility.Collapsed : Visibility.Visible;
+    }
 }

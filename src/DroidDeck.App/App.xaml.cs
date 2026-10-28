@@ -303,6 +303,7 @@ public partial class App : Application, IDisposable
             Preferences = configuration.Current.Settings.Notifications.ToPreferences(),
         });
         services.AddSingleton<IRunSessionService, RunSessionService>();
+        services.AddSingleton<QuickRunMemory>();
         services.AddTransient<ViewModels.DevicesViewModel>();
 
         services.AddSingleton<MainWindow>();

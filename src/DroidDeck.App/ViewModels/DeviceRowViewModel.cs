@@ -232,11 +232,11 @@ public sealed class DeviceRowViewModel : ObservableObject
     /// <summary>Gets when the device was last seen.</summary>
     public string LastSeenLabel => _device.LastSeenAt == DateTimeOffset.MinValue
         ? "Not seen yet"
-        : $"Seen {RelativeTime(_device.LastSeenAt)}";
+        : $"Seen {RelativeTime.Ago(_device.LastSeenAt)}";
 
     /// <summary>Gets when metadata was last refreshed.</summary>
     public string MetadataLabel => _device.MetadataUpdatedAt is { } updated
-        ? $"Metadata updated {RelativeTime(updated)}"
+        ? $"Metadata updated {RelativeTime.Ago(updated)}"
         : "Metadata not fetched yet";
 
     /// <summary>Gets a tag summary.</summary>
@@ -362,46 +362,5 @@ public sealed class DeviceRowViewModel : ObservableObject
         }
 
         return string.Create(CultureInfo.InvariantCulture, $"{bytes} B");
-    }
-
-    private static string RelativeTime(DateTimeOffset timestamp)
-    {
-        var delta = DateTimeOffset.UtcNow - timestamp;
-        if (delta < TimeSpan.Zero)
-        {
-            delta = TimeSpan.Zero;
-        }
-
-        if (delta.TotalSeconds < 45)
-        {
-            return "just now";
-        }
-
-        if (delta.TotalMinutes < 2)
-        {
-            return "1 minute ago";
-        }
-
-        if (delta.TotalMinutes < 60)
-        {
-            return string.Create(CultureInfo.InvariantCulture, $"{(int)delta.TotalMinutes} minutes ago");
-        }
-
-        if (delta.TotalHours < 2)
-        {
-            return "1 hour ago";
-        }
-
-        if (delta.TotalHours < 24)
-        {
-            return string.Create(CultureInfo.InvariantCulture, $"{(int)delta.TotalHours} hours ago");
-        }
-
-        if (delta.TotalDays < 2)
-        {
-            return "yesterday";
-        }
-
-        return string.Create(CultureInfo.InvariantCulture, $"{(int)delta.TotalDays} days ago");
     }
 }
