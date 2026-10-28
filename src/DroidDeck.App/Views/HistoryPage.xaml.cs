@@ -52,6 +52,10 @@ public sealed partial class HistoryPage : Page, IRefreshablePage
         RetentionText.Text =
             $"Retention: {logging.RetentionDays} day(s) or {gigabytes:F1} GB. " +
             "Older sessions are removed at startup and when retention is applied.";
+        if (App.Instance.LastStartupRetention is { RemovedSessions: > 0 } startup)
+        {
+            RetentionText.Text += $" At startup: {startup.Summary}";
+        }
     }
 
     private async Task LoadAsync()

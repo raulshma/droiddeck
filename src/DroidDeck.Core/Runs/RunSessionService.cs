@@ -21,7 +21,6 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
     private const int MaxBuildOutputLines = 100_000;
     private const int MaxStepOutputTailLines = 200;
     private const int MaxLogEntries = 1_000_000;
-    private static readonly TimeSpan CrashDedupeWindow = TimeSpan.FromSeconds(10);
     private static readonly StringComparer SerialComparer = StringComparer.Ordinal;
 
     private readonly IRunPlanBuilder _planBuilder;
@@ -1231,21 +1230,8 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         var session = context.Session;
         lock (session)
         {
-            var now = DateTimeOffset.UtcNow;
-            var stale = context.RecentCrashes
-                .Where(pair => now - pair.Value > CrashDedupeWindow)
-                .Select(pair => pair.Key)
-                .ToArray();
-            foreach (var key in stale)
-            {
-                context.RecentCrashes.Remove(key);
-            }
-
-            if (!context.RecentCrashes.TryAdd(args.Crash.DedupeKey, now))
-            {
-                return;
-            }
-
+            // The logcat pipeline's CrashDetector already dedupes echo reports of the
+            // same crash within its window, so every event raised here is distinct.
             session.Crashes.Add(args.Crash);
         }
 
@@ -1709,8 +1695,6 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         public bool StoppedByUser { get; set; }
 
         public bool LaunchWasSkipped { get; set; }
-
-        public Dictionary<string, DateTimeOffset> RecentCrashes { get; } = new(StringComparer.Ordinal);
     }
 
     private enum CustomStepResult

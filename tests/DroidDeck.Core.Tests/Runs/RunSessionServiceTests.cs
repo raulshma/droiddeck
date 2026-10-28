@@ -229,7 +229,7 @@ public sealed class RunSessionServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task DuplicateCrashWithinWindowIsSuppressed()
+    public async Task CrashEvents_AccumulateInSessionTimeline()
     {
         var (service, session, logcat) = await RunWithAttachedLogcatAsync();
         await using (service)
@@ -238,9 +238,10 @@ public sealed class RunSessionServiceTests : IDisposable
             logcat.RaiseCrash("stack-key-1");
             logcat.RaiseCrash("stack-key-2");
 
-            Assert.Equal(2, session.Crashes.Count);
+            Assert.Equal(3, session.Crashes.Count);
             Assert.Equal("stack-key-1", session.Crashes[0].DedupeKey);
-            Assert.Equal("stack-key-2", session.Crashes[1].DedupeKey);
+            Assert.Equal("stack-key-1", session.Crashes[1].DedupeKey);
+            Assert.Equal("stack-key-2", session.Crashes[2].DedupeKey);
         }
     }
 

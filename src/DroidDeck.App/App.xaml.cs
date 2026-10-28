@@ -69,6 +69,9 @@ public partial class App : Application, IDisposable
     /// <summary>Gets the running application instance.</summary>
     public static App Instance => (App)Current;
 
+    /// <summary>Gets or sets what startup session retention removed, for display on the history page.</summary>
+    public RetentionResult? LastStartupRetention { get; set; }
+
     /// <summary>Gets the resolved data paths.</summary>
     public AppPaths Paths => _paths;
 
@@ -348,9 +351,16 @@ public partial class App : Application, IDisposable
         try
         {
             var logging = configuration.Current.Settings.Logging;
-            await services.GetRequiredService<ISessionStore>().ApplyRetentionAsync(
+            var retention = await services.GetRequiredService<ISessionStore>().ApplyRetentionAsync(
                 logging.RetentionDays,
                 logging.MaxSessionBytes);
+            if (retention.RemovedSessions > 0)
+            {
+                LastStartupRetention = retention;
+                logger.LogInformation(
+                    "Session retention removed {Count} session(s).",
+                    retention.RemovedSessions);
+            }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
