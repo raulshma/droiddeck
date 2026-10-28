@@ -1,0 +1,197 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="DroidDeck.App.Views.OnboardingPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <ScrollViewer HorizontalScrollMode="Disabled">
+        <StackPanel Padding="28,24" Spacing="14">
+            <InfoBar
+                x:Name="ActionBar"
+                IsOpen="False"
+                IsClosable="True"
+                AutomationProperties.AutomationId="OnboardingActionBar" />
+
+            <TextBlock
+                Text="Welcome to DroidDeck"
+                Style="{StaticResource TitleTextBlockStyle}"
+                AutomationProperties.AutomationId="OnboardingWelcomeTitle" />
+            <TextBlock
+                Text="Set up your tools, add a project, and connect a device. Every step can be skipped and finished later — everything is also reachable from Home."
+                TextWrapping="Wrap"
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock
+                    x:Name="ProgressText"
+                    VerticalAlignment="Center"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    AutomationProperties.AutomationId="OnboardingProgressText" />
+                <HyperlinkButton
+                    Grid.Column="1"
+                    Content="Skip setup"
+                    Click="OnSkipSetupClick"
+                    AutomationProperties.AutomationId="OnboardingSkipSetupButton" />
+            </Grid>
+
+            <TextBlock
+                x:Name="StepTitleText"
+                Style="{StaticResource SectionHeaderStyle}"
+                AutomationProperties.AutomationId="OnboardingStepTitle" />
+
+            <Border x:Name="ToolsPanel" Style="{StaticResource CardBorderStyle}">
+                <StackPanel Spacing="10">
+                    <TextBlock
+                        Text="DroidDeck builds, installs, and mirrors through your installed toolchain. Missing tools show what to do next."
+                        TextWrapping="Wrap"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock
+                        x:Name="ToolchainStatusText"
+                        AutomationProperties.AutomationId="OnboardingToolchainStatus" />
+                    <ItemsControl x:Name="ToolList" AutomationProperties.AutomationId="OnboardingToolList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Spacing="2" Margin="0,0,0,8">
+                                    <StackPanel Orientation="Horizontal" Spacing="10">
+                                        <TextBlock
+                                            Text="{Binding Name}"
+                                            FontWeight="SemiBold"
+                                            MinWidth="140" />
+                                        <TextBlock Text="{Binding Status}" />
+                                    </StackPanel>
+                                    <TextBlock
+                                        Text="{Binding Guidance}"
+                                        Visibility="{Binding GuidanceVisibility}"
+                                        FontSize="12"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        TextWrapping="Wrap" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button
+                            Content="Check again"
+                            Click="OnCheckToolsClick"
+                            AutomationProperties.AutomationId="OnboardingCheckToolsButton" />
+                        <HyperlinkButton
+                            Content="Open tool settings"
+                            Click="OnOpenToolSettingsClick"
+                            AutomationProperties.AutomationId="OnboardingOpenToolSettingsButton" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <Border x:Name="ProjectPanel" Style="{StaticResource CardBorderStyle}" Visibility="Collapsed">
+                <StackPanel Spacing="10">
+                    <TextBlock
+                        Text="Add the project you are working on. Gradle, APK-only, and custom script projects are detected automatically."
+                        TextWrapping="Wrap"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button
+                            Content="Add project folder…"
+                            Click="OnAddFolderClick"
+                            AutomationProperties.AutomationId="OnboardingAddFolderButton" />
+                        <Button
+                            Content="Add APK…"
+                            Click="OnAddApkClick"
+                            AutomationProperties.AutomationId="OnboardingAddApkButton" />
+                        <Button
+                            Content="Scan a folder…"
+                            Click="OnScanFolderClick"
+                            AutomationProperties.AutomationId="OnboardingScanFolderButton" />
+                    </StackPanel>
+                    <TextBlock
+                        x:Name="ProjectsSummaryText"
+                        TextWrapping="Wrap"
+                        AutomationProperties.AutomationId="OnboardingProjectsSummary" />
+                    <HyperlinkButton
+                        Content="Open the projects page"
+                        Click="OnOpenProjectsClick"
+                        AutomationProperties.AutomationId="OnboardingOpenProjectsButton" />
+                </StackPanel>
+            </Border>
+
+            <Border x:Name="DevicePanel" Style="{StaticResource CardBorderStyle}" Visibility="Collapsed">
+                <StackPanel Spacing="10">
+                    <TextBlock
+                        x:Name="DeviceStatusText"
+                        TextWrapping="Wrap"
+                        AutomationProperties.AutomationId="OnboardingDeviceStatus" />
+                    <TextBlock
+                        x:Name="DeviceGuidanceText"
+                        TextWrapping="Wrap"
+                        Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                        AutomationProperties.AutomationId="OnboardingDeviceGuidance" />
+                    <StackPanel
+                        x:Name="DeviceHelpList"
+                        Spacing="4"
+                        AutomationProperties.AutomationId="OnboardingDeviceHelpList">
+                        <TextBlock
+                            Text="1. On the device, open Settings → About phone and tap Build number seven times to enable Developer options."
+                            FontSize="12"
+                            TextWrapping="Wrap" />
+                        <TextBlock
+                            Text="2. In Developer options, turn on USB debugging."
+                            FontSize="12"
+                            TextWrapping="Wrap" />
+                        <TextBlock
+                            Text="3. Connect the device over USB and unlock it."
+                            FontSize="12"
+                            TextWrapping="Wrap" />
+                        <TextBlock
+                            Text="4. When the &quot;Allow USB debugging?&quot; prompt appears, tap Allow."
+                            FontSize="12"
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button
+                            Content="Check again"
+                            Click="OnCheckDevicesClick"
+                            AutomationProperties.AutomationId="OnboardingCheckDevicesButton" />
+                        <HyperlinkButton
+                            Content="Open the devices page"
+                            Click="OnOpenDevicesClick"
+                            AutomationProperties.AutomationId="OnboardingOpenDevicesButton" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <Grid ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Button
+                    x:Name="BackButton"
+                    Content="Back"
+                    IsEnabled="False"
+                    Click="OnBackClick"
+                    AutomationProperties.AutomationId="OnboardingBackButton" />
+                <Button
+                    x:Name="SkipStepButton"
+                    Grid.Column="2"
+                    Content="Skip this step"
+                    Click="OnSkipStepClick"
+                    AutomationProperties.AutomationId="OnboardingSkipStepButton" />
+                <Button
+                    x:Name="NextButton"
+                    Grid.Column="3"
+                    Content="Next"
+                    Style="{StaticResource AccentButtonStyle}"
+                    Click="OnNextClick"
+                    AutomationProperties.AutomationId="OnboardingNextButton" />
+            </Grid>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

@@ -30,6 +30,7 @@ public sealed partial class MainWindow : Window
         new(StringComparer.OrdinalIgnoreCase)
         {
             ["home"] = typeof(HomePage),
+            ["onboarding"] = typeof(OnboardingPage),
             ["devices"] = typeof(DevicesPage),
             ["projects"] = typeof(ProjectsPage),
             ["session"] = typeof(SessionPage),
@@ -102,7 +103,7 @@ public sealed partial class MainWindow : Window
         ApplyTheme(_configuration.Current.Settings.Appearance.Theme);
         RestorePlacement();
         UpdateStatus();
-        Navigate("home");
+        Navigate(_configuration.Current.Settings.Onboarding.Completed ? "home" : "onboarding");
     }
 
     /// <summary>Navigates to a page by key. Unknown keys show a safe fallback.</summary>
@@ -129,6 +130,8 @@ public sealed partial class MainWindow : Window
         {
             refreshable.Refresh();
         }
+
+        UpdateStatus();
     }
 
     /// <summary>Allows the window to close after application services are disposed.</summary>
@@ -261,7 +264,12 @@ public sealed partial class MainWindow : Window
             string.IsNullOrWhiteSpace(_devices.LastError)
                 ? $"Diagnostics ID {_diagnostics.DiagnosticsId}"
                 : $"{_devices.LastError}\nDiagnostics ID {_diagnostics.DiagnosticsId}");
+        FinishSetupButton.Visibility = _configuration.Current.Settings.Onboarding.Completed
+            ? Visibility.Collapsed
+            : Visibility.Visible;
     }
+
+    private void OnFinishSetupClick(object sender, RoutedEventArgs e) => Navigate("onboarding");
 
     private void ShowStatusMessage(string message)
     {

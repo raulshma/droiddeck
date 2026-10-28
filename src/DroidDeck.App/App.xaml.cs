@@ -308,6 +308,7 @@ public partial class App : Application, IDisposable
 
         services.AddSingleton<MainWindow>();
         services.AddTransient<HomePage>();
+        services.AddTransient<OnboardingPage>();
         services.AddTransient<DevicesPage>();
         services.AddTransient<ActivityPage>();
         services.AddTransient<ProjectsPage>();

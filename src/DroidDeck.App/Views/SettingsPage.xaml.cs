@@ -426,6 +426,22 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         }
     }
 
+    private async void OnRunSetupAgainClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await _configuration.ResetAsync(SettingsPaths.OnboardingCompleted);
+            await _configuration.ResetAsync(SettingsPaths.OnboardingStep);
+            ShowAction("First-run setup was reset.");
+            App.Instance.Navigate("onboarding");
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            ReportFailure("Resetting first-run setup", exception);
+        }
+    }
+
     private async void OnSafeModeToggled(object sender, RoutedEventArgs e)
     {
         if (_initializing)

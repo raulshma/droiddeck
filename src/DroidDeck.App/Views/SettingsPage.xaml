@@ -50,6 +50,21 @@
 
             <Border Style="{StaticResource CardBorderStyle}">
                 <StackPanel Spacing="10">
+                    <TextBlock Text="First-run setup" Style="{StaticResource SectionHeaderStyle}" />
+                    <TextBlock
+                        Text="Run the first-run setup again to review tools, add projects, and connect devices. It only appears at startup until it is completed or skipped."
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                    <Button
+                        Content="Run setup again"
+                        Click="OnRunSetupAgainClick"
+                        AutomationProperties.AutomationId="RunSetupAgainButton" />
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorderStyle}">
+                <StackPanel Spacing="10">
                     <TextBlock Text="Tools" Style="{StaticResource SectionHeaderStyle}" />
                     <TextBlock
                         Text="Set explicit tool paths to override auto-detection. Leave a field empty to detect the tool automatically. Run Check toolchain after saving to refresh results."

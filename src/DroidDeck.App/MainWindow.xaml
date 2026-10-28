@@ -160,6 +160,14 @@
                 Spacing="10"
                 HorizontalAlignment="Right"
                 VerticalAlignment="Center">
+                <Button
+                    x:Name="FinishSetupButton"
+                    Content="Finish setup"
+                    FontSize="12"
+                    Padding="10,2"
+                    Click="OnFinishSetupClick"
+                    Visibility="Collapsed"
+                    AutomationProperties.AutomationId="FinishSetupButton" />
                 <TextBlock
                     x:Name="DiagnosticsIdText"
                     FontSize="12"
