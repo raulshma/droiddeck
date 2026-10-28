@@ -254,6 +254,9 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
                 $"Flutter {FlutterAdapter.NormalizeMode(configuration.VariantName)} · artifact {configuration.Artifact.Glob}",
             RunConfigurationKind.ReactNative =>
                 $"React Native {ReactNativeAdapter.NormalizeMode(configuration.VariantName)} · artifact {configuration.Artifact.Glob}",
+            RunConfigurationKind.Maui =>
+                $"MAUI {MauiAdapter.NormalizeConfiguration(configuration.VariantName)} · " +
+                $"{configuration.Build.TargetFramework ?? "Android"} · artifact {configuration.Artifact.Glob}",
             RunConfigurationKind.Apk =>
                 $"Prebuilt APK · {configuration.Artifact.Glob}",
             _ => $"{configuration.Steps.Count} custom step(s)",
@@ -861,6 +864,20 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
 
     private static RunConfiguration CreateDefaultConfiguration(ProjectModel project)
     {
+        var stackDefault = project.Kind switch
+        {
+            ProjectKind.Maui when project.MauiInfo is { SupportsAndroid: true } mauiInfo =>
+                MauiAdapter.CreateDefaultRunConfigurations(project, mauiInfo).FirstOrDefault(),
+            _ => null,
+        };
+        if (stackDefault is not null)
+        {
+            stackDefault.Id = Guid.NewGuid().ToString("N");
+            stackDefault.Name = "New configuration";
+            stackDefault.IsDefault = false;
+            return stackDefault;
+        }
+
         var variant = project.Variants.FirstOrDefault(variant => variant.IsDefault) ?? project.Variants.FirstOrDefault();
         var configuration = new RunConfiguration
         {
@@ -1113,6 +1130,9 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
                     $"Flutter {FlutterAdapter.NormalizeMode(configuration.VariantName)} · {configuration.Artifact.Glob}",
                 RunConfigurationKind.ReactNative =>
                     $"React Native {ReactNativeAdapter.NormalizeMode(configuration.VariantName)} · {configuration.Artifact.Glob}",
+                RunConfigurationKind.Maui =>
+                    $"MAUI {MauiAdapter.NormalizeConfiguration(configuration.VariantName)} · " +
+                    $"{configuration.Build.TargetFramework ?? "Android"} · {configuration.Artifact.Glob}",
                 RunConfigurationKind.Apk =>
                     $"APK · {configuration.Artifact.Glob}",
                 _ => $"Custom · {configuration.Steps.Count} step(s)",

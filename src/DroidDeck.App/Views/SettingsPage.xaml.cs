@@ -302,6 +302,7 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         ToolKind.Node => tools.NodePath,
         ToolKind.Scrcpy => tools.ScrcpyPath,
         ToolKind.Unity => tools.UnityPath,
+        ToolKind.DotNet => tools.DotNetPath,
         _ => null,
     };
 

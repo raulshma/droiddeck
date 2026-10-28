@@ -42,18 +42,35 @@ public sealed class RunPlanBuilder : IRunPlanBuilder
         var isBuildable = configuration.Kind
             is RunConfigurationKind.Gradle
             or RunConfigurationKind.Flutter
-            or RunConfigurationKind.ReactNative;
+            or RunConfigurationKind.ReactNative
+            or RunConfigurationKind.Maui;
         if (isBuildable && !configuration.Build.Skip)
         {
-            var request = CreateBuildRequest(project, configuration);
-            preview.Steps.Add(new RunPlanPreviewStep
+            var commands = CreateBuildCommands(project, configuration);
+            if (commands.Count == 0)
             {
-                Name = "Build",
-                Kind = RunStepKind.Build,
-                CommandLine = request?.ToCommandLine() ?? "Build is skipped.",
-                WillRun = request is not null,
-                SkipReason = request is null ? "The build is disabled for this configuration." : null,
-            });
+                preview.Steps.Add(new RunPlanPreviewStep
+                {
+                    Name = "Build",
+                    Kind = RunStepKind.Build,
+                    CommandLine = string.Empty,
+                    WillRun = false,
+                    SkipReason = "The build is disabled for this configuration.",
+                });
+            }
+            else
+            {
+                foreach (var command in commands)
+                {
+                    preview.Steps.Add(new RunPlanPreviewStep
+                    {
+                        Name = command.Name,
+                        Kind = RunStepKind.Build,
+                        CommandLine = command.Request.ToCommandLine(),
+                        WillRun = true,
+                    });
+                }
+            }
         }
         else if (isBuildable)
         {
@@ -222,6 +239,11 @@ public sealed class RunPlanBuilder : IRunPlanBuilder
             return CreateFlutterBuildRequest(project, configuration);
         }
 
+        if (configuration.Kind == RunConfigurationKind.Maui)
+        {
+            return CreateMauiBuildRequest(project, configuration);
+        }
+
         if (configuration.Build.Skip || string.IsNullOrWhiteSpace(configuration.Build.Task))
         {
             return null;
@@ -280,6 +302,17 @@ public sealed class RunPlanBuilder : IRunPlanBuilder
             Environment = environment,
             Timeout = timeout,
         };
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyList<RunBuildCommand> CreateBuildCommands(
+        ProjectModel project,
+        RunConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        ArgumentNullException.ThrowIfNull(configuration);
+        var build = CreateBuildRequest(project, configuration);
+        return build is null ? [] : [new RunBuildCommand("Build", build)];
     }
 
     /// <inheritdoc />
@@ -370,6 +403,47 @@ public sealed class RunPlanBuilder : IRunPlanBuilder
         };
     }
 
+    private ProcessRequest? CreateMauiBuildRequest(ProjectModel project, RunConfiguration configuration)
+    {
+        if (configuration.Build.Skip)
+        {
+            return null;
+        }
+
+        var context = RunTemplateContext.ForProject(project, configuration);
+        var projectFile = TemplateEngine.Expand(configuration.Build.Task, context);
+        if (string.IsNullOrWhiteSpace(projectFile))
+        {
+            projectFile = project.MauiInfo?.ProjectFile;
+            if (!string.IsNullOrWhiteSpace(projectFile) &&
+                !string.IsNullOrWhiteSpace(configuration.Build.WorkingDirectory))
+            {
+                projectFile = Path.GetFileName(projectFile.Replace('\\', '/'));
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(projectFile))
+        {
+            return null;
+        }
+
+        var extraArguments = configuration.Build.Arguments
+            .Select(argument => TemplateEngine.Expand(argument, context))
+            .ToArray();
+        return new ProcessRequest
+        {
+            FileName = ResolveDotNet(),
+            Arguments = MauiAdapter.CreateBuildArguments(
+                projectFile,
+                configuration.VariantName,
+                configuration.Build.TargetFramework,
+                extraArguments),
+            WorkingDirectory = ResolveWorkingDirectory(project, configuration),
+            Environment = CreateBuildEnvironment(configuration, context),
+            Timeout = TimeSpan.FromSeconds(Math.Clamp(configuration.Build.TimeoutSeconds, 5, 24 * 60 * 60)),
+        };
+    }
+
     private static string ResolveWorkingDirectory(ProjectModel project, RunConfiguration configuration)
     {
         var root = project.RootPath;
@@ -432,6 +506,18 @@ public sealed class RunPlanBuilder : IRunPlanBuilder
         }
 
         return OperatingSystem.IsWindows() ? "npx.cmd" : "npx";
+    }
+
+    private string ResolveDotNet()
+    {
+        var configured = _configuration?.Current.Settings.Tools.DotNetPath;
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            return configured;
+        }
+
+        var fromSnapshot = _toolchain?.CachedSnapshot?.Get(ToolKind.DotNet)?.Path;
+        return string.IsNullOrWhiteSpace(fromSnapshot) ? "dotnet" : fromSnapshot;
     }
 
     private static string? FindWrapper(string root)

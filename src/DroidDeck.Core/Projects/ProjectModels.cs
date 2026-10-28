@@ -19,6 +19,9 @@ public enum ProjectKind
     /// <summary>A React Native or Expo project with an Android host folder.</summary>
     ReactNative,
 
+    /// <summary>A .NET MAUI project targeting Android.</summary>
+    Maui,
+
     /// <summary>A prebuilt APK or split APK set.</summary>
     ApkOnly,
 
@@ -241,6 +244,9 @@ public sealed class ProjectModel
     /// <summary>Gets or sets the React Native specifics detected from package.json and Expo config.</summary>
     public ReactNativeProjectInfo? ReactNativeInfo { get; set; }
 
+    /// <summary>Gets or sets the .NET MAUI specifics detected from the project file.</summary>
+    public MauiProjectInfo? MauiInfo { get; set; }
+
     /// <summary>Gets or sets the application module name.</summary>
     public string? ApplicationModule { get; set; }
 
@@ -297,6 +303,7 @@ public sealed class ProjectModel
         ProjectKind.KotlinMultiplatform => "Kotlin Multiplatform",
         ProjectKind.Flutter => "Flutter",
         ProjectKind.ReactNative => "React Native",
+        ProjectKind.Maui => ".NET MAUI",
         ProjectKind.ApkOnly => "APK only",
         _ => "Custom",
     };
@@ -357,6 +364,26 @@ public sealed class ReactNativeProjectInfo
     [JsonIgnore]
     public bool SupportsNativeBuild =>
         !string.Equals(Workflow, "expo-managed", StringComparison.OrdinalIgnoreCase);
+}
+
+/// <summary>.NET MAUI specifics detected from the project file.</summary>
+public sealed class MauiProjectInfo
+{
+    /// <summary>Gets or sets the project file path relative to the project root.</summary>
+    public string? ProjectFile { get; set; }
+
+    /// <summary>Gets or sets every target framework declared by the project.</summary>
+    public List<string> TargetFrameworks { get; set; } = [];
+
+    /// <summary>Gets or sets the Android target frameworks, in declaration order.</summary>
+    public List<string> AndroidTargetFrameworks { get; set; } = [];
+
+    /// <summary>Gets or sets whether Microsoft.Maui.Controls is referenced explicitly.</summary>
+    public bool ReferencesMauiControls { get; set; }
+
+    /// <summary>Gets whether the project has an Android target framework.</summary>
+    [JsonIgnore]
+    public bool SupportsAndroid => AndroidTargetFrameworks.Count > 0;
 }
 
 /// <summary>A reference to an APK that belongs to an APK-only project.</summary>

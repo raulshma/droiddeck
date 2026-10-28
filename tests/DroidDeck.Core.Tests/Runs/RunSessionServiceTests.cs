@@ -307,6 +307,49 @@ public sealed class RunSessionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task MauiPipeline_RunsTheDotNetBuildThenInstallsAndLaunches()
+    {
+        var apk = Path.Combine(_root, "app-Signed.apk");
+        var configuration = new RunConfiguration
+        {
+            Name = "Debug",
+            Kind = RunConfigurationKind.Maui,
+            VariantName = "Debug",
+            Build = { Task = "MauiSample.csproj", TargetFramework = "net9.0-android" },
+            Artifact = { Glob = "bin/Debug/net9.0-android/**/*-Signed.apk", PackageName = "com.example.mauiapp" },
+            Launch = { PackageName = "com.example.mauiapp" },
+        };
+        var planBuilder = new RunPlanBuilderStub
+        {
+            BuildRequest = new ProcessRequest
+            {
+                FileName = "dotnet",
+                Arguments = ["build", "MauiSample.csproj", "-c", "Debug", "-f", "net9.0-android"],
+            },
+        };
+        var artifacts = new FakeArtifactResolver
+        {
+            Resolution = new ArtifactResolution
+            {
+                Glob = configuration.Artifact.Glob,
+                BaseApk = apk,
+                Files = [apk],
+            },
+        };
+        var runner = new FakeRunner();
+        await using var service = CreateService(runner: runner, artifacts: artifacts, planBuilder: planBuilder);
+
+        var session = await service.RunAsync(CreateRequest(configuration, projectKind: ProjectKind.Maui));
+
+        Assert.Equal(RunSessionState.Running, session.State);
+        var build = Assert.Single(session.Steps, step => step.Id == "build");
+        Assert.Equal(RunStepState.Succeeded, build.State);
+        Assert.Equal("dotnet build MauiSample.csproj -c Debug -f net9.0-android", build.CommandLine);
+        var request = Assert.Single(runner.Requests);
+        Assert.Equal("dotnet", request.FileName);
+    }
+
+    [Fact]
     public async Task RunAsync_HoldsTheDeviceLockWhileMutatingTheDevice()
     {
         using var coordinator = new DeviceOperationCoordinator();
@@ -828,10 +871,17 @@ public sealed class RunSessionServiceTests : IDisposable
 
         public ProcessRequest? MetroRequest { get; init; }
 
+        public ProcessRequest? BuildRequest { get; init; }
+
+        public IReadOnlyList<RunBuildCommand>? BuildCommands { get; init; }
+
         public RunPlanPreview BuildPreview(ProjectModel project, RunConfiguration configuration, string? deviceSerial = null) =>
             new();
 
-        public ProcessRequest? CreateBuildRequest(ProjectModel project, RunConfiguration configuration) => null;
+        public ProcessRequest? CreateBuildRequest(ProjectModel project, RunConfiguration configuration) => BuildRequest;
+
+        public IReadOnlyList<RunBuildCommand> CreateBuildCommands(ProjectModel project, RunConfiguration configuration) =>
+            BuildCommands ?? (BuildRequest is null ? [] : [new RunBuildCommand("Build", BuildRequest)]);
 
         public ProcessRequest? CreateFlutterRunRequest(
             ProjectModel project,

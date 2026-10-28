@@ -41,6 +41,12 @@ public enum ToolKind
 
     /// <summary>The Unity editor.</summary>
     Unity,
+
+    /// <summary>The .NET SDK used by MAUI projects.</summary>
+    DotNet,
+
+    /// <summary>The .NET MAUI Android workload.</summary>
+    MauiAndroidWorkload,
 }
 
 /// <summary>Where a tool path came from.</summary>

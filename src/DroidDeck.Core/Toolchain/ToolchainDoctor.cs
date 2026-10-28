@@ -44,6 +44,12 @@ public sealed class ToolchainDoctor : IToolchainService, IDisposable
     private const string UnityGuidance =
         "Install Unity Hub and an editor with Android Build Support, or set the Unity path in Settings > Tools.";
 
+    private const string DotNetGuidance =
+        "Install the .NET SDK and add it to PATH, or set the dotnet path in Settings > Tools.";
+
+    private const string MauiWorkloadGuidance =
+        "Install the .NET MAUI Android workload by running \"dotnet workload install maui-android\", then restart DroidDeck.";
+
     private static readonly TimeSpan DefaultProbeTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan FlutterProbeTimeout = TimeSpan.FromSeconds(30);
     private static readonly string[] DartExecutableNames = ["dart.exe", "dart.cmd", "dart.bat"];
@@ -121,6 +127,7 @@ public sealed class ToolchainDoctor : IToolchainService, IDisposable
             var androidSdk = ResolveAndroidSdk(tools.AndroidSdkPath);
             var sdkPath = androidSdk.IsAvailable ? androidSdk.Path : null;
 
+            var dotnetTask = ProbeDotNetAsync(tools.DotNetPath, cancellationToken);
             var probes = new Task<ToolInfo>[]
             {
                 Task.FromResult(androidSdk),
@@ -136,6 +143,8 @@ public sealed class ToolchainDoctor : IToolchainService, IDisposable
                 ProbeNpxAsync(tools.NodePath, cancellationToken),
                 ProbeScrcpyAsync(tools.ScrcpyPath, cancellationToken),
                 Task.FromResult(ProbeUnity(tools.UnityPath)),
+                dotnetTask,
+                ProbeMauiAndroidWorkloadAsync(dotnetTask, cancellationToken),
             };
 
             var results = await Task.WhenAll(probes).ConfigureAwait(false);
@@ -486,6 +495,117 @@ public sealed class ToolchainDoctor : IToolchainService, IDisposable
             extras,
             DefaultProbeTimeout,
             cancellationToken);
+    }
+
+    private Task<ToolInfo> ProbeDotNetAsync(string? overridePath, CancellationToken cancellationToken)
+    {
+        var extras = new List<string>();
+        var dotnetRoot = _environment.GetVariable("DOTNET_ROOT");
+        if (!string.IsNullOrWhiteSpace(dotnetRoot))
+        {
+            extras.Add(Path.Combine(dotnetRoot, "dotnet.exe"));
+        }
+
+        if (!string.IsNullOrWhiteSpace(_environment.ProgramFiles))
+        {
+            extras.Add(Path.Combine(_environment.ProgramFiles, "dotnet", "dotnet.exe"));
+        }
+
+        return ProbeExecutableAsync(
+            ToolKind.DotNet,
+            ".NET SDK",
+            overridePath,
+            ["dotnet.exe", "dotnet.cmd", "dotnet.bat"],
+            ["--version"],
+            ToolVersionParser.Numeric,
+            DotNetGuidance,
+            extras,
+            DefaultProbeTimeout,
+            cancellationToken);
+    }
+
+    private async Task<ToolInfo> ProbeMauiAndroidWorkloadAsync(
+        Task<ToolInfo> dotnetTask,
+        CancellationToken cancellationToken)
+    {
+        var dotnet = await dotnetTask.ConfigureAwait(false);
+        if (!dotnet.IsAvailable || string.IsNullOrWhiteSpace(dotnet.Path))
+        {
+            return new ToolInfo
+            {
+                Kind = ToolKind.MauiAndroidWorkload,
+                DisplayName = ".NET MAUI Android workload",
+                IsAvailable = false,
+                Source = dotnet.Source,
+                Error = "The .NET SDK was not found, so the installed workloads cannot be queried.",
+                Guidance = "Install the .NET SDK first, then run \"dotnet workload install maui-android\" from a terminal.",
+            };
+        }
+
+        var probe = await _runner
+            .RunAsync(
+                CreateProbeRequest(dotnet.Path, ["workload", "list"], DefaultProbeTimeout),
+                output: null,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (probe.StartError is not null || !probe.Succeeded)
+        {
+            var error = probe.StartError
+                ?? FirstLine(probe.StandardError)
+                ?? FirstLine(probe.StandardOutput)
+                ?? $"dotnet workload list exited with code {probe.ExitCode}.";
+            return new ToolInfo
+            {
+                Kind = ToolKind.MauiAndroidWorkload,
+                DisplayName = ".NET MAUI Android workload",
+                IsAvailable = false,
+                Path = dotnet.Path,
+                Source = dotnet.Source,
+                Error = error,
+                Guidance = MauiWorkloadGuidance,
+            };
+        }
+
+        if (!HasMauiAndroidWorkload(probe.CombinedOutput))
+        {
+            return new ToolInfo
+            {
+                Kind = ToolKind.MauiAndroidWorkload,
+                DisplayName = ".NET MAUI Android workload",
+                IsAvailable = false,
+                Path = dotnet.Path,
+                Source = dotnet.Source,
+                Guidance = MauiWorkloadGuidance,
+            };
+        }
+
+        return new ToolInfo
+        {
+            Kind = ToolKind.MauiAndroidWorkload,
+            DisplayName = ".NET MAUI Android workload",
+            IsAvailable = true,
+            Path = dotnet.Path,
+            Source = dotnet.Source,
+        };
+    }
+
+    private static bool HasMauiAndroidWorkload(string output)
+    {
+        foreach (var rawLine in output.Split('\n'))
+        {
+            var firstToken = rawLine
+                .Trim()
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .FirstOrDefault();
+            if (firstToken is not null &&
+                (firstToken.Equals("maui-android", StringComparison.OrdinalIgnoreCase) ||
+                 firstToken.Equals("maui", StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private ToolInfo ProbeUnity(string? overridePath)

@@ -235,6 +235,130 @@ public sealed class RunPlanBuilderTests
         Assert.Contains(preview.Steps, step => step.Name == "Install" && step.WillRun);
     }
 
+    [Fact]
+    public void CreateBuildRequest_MauiRunsDotNetBuildForTheSelectedFramework()
+    {
+        var dotnet = @"C:\Program Files\dotnet\dotnet.exe";
+        var builder = new RunPlanBuilder(toolchain: new FakeToolchain(@"C:\flutter\flutter.bat", dotnetPath: dotnet));
+        var project = MauiProject();
+        var configuration = project.RunConfigurations[0];
+        configuration.Build.Arguments = ["--no-restore"];
+
+        var request = builder.CreateBuildRequest(project, configuration);
+
+        Assert.NotNull(request);
+        Assert.Equal(dotnet, request.FileName);
+        Assert.Equal(
+            ["build", "MauiSample.csproj", "-c", "Debug", "-f", "net9.0-android", "--no-restore"],
+            request.Arguments);
+        Assert.Equal(project.RootPath, request.WorkingDirectory);
+        Assert.Equal(TimeSpan.FromSeconds(1_800), request.Timeout);
+    }
+
+    [Fact]
+    public void CreateBuildRequest_MauiNestedProjectBuildsInsideItsFolder()
+    {
+        using var temp = new TempDirectory();
+        var project = new ProjectModel
+        {
+            Id = "maui-nested",
+            Name = "MauiApp",
+            RootPath = temp.Path,
+            Kind = ProjectKind.Maui,
+            MauiInfo = new MauiProjectInfo
+            {
+                ProjectFile = "MauiApp/MauiApp.csproj",
+                TargetFrameworks = ["net9.0-android"],
+                AndroidTargetFrameworks = ["net9.0-android"],
+            },
+        };
+        project.RunConfigurations = MauiAdapter.CreateDefaultRunConfigurations(project, project.MauiInfo);
+
+        var request = _builder.CreateBuildRequest(project, project.RunConfigurations[0]);
+
+        Assert.NotNull(request);
+        Assert.Equal(Path.Combine(project.RootPath, "MauiApp"), request.WorkingDirectory);
+        Assert.Equal(["build", "MauiApp.csproj", "-c", "Debug", "-f", "net9.0-android"], request.Arguments);
+    }
+
+    [Fact]
+    public void CreateBuildRequest_MauiFallsBackToTheProjectFileInsideItsFolder()
+    {
+        using var temp = new TempDirectory();
+        var project = new ProjectModel
+        {
+            Id = "maui-nested",
+            Name = "MauiApp",
+            RootPath = temp.Path,
+            Kind = ProjectKind.Maui,
+            MauiInfo = new MauiProjectInfo
+            {
+                ProjectFile = "MauiApp/MauiApp.csproj",
+                TargetFrameworks = ["net9.0-android"],
+                AndroidTargetFrameworks = ["net9.0-android"],
+            },
+        };
+        project.RunConfigurations = MauiAdapter.CreateDefaultRunConfigurations(project, project.MauiInfo);
+        var configuration = project.RunConfigurations[0];
+        configuration.Build.Task = null;
+
+        var request = _builder.CreateBuildRequest(project, configuration);
+
+        Assert.NotNull(request);
+        Assert.Equal(Path.Combine(project.RootPath, "MauiApp"), request.WorkingDirectory);
+        Assert.Equal("MauiApp.csproj", request.Arguments[1]);
+    }
+
+    [Fact]
+    public void CreateBuildRequest_MauiFallsBackToDotNetOnPath()
+    {
+        var project = MauiProject();
+
+        var request = _builder.CreateBuildRequest(project, project.RunConfigurations[0]);
+
+        Assert.NotNull(request);
+        Assert.Equal("dotnet", request.FileName);
+    }
+
+    [Fact]
+    public void BuildPreview_MauiConfigurationShowsDotNetBuildAndInstall()
+    {
+        var project = MauiProject();
+        var configuration = project.RunConfigurations[1];
+
+        var preview = _builder.BuildPreview(project, configuration, "emulator-5554");
+
+        Assert.True(preview.IsValid, string.Join("; ", preview.Errors.Select(error => error.Message)));
+        var build = Assert.Single(preview.Steps, step => step.Kind == RunStepKind.Build);
+        Assert.True(build.WillRun);
+        Assert.Contains("build MauiSample.csproj -c Release -f net9.0-android", build.CommandLine, StringComparison.Ordinal);
+        Assert.Equal("bin/Release/net9.0-android/**/*-Signed.apk", preview.ArtifactGlob);
+        Assert.Contains(preview.Steps, step => step.Name == "Install" && step.WillRun);
+        var launch = Assert.Single(preview.Steps, step => step.Name == "Launch");
+        Assert.Contains("-n com.example.mauiapp/com.example.mauiapp.MainActivity", launch.CommandLine, StringComparison.Ordinal);
+    }
+
+    private static ProjectModel MauiProject()
+    {
+        var project = new ProjectModel
+        {
+            Id = "maui-1",
+            Name = "MauiSample",
+            RootPath = Path.Combine(Path.GetTempPath(), "droiddeck-maui-sample"),
+            Kind = ProjectKind.Maui,
+            ApplicationId = "com.example.mauiapp",
+            LauncherActivity = "com.example.mauiapp.MainActivity",
+            MauiInfo = new MauiProjectInfo
+            {
+                ProjectFile = "MauiSample.csproj",
+                TargetFrameworks = ["net9.0-android", "net9.0-ios"],
+                AndroidTargetFrameworks = ["net9.0-android"],
+            },
+        };
+        project.RunConfigurations = MauiAdapter.CreateDefaultRunConfigurations(project, project.MauiInfo);
+        return project;
+    }
+
     private static ProjectModel ReactNativeProject(bool expo = false, int port = ReactNativeAdapter.DefaultMetroPort)
     {
         var project = new ProjectModel
@@ -273,7 +397,7 @@ public sealed class RunPlanBuilderTests
 
     private sealed class FakeToolchain : IToolchainService
     {
-        public FakeToolchain(string flutterPath, string? npxPath = null)
+        public FakeToolchain(string flutterPath, string? npxPath = null, string? dotnetPath = null)
         {
             var tools = new List<ToolInfo>
             {
@@ -282,6 +406,11 @@ public sealed class RunPlanBuilderTests
             if (npxPath is not null)
             {
                 tools.Add(new ToolInfo { Kind = ToolKind.Npx, DisplayName = "npx", IsAvailable = true, Path = npxPath });
+            }
+
+            if (dotnetPath is not null)
+            {
+                tools.Add(new ToolInfo { Kind = ToolKind.DotNet, DisplayName = ".NET SDK", IsAvailable = true, Path = dotnetPath });
             }
 
             CachedSnapshot = new ToolchainSnapshot(tools, DateTimeOffset.UtcNow);

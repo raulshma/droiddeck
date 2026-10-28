@@ -40,6 +40,9 @@ public sealed partial class RunConfigurationDialog : ContentDialog
                 .Select(variant => variant.Name)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
+            TargetFrameworkBox.ItemsSource = (project.MauiInfo?.AndroidTargetFrameworks ?? [])
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
             DeviceCombo.ItemsSource = devices
                 .Select(device => new DeviceChoice(device.Serial, $"{device.DisplayName} · {device.Serial}"))
                 .ToArray();
@@ -54,6 +57,7 @@ public sealed partial class RunConfigurationDialog : ContentDialog
             BuildArgumentsBox.Text = string.Join(Environment.NewLine, configuration.Build.Arguments);
             BuildEnvironmentBox.Text = FormatEnvironment(configuration.Build.Environment);
             JavaHomeBox.Text = configuration.Build.JavaHome ?? string.Empty;
+            TargetFrameworkBox.Text = configuration.Build.TargetFramework ?? string.Empty;
             BuildTimeoutBox.Value = configuration.Build.TimeoutSeconds;
             BuildWorkingDirectoryBox.Text = configuration.Build.WorkingDirectory ?? string.Empty;
             CleanCheck.IsChecked = configuration.Build.Clean;
@@ -233,6 +237,7 @@ public sealed partial class RunConfigurationDialog : ContentDialog
         Configuration.Build.Arguments = ParseLines(BuildArgumentsBox.Text);
         Configuration.Build.Environment = ParseEnvironment(BuildEnvironmentBox.Text);
         Configuration.Build.JavaHome = NullIfEmpty(JavaHomeBox.Text);
+        Configuration.Build.TargetFramework = NullIfEmpty(TargetFrameworkBox.Text);
         Configuration.Build.TimeoutSeconds = ReadInt(BuildTimeoutBox, 900, 5, 86_400);
         Configuration.Build.WorkingDirectory = NullIfEmpty(BuildWorkingDirectoryBox.Text);
         Configuration.Build.Clean = CleanCheck.IsChecked == true;

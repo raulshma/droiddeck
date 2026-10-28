@@ -151,5 +151,11 @@ public sealed class ToolPathRow : INotifyPropertyChanged
             "Unity executable path",
             "Unity.exe (detect beneath the Unity Hub editor folder)",
             SettingsPaths.UnityPath),
+        new(
+            ToolKind.DotNet,
+            ".NET SDK",
+            "dotnet executable path",
+            "dotnet.exe (resolve from PATH or the default install)",
+            SettingsPaths.DotNetPath),
     ];
 }

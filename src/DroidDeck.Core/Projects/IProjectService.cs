@@ -188,6 +188,16 @@ public interface IRunPlanBuilder
     /// <summary>Creates the process request for a Gradle build.</summary>
     Core.Processes.ProcessRequest? CreateBuildRequest(ProjectModel project, RunConfiguration configuration);
 
+    /// <summary>
+    /// Creates the labeled commands that make up the build, in execution order. Kinds that need a
+    /// CLI preparation step return more than one command; other kinds return a single build command.
+    /// </summary>
+    IReadOnlyList<RunBuildCommand> CreateBuildCommands(ProjectModel project, RunConfiguration configuration)
+    {
+        var request = CreateBuildRequest(project, configuration);
+        return request is null ? [] : [new RunBuildCommand("Build", request)];
+    }
+
     /// <summary>Creates the attached <c>flutter run --machine</c> request for a device, or null without a device.</summary>
     Core.Processes.ProcessRequest? CreateFlutterRunRequest(
         ProjectModel project,
@@ -197,6 +207,11 @@ public interface IRunPlanBuilder
     /// <summary>Creates the Metro development server start request for a React Native project, or null for other kinds.</summary>
     Core.Processes.ProcessRequest? CreateMetroStartRequest(ProjectModel project, RunConfiguration configuration);
 }
+
+/// <summary>One labeled command in a build, such as a Capacitor sync followed by the Gradle build.</summary>
+/// <param name="Name">The step name shown in the run session.</param>
+/// <param name="Request">The process to run.</param>
+public sealed record RunBuildCommand(string Name, Core.Processes.ProcessRequest Request);
 
 /// <summary>A previewed step in a run plan.</summary>
 public sealed class RunPlanPreviewStep

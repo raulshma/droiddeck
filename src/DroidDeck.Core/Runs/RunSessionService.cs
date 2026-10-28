@@ -1084,44 +1084,47 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
     {
         var session = context.Session;
         var configuration = context.Request.Configuration;
-        var step = AddStep(session, "build", "Build", RunStepKind.Build);
         var isBuildable = configuration.Kind
             is RunConfigurationKind.Gradle
             or RunConfigurationKind.Flutter
-            or RunConfigurationKind.ReactNative;
+            or RunConfigurationKind.ReactNative
+            or RunConfigurationKind.Maui;
         if (!isBuildable ||
             configuration.Build.Skip ||
             context.Request.Options.SkipBuild ||
             context.Request.Options.PrebuiltArtifactFiles is { Count: > 0 })
         {
+            var skipped = AddStep(session, "build", "Build", RunStepKind.Build);
             SkipStep(
                 session,
-                step,
+                skipped,
                 !isBuildable
-                    ? "Only Gradle, Flutter, and React Native projects have a build step."
+                    ? "This run configuration does not have a build step."
                     : context.Request.Options.PrebuiltArtifactFiles is { Count: > 0 }
                         ? "The artifact was already built for this device group."
                         : "The build is disabled for this run.");
             return true;
         }
 
-        var buildRequest = _planBuilder.CreateBuildRequest(context.Request.Project, configuration);
-        if (buildRequest is null)
+        var commands = _planBuilder.CreateBuildCommands(context.Request.Project, configuration);
+        if (commands.Count == 0)
         {
-            SkipStep(session, step, "No build command was produced for this configuration.");
+            var skipped = AddStep(session, "build", "Build", RunStepKind.Build);
+            SkipStep(session, skipped, "No build command was produced for this configuration.");
             return true;
         }
 
-        var buildLabel = configuration.Kind == RunConfigurationKind.Flutter
-            ? $"the Flutter {configuration.VariantName ?? "debug"} app"
-            : configuration.Build.Task;
+        var buildLabel = configuration.Kind switch
+        {
+            RunConfigurationKind.Flutter =>
+                $"the Flutter {configuration.VariantName ?? "debug"} app",
+            RunConfigurationKind.Maui =>
+                $"the MAUI {(string.IsNullOrWhiteSpace(configuration.VariantName) ? "Debug" : configuration.VariantName)} app",
+            _ => configuration.Build.Task,
+        };
         SetSessionState(session, RunSessionState.Building, $"Building {buildLabel}.");
-        step.CommandLine = buildRequest.ToCommandLine();
-        StartStep(session, step);
-        var tail = new Queue<string>();
-        var progress = new ActionProgress<ProcessOutputLine>(
-            line => OnProcessOutput(session, step.Id, line, tail, appendToBuildOutput: true));
-        ProcessResult result;
+
+        var isPipeline = commands.Count > 1;
         IAsyncDisposable? resourceLease = null;
         try
         {
@@ -1135,13 +1138,80 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
                     .ConfigureAwait(false);
             }
 
-            result = await _runner.RunAsync(buildRequest, progress, cancellationToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            CancelStep(step);
-            await FinishCancelledAsync(context).ConfigureAwait(false);
-            return false;
+            for (var index = 0; index < commands.Count; index++)
+            {
+                var command = commands[index];
+                var step = AddStep(
+                    session,
+                    isPipeline ? $"build-{index + 1}" : "build",
+                    command.Name,
+                    RunStepKind.Build);
+                step.CommandLine = command.Request.ToCommandLine();
+                StartStep(session, step);
+                var tail = new Queue<string>();
+                var progress = new ActionProgress<ProcessOutputLine>(
+                    line => OnProcessOutput(session, step.Id, line, tail, appendToBuildOutput: true));
+                ProcessResult result;
+                try
+                {
+                    result = await _runner.RunAsync(command.Request, progress, cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    CancelStep(step);
+                    await FinishCancelledAsync(context).ConfigureAwait(false);
+                    return false;
+                }
+
+                step.ExitCode = result.ExitCode;
+                step.OutputTail = JoinTail(tail);
+                if (result.WasCanceled)
+                {
+                    CancelStep(step);
+                    await FinishCancelledAsync(context).ConfigureAwait(false);
+                    return false;
+                }
+
+                if (result.StartError is not null)
+                {
+                    var startMessage =
+                        $"{Subject(command, isPipeline)} could not start: {result.StartError}" +
+                        StartGuidance(configuration);
+                    await FailStepAsync(
+                        context,
+                        step,
+                        startMessage,
+                        result.ExitCode).ConfigureAwait(false);
+                    return false;
+                }
+
+                if (result.TimedOut)
+                {
+                    await FailStepAsync(
+                        context,
+                        step,
+                        $"{Subject(command, isPipeline)} timed out after {configuration.Build.TimeoutSeconds} seconds.",
+                        result.ExitCode).ConfigureAwait(false);
+                    return false;
+                }
+
+                if (!result.Succeeded)
+                {
+                    var errors = BuildErrorParser.Parse(result.CombinedOutput, session.ProjectRoot);
+                    step.Errors = [.. errors];
+                    var message = errors.Count > 0
+                        ? $"{Subject(command, isPipeline)} failed with {errors.Count} error(s). First: {errors[0].Display}"
+                        : $"{Subject(command, isPipeline)} failed with exit code {result.ExitCode}.";
+                    await FailStepAsync(context, step, message, result.ExitCode).ConfigureAwait(false);
+                    return false;
+                }
+
+                SucceedStep(
+                    session,
+                    step,
+                    $"{command.Name} finished in {result.Duration.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture)}s.",
+                    result.ExitCode);
+            }
         }
         finally
         {
@@ -1151,52 +1221,22 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             }
         }
 
-        step.ExitCode = result.ExitCode;
-        step.OutputTail = JoinTail(tail);
-        if (result.WasCanceled)
-        {
-            CancelStep(step);
-            await FinishCancelledAsync(context).ConfigureAwait(false);
-            return false;
-        }
-
-        if (result.StartError is not null)
-        {
-            await FailStepAsync(
-                context,
-                step,
-                $"The build could not start: {result.StartError}",
-                result.ExitCode).ConfigureAwait(false);
-            return false;
-        }
-
-        if (result.TimedOut)
-        {
-            await FailStepAsync(
-                context,
-                step,
-                $"The build timed out after {configuration.Build.TimeoutSeconds} seconds.",
-                result.ExitCode).ConfigureAwait(false);
-            return false;
-        }
-
-        if (!result.Succeeded)
-        {
-            var errors = BuildErrorParser.Parse(result.CombinedOutput, session.ProjectRoot);
-            step.Errors = [.. errors];
-            var message = errors.Count > 0
-                ? $"The build failed with {errors.Count} error(s). First: {errors[0].Display}"
-                : $"The build failed with exit code {result.ExitCode}.";
-            await FailStepAsync(context, step, message, result.ExitCode).ConfigureAwait(false);
-            return false;
-        }
-
-        SucceedStep(
-            session,
-            step,
-            $"Build finished in {result.Duration.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture)}s.",
-            result.ExitCode);
         return true;
+    }
+
+    private static string Subject(RunBuildCommand command, bool isPipeline)
+    {
+        return isPipeline ? command.Name : "The build";
+    }
+
+    private static string StartGuidance(RunConfiguration configuration)
+    {
+        return configuration.Kind switch
+        {
+            RunConfigurationKind.Maui =>
+                " Install the .NET SDK from dotnet.microsoft.com, then retry the build.",
+            _ => string.Empty,
+        };
     }
 
     private async Task<bool> ResolveArtifactAsync(RunContext context, CancellationToken cancellationToken)

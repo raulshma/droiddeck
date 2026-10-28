@@ -43,8 +43,8 @@ physical device is required and processes/temp files are cleaned up afterwards.
 
 Settings lists every detected tool with its version, path, detection source
 (automatic or override), and fix guidance. Each tool accepts an explicit path
-override — Android SDK, adb, aapt2, emulator, JDK folder, Gradle, Flutter, Node.js,
-scrcpy, and Unity — and an empty field falls back to auto-detection. “Copy fix
+override — Android SDK, adb, aapt2, emulator, JDK folder, Gradle, .NET SDK, Flutter,
+Node.js, scrcpy, and Unity — and an empty field falls back to auto-detection. “Copy fix
 guidance” copies the missing tool advice so it can be pasted into a terminal or
 issue. Missing tools never block the shell or device refresh.
 

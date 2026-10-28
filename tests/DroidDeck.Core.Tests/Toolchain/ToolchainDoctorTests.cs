@@ -308,6 +308,69 @@ public sealed class ToolchainDoctorTests
         Assert.Equal(dartPath, dart.Path, ignoreCase: true);
     }
 
+    [Fact]
+    public async Task FindsDotNetAndTheMauiAndroidWorkload()
+    {
+        using var temp = new TempDirectory();
+        var bin = temp.CreateDirectory("bin");
+        ToolchainTestEnvironment.WriteScript(
+            temp,
+            "bin/dotnet.cmd",
+            [
+                "10.0.100",
+                string.Empty,
+                "Installed Workload Id      Manifest Version       Installation Source",
+                "--------------------------------------------------------------------",
+                "maui-android               10.0.0/10.0.100        SDK 10.0.100",
+            ]);
+        using var configuration = await CreateConfigurationAsync(temp);
+        using var doctor = CreateDoctor(temp, configuration, [bin]);
+
+        var snapshot = await doctor.CheckAsync();
+        var dotnet = Assert.IsType<ToolInfo>(snapshot.Get(ToolKind.DotNet));
+        var workload = Assert.IsType<ToolInfo>(snapshot.Get(ToolKind.MauiAndroidWorkload));
+
+        Assert.True(dotnet.IsAvailable, dotnet.Error);
+        Assert.Equal("10.0.100", dotnet.Version);
+        Assert.EndsWith("dotnet.cmd", dotnet.Path, StringComparison.OrdinalIgnoreCase);
+        Assert.True(workload.IsAvailable, workload.Error);
+        Assert.Equal(dotnet.Path, workload.Path, ignoreCase: true);
+    }
+
+    [Fact]
+    public async Task ReportsAMissingMauiWorkloadWithTheExactInstallCommand()
+    {
+        using var temp = new TempDirectory();
+        var bin = temp.CreateDirectory("bin");
+        ToolchainTestEnvironment.WriteScript(temp, "bin/dotnet.cmd", ["10.0.100"]);
+        using var configuration = await CreateConfigurationAsync(temp);
+        using var doctor = CreateDoctor(temp, configuration, [bin]);
+
+        var snapshot = await doctor.CheckAsync();
+        var workload = Assert.IsType<ToolInfo>(snapshot.Get(ToolKind.MauiAndroidWorkload));
+
+        Assert.True(snapshot.IsAvailable(ToolKind.DotNet));
+        Assert.False(workload.IsAvailable);
+        Assert.Contains("dotnet workload install maui-android", workload.Guidance, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ReportsTheMauiWorkloadAsMissingWhenTheSdkIsMissing()
+    {
+        using var temp = new TempDirectory();
+        using var configuration = await CreateConfigurationAsync(temp);
+        using var doctor = CreateDoctor(temp, configuration);
+
+        var snapshot = await doctor.CheckAsync();
+        var dotnet = Assert.IsType<ToolInfo>(snapshot.Get(ToolKind.DotNet));
+        var workload = Assert.IsType<ToolInfo>(snapshot.Get(ToolKind.MauiAndroidWorkload));
+
+        Assert.False(dotnet.IsAvailable);
+        Assert.False(workload.IsAvailable);
+        Assert.False(string.IsNullOrWhiteSpace(workload.Guidance));
+        Assert.Contains("dotnet workload install maui-android", workload.Guidance, StringComparison.Ordinal);
+    }
+
     private static async Task<ConfigurationService> CreateConfigurationAsync(TempDirectory temp)
     {
         var configuration = new ConfigurationService(new AppPaths(temp.Combine("data")));

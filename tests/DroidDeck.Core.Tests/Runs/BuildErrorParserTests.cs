@@ -104,6 +104,53 @@ public sealed class BuildErrorParserTests
     }
 
     [Fact]
+    public void ParseLine_ParsesMsBuildErrorsWithSourceLocations()
+    {
+        var error = BuildErrorParser.ParseLine(
+            @"C:\repo\MainPage.xaml.cs(12,5): error CS0103: The name 'missing' does not exist in the current context",
+            @"C:\repo");
+
+        Assert.NotNull(error);
+        Assert.Equal(Path.Combine(@"C:\repo", "MainPage.xaml.cs"), error.FilePath);
+        Assert.Equal(12, error.Line);
+        Assert.Equal(5, error.Column);
+        Assert.Equal("CS0103", error.Code);
+        Assert.Equal("The name 'missing' does not exist in the current context", error.Message);
+    }
+
+    [Fact]
+    public void ParseLine_IgnoresMsBuildWarnings()
+    {
+        Assert.Null(BuildErrorParser.ParseLine(
+            @"C:\repo\MainPage.xaml.cs(12,5): warning CS0618: 'Thing' is obsolete"));
+    }
+
+    [Fact]
+    public void ParseLine_ParsesMissingMauiWorkloadWithTheInstallCommand()
+    {
+        var error = BuildErrorParser.ParseLine(
+            "error NETSDK1147: To build this project, the following workloads must be installed: maui-android");
+
+        Assert.NotNull(error);
+        Assert.Equal("NETSDK1147", error.Code);
+        Assert.Contains("dotnet workload install maui-android", error.Guidance, StringComparison.Ordinal);
+        Assert.Contains("dotnet workload install maui-android", error.Display, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ParseLine_ParsesMissingAndroidSdkAndJdkGuidance()
+    {
+        var sdk = BuildErrorParser.ParseLine(
+            "error XA5207: Could not find android.jar for API level 34. This means the Android SDK platform for API level 34 is not installed.");
+        var jdk = BuildErrorParser.ParseLine("error XA0030: Building with JDK version 11 is not supported.");
+
+        Assert.NotNull(sdk);
+        Assert.Contains("Android SDK", sdk.Guidance, StringComparison.Ordinal);
+        Assert.NotNull(jdk);
+        Assert.Contains("JDK", jdk.Guidance, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Display_UsesFileNameLineAndColumn()
     {
         var error = new BuildError

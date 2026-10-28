@@ -86,6 +86,14 @@
                             <TextBox x:Name="BuildWorkingDirectoryBox" AutomationProperties.AutomationId="RunConfigBuildWorkingDirectoryBox" />
                         </StackPanel>
                     </Grid>
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Target framework (.NET MAUI, such as net9.0-android)" Style="{StaticResource FieldLabelStyle}" />
+                        <ComboBox
+                            x:Name="TargetFrameworkBox"
+                            IsEditable="True"
+                            HorizontalAlignment="Stretch"
+                            AutomationProperties.AutomationId="RunConfigTargetFrameworkBox" />
+                    </StackPanel>
                     <Grid ColumnSpacing="12">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />

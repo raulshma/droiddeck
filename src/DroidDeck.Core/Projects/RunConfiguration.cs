@@ -14,6 +14,9 @@ public enum RunConfigurationKind
     /// <summary>A Gradle build inside the android host of a React Native project.</summary>
     ReactNative,
 
+    /// <summary>A .NET MAUI build for an Android target framework.</summary>
+    Maui,
+
     /// <summary>An APK is installed directly without a build.</summary>
     Apk,
 
@@ -95,6 +98,9 @@ public sealed class BuildConfiguration
 
     /// <summary>Gets or sets the JDK home used for the build.</summary>
     public string? JavaHome { get; set; }
+
+    /// <summary>Gets or sets the target framework for .NET builds, such as <c>net9.0-android</c>.</summary>
+    public string? TargetFramework { get; set; }
 
     /// <summary>Gets or sets the build timeout in seconds.</summary>
     public int TimeoutSeconds { get; set; } = 900;
@@ -349,6 +355,25 @@ public static class RunConfigurationValidator
             if (string.IsNullOrWhiteSpace(configuration.Artifact.Glob))
             {
                 errors.Add(new("artifact.glob", "An artifact glob is required so the built APK can be found."));
+            }
+        }
+        else if (configuration.Kind == RunConfigurationKind.Maui)
+        {
+            if (string.IsNullOrWhiteSpace(configuration.Build.Task))
+            {
+                errors.Add(new("build.task", "A project file is required for the MAUI build."));
+            }
+
+            if (string.IsNullOrWhiteSpace(configuration.Artifact.Glob))
+            {
+                errors.Add(new("artifact.glob", "An artifact glob is required so the built APK can be found."));
+            }
+
+            if (string.IsNullOrWhiteSpace(configuration.Build.TargetFramework))
+            {
+                errors.Add(new(
+                    "build.targetFramework",
+                    "An Android target framework is required, such as net9.0-android."));
             }
         }
         else if (configuration.Kind == RunConfigurationKind.ReactNative)

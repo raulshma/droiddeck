@@ -235,6 +235,9 @@ public sealed class ToolsSettings
     /// <summary>Gets or sets the Unity editor executable path.</summary>
     public string? UnityPath { get; set; }
 
+    /// <summary>Gets or sets the .NET SDK executable path.</summary>
+    public string? DotNetPath { get; set; }
+
     /// <summary>Gets or sets unknown keys preserved for forward compatibility.</summary>
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? AdditionalSettings { get; set; }
@@ -419,6 +422,9 @@ public static class SettingsPaths
 
     /// <summary>Unity path override.</summary>
     public const string UnityPath = "tools.unityPath";
+
+    /// <summary>.NET SDK path override.</summary>
+    public const string DotNetPath = "tools.dotNetPath";
 
     /// <summary>Log level path.</summary>
     public const string LogLevel = "logging.level";
