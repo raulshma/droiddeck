@@ -357,9 +357,12 @@ public partial class App : Application, IDisposable
             if (retention.RemovedSessions > 0)
             {
                 LastStartupRetention = retention;
-                logger.LogInformation(
-                    "Session retention removed {Count} session(s).",
-                    retention.RemovedSessions);
+                if (logger.IsEnabled(LogLevel.Information))
+                {
+                    logger.LogInformation(
+                        "Session retention removed {Count} session(s).",
+                        retention.RemovedSessions);
+                }
             }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
