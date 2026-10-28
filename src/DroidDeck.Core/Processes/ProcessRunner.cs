@@ -87,15 +87,17 @@ public sealed class ProcessRunner : IProcessRunner
         var standardOutput = new BoundedTextBuffer(request.MaxOutputCharacters);
         var standardError = new BoundedTextBuffer(request.MaxOutputCharacters);
         using var readerCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var stdoutTask = ReadStreamAsync(
-            process.StandardOutput,
+        var stdoutReader = process.StandardOutput;
+        var stderrReader = process.StandardError;
+        var stdoutTask = StartReader(
+            stdoutReader,
             ProcessOutputChannel.StandardOutput,
             standardOutput,
             request,
             output,
             readerCancellation.Token);
-        var stderrTask = ReadStreamAsync(
-            process.StandardError,
+        var stderrTask = StartReader(
+            stderrReader,
             ProcessOutputChannel.StandardError,
             standardError,
             request,
@@ -115,7 +117,8 @@ public sealed class ProcessRunner : IProcessRunner
             await KillAsync(process, job).ConfigureAwait(false);
         }
 
-        await DrainReadersAsync(stdoutTask, stderrTask, readerCancellation).ConfigureAwait(false);
+        await DrainReadersAsync(stdoutReader, stderrReader, stdoutTask, stderrTask, readerCancellation)
+            .ConfigureAwait(false);
         stopwatch.Stop();
 
         var exitCode = TryGetExitCode(process);
@@ -214,7 +217,25 @@ public sealed class ProcessRunner : IProcessRunner
         }
     }
 
-    private async Task ReadStreamAsync(
+    /// <summary>
+    /// Pumps one pipe on a dedicated thread. Async reads post their continuations to
+    /// the thread pool, so a starved pool could leave the reader parked past the drain
+    /// grace and silently discard output a finished process already wrote.
+    /// </summary>
+    private Task StartReader(
+        StreamReader reader,
+        ProcessOutputChannel stream,
+        BoundedTextBuffer buffer,
+        ProcessRequest request,
+        IProgress<ProcessOutputLine>? output,
+        CancellationToken cancellationToken) =>
+        Task.Factory.StartNew(
+            () => ReadStream(reader, stream, buffer, request, output, cancellationToken),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+
+    private void ReadStream(
         StreamReader reader,
         ProcessOutputChannel stream,
         BoundedTextBuffer buffer,
@@ -227,9 +248,9 @@ public sealed class ProcessRunner : IProcessRunner
         var chars = new char[ReadChunkSize];
         try
         {
-            while (true)
+            while (!cancellationToken.IsCancellationRequested)
             {
-                var read = await reader.ReadAsync(chars.AsMemory(), cancellationToken).ConfigureAwait(false);
+                var read = reader.Read(chars, 0, chars.Length);
                 if (read == 0)
                 {
                     break;
@@ -328,6 +349,8 @@ public sealed class ProcessRunner : IProcessRunner
     }
 
     private static async Task DrainReadersAsync(
+        StreamReader stdoutReader,
+        StreamReader stderrReader,
         Task stdoutTask,
         Task stderrTask,
         CancellationTokenSource readerCancellation)
@@ -340,6 +363,8 @@ public sealed class ProcessRunner : IProcessRunner
         {
             // A detached grandchild may still hold the pipes; stop reading rather than hang.
             readerCancellation.Cancel();
+            DisposeReader(stdoutReader);
+            DisposeReader(stderrReader);
             try
             {
                 await Task.WhenAll(stdoutTask, stderrTask)
@@ -359,6 +384,19 @@ public sealed class ProcessRunner : IProcessRunner
         catch (OperationCanceledException)
         {
             // The reader observed cancellation directly.
+        }
+    }
+
+    /// <summary>Closing the pipe is what unblocks a reader parked in a synchronous read.</summary>
+    private static void DisposeReader(StreamReader reader)
+    {
+        try
+        {
+            reader.Dispose();
+        }
+        catch (Exception exception) when (exception is ObjectDisposedException or IOException)
+        {
+            // The reader already released the stream.
         }
     }
 
