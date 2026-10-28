@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using DroidDeck.Core.Devices;
 using DroidDeck.Core.Logs;
 using DroidDeck.Core.Projects;
@@ -192,6 +193,13 @@ public sealed class RunSession
 
     /// <summary>Gets or sets the run configuration name.</summary>
     public string ConfigurationName { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the kind of run configuration backing this session.</summary>
+    public RunConfigurationKind ConfigurationKind { get; set; } = RunConfigurationKind.Gradle;
+
+    /// <summary>Gets whether the session belongs to a React Native run configuration.</summary>
+    [JsonIgnore]
+    public bool IsReactNative => ConfigurationKind == RunConfigurationKind.ReactNative;
 
     /// <summary>Gets or sets the target device serial.</summary>
     public string DeviceSerial { get; set; } = string.Empty;

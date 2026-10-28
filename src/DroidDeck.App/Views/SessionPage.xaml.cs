@@ -335,10 +335,14 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         RestartButton.IsEnabled = _session is { IsReadOnly: false } &&
                                   !string.IsNullOrWhiteSpace(_session.PackageName);
         var hotReload = _session is { IsReadOnly: false, SupportsHotReload: true };
-        HotReloadButton.Visibility = hotReload ? Visibility.Visible : Visibility.Collapsed;
-        HotRestartButton.Visibility = hotReload ? Visibility.Visible : Visibility.Collapsed;
+        var isFlutterSession = hotReload && _session is { IsReactNative: false };
+        var isReactNativeSession = hotReload && _session is { IsReactNative: true };
+        HotReloadButton.Visibility = isFlutterSession ? Visibility.Visible : Visibility.Collapsed;
+        HotRestartButton.Visibility = isFlutterSession ? Visibility.Visible : Visibility.Collapsed;
         HotReloadButton.IsEnabled = active && !_reloading;
         HotRestartButton.IsEnabled = active && !_reloading;
+        MetroReloadButton.Visibility = isReactNativeSession ? Visibility.Visible : Visibility.Collapsed;
+        MetroReloadButton.IsEnabled = active && !_reloading;
         CopyStackButton.IsEnabled = _latestCrash is not null || _session?.Crashes.Count > 0;
         PauseLogsButton.IsEnabled = _session is { IsReadOnly: false } && _logcatSession is not null;
         PauseLogsButton.Content = _logcatSession?.IsPaused == true ? "Resume logs" : "Pause logs";
@@ -1067,24 +1071,26 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
     }
 
     private async void OnHotReloadClick(object sender, RoutedEventArgs e) =>
-        await ReloadFlutterAsync(fullRestart: false);
+        await ReloadSessionAsync("Hot reload", useRestart: false);
 
     private async void OnHotRestartClick(object sender, RoutedEventArgs e) =>
-        await ReloadFlutterAsync(fullRestart: true);
+        await ReloadSessionAsync("Hot restart", useRestart: true);
 
-    private async Task ReloadFlutterAsync(bool fullRestart)
+    private async void OnMetroReloadClick(object sender, RoutedEventArgs e) =>
+        await ReloadSessionAsync("Reload", useRestart: false);
+
+    private async Task ReloadSessionAsync(string verb, bool useRestart)
     {
         if (_session is null || _session.IsReadOnly || _reloading)
         {
             return;
         }
 
-        var verb = fullRestart ? "Hot restart" : "Hot reload";
         _reloading = true;
         UpdateButtons();
         try
         {
-            var result = fullRestart
+            var result = useRestart
                 ? await _runs.HotRestartAsync(_session.Id)
                 : await _runs.HotReloadAsync(_session.Id);
             if (result is not null)

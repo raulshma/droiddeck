@@ -182,6 +182,21 @@ public sealed partial class AdbDeviceCommandService : IDeviceCommandService
     }
 
     /// <inheritdoc />
+    public Task<DeviceCommandResult> ReverseAsync(
+        string serial,
+        int devicePort,
+        int hostPort,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(serial);
+        return RunAsync(
+            ["-s", serial, "reverse", $"tcp:{devicePort}", $"tcp:{hostPort}"],
+            TimeSpan.FromSeconds(30),
+            output: null,
+            cancellationToken);
+    }
+
+    /// <inheritdoc />
     public async Task<string?> ResolveActivityAsync(
         string serial,
         string packageName,

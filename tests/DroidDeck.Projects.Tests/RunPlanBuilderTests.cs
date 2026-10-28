@@ -3,6 +3,7 @@ using DroidDeck.Core.Runs;
 using DroidDeck.Core.Toolchain;
 using DroidDeck.Projects;
 using DroidDeck.Projects.Adapters;
+using DroidDeck.TestSupport;
 
 namespace DroidDeck.Projects.Tests;
 
@@ -164,6 +165,97 @@ public sealed class RunPlanBuilderTests
         Assert.Null(request.Timeout);
     }
 
+    [Fact]
+    public void CreateBuildRequest_ReactNativeRunsTheWrapperInsideTheAndroidHost()
+    {
+        using var temp = new TempDirectory();
+        temp.WriteFile("android/gradlew.bat", "@echo off");
+        var project = ReactNativeProject();
+        project.RootPath = temp.Path;
+        var builder = new RunPlanBuilder(toolchain: new FakeToolchain(@"C:\flutter\flutter.bat"));
+
+        var request = builder.CreateBuildRequest(project, project.RunConfigurations[0]);
+
+        Assert.NotNull(request);
+        Assert.Equal("cmd.exe", request.FileName);
+        Assert.Contains("gradlew.bat", request.Arguments[3], StringComparison.Ordinal);
+        Assert.Contains(request.Arguments, static argument => argument.Contains("assembleDebug", StringComparison.Ordinal));
+        Assert.Equal(Path.Combine(project.RootPath, "android"), request.WorkingDirectory);
+    }
+
+    [Fact]
+    public void CreateMetroStartRequest_PlansReactNativeThroughNpx()
+    {
+        var builder = new RunPlanBuilder(toolchain: new FakeToolchain(@"C:\flutter\flutter.bat", @"C:\node\npx.cmd"));
+        var project = ReactNativeProject();
+
+        var request = builder.CreateMetroStartRequest(project, project.RunConfigurations[0]);
+
+        Assert.NotNull(request);
+        Assert.Equal(@"C:\node\npx.cmd", request.FileName);
+        Assert.Equal(["react-native", "start", "--port", "8081"], request.Arguments);
+        Assert.Equal(project.RootPath, request.WorkingDirectory);
+        Assert.Equal("1", request.Environment["CI"]);
+    }
+
+    [Fact]
+    public void CreateMetroStartRequest_UsesTheExpoDevClientAndConfiguredPort()
+    {
+        var builder = new RunPlanBuilder();
+        var project = ReactNativeProject(expo: true, port: 8082);
+
+        var request = builder.CreateMetroStartRequest(project, project.RunConfigurations[0]);
+
+        Assert.NotNull(request);
+        Assert.Equal("npx.cmd", request.FileName);
+        Assert.Equal(["expo", "start", "--dev-client", "--port", "8082"], request.Arguments);
+    }
+
+    [Fact]
+    public void CreateMetroStartRequest_ReturnsNullForNonReactNativeProjects()
+    {
+        var builder = new RunPlanBuilder();
+
+        Assert.Null(builder.CreateMetroStartRequest(FlutterProject(), new RunConfiguration()));
+        Assert.Null(builder.CreateMetroStartRequest(CustomProject(), new RunConfiguration()));
+    }
+
+    [Fact]
+    public void BuildPreview_ReactNativeConfigurationShowsTheGradleHostBuild()
+    {
+        var project = ReactNativeProject();
+        var configuration = project.RunConfigurations[0];
+
+        var preview = _builder.BuildPreview(project, configuration, "emulator-5554");
+
+        var build = Assert.Single(preview.Steps, step => step.Kind == RunStepKind.Build);
+        Assert.True(build.WillRun);
+        Assert.Contains("assembleDebug", build.CommandLine, StringComparison.Ordinal);
+        Assert.Equal("android/app/build/outputs/apk/debug/*.apk", preview.ArtifactGlob);
+        Assert.Contains(preview.Steps, step => step.Name == "Install" && step.WillRun);
+    }
+
+    private static ProjectModel ReactNativeProject(bool expo = false, int port = ReactNativeAdapter.DefaultMetroPort)
+    {
+        var project = new ProjectModel
+        {
+            Id = "rn-1",
+            Name = "rn_sample",
+            RootPath = Path.Combine(Path.GetTempPath(), "droiddeck-rn-sample"),
+            Kind = ProjectKind.ReactNative,
+            ApplicationId = "com.example.rn_sample",
+            LauncherActivity = ".MainActivity",
+            ReactNativeInfo = new ReactNativeProjectInfo
+            {
+                IsExpo = expo,
+                Workflow = expo ? "expo-prebuild" : "bare",
+                MetroPort = port,
+            },
+        };
+        project.RunConfigurations = ReactNativeAdapter.CreateDefaultRunConfigurations(project);
+        return project;
+    }
+
     private static ProjectModel FlutterProject()
     {
         var project = new ProjectModel
@@ -181,10 +273,19 @@ public sealed class RunPlanBuilderTests
 
     private sealed class FakeToolchain : IToolchainService
     {
-        public FakeToolchain(string flutterPath) =>
-            CachedSnapshot = new ToolchainSnapshot(
-                [new ToolInfo { Kind = ToolKind.Flutter, DisplayName = "Flutter", IsAvailable = true, Path = flutterPath }],
-                DateTimeOffset.UtcNow);
+        public FakeToolchain(string flutterPath, string? npxPath = null)
+        {
+            var tools = new List<ToolInfo>
+            {
+                new() { Kind = ToolKind.Flutter, DisplayName = "Flutter", IsAvailable = true, Path = flutterPath },
+            };
+            if (npxPath is not null)
+            {
+                tools.Add(new ToolInfo { Kind = ToolKind.Npx, DisplayName = "npx", IsAvailable = true, Path = npxPath });
+            }
+
+            CachedSnapshot = new ToolchainSnapshot(tools, DateTimeOffset.UtcNow);
+        }
 
         public ToolchainSnapshot? CachedSnapshot { get; }
 

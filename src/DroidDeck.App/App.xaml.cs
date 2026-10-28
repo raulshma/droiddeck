@@ -290,6 +290,7 @@ public partial class App : Application, IDisposable
             loggerFactory.CreateLogger<JsonProjectStore>()));
         services.AddSingleton<IProjectDetector, GradleProjectDetector>();
         services.AddSingleton<IProjectDetector, FlutterProjectDetector>();
+        services.AddSingleton<IProjectDetector, ReactNativeProjectDetector>();
         services.AddSingleton<IProjectDetector, ApkProjectDetector>();
         services.AddSingleton<IApkInspector>(provider => new Aapt2ApkInspector(
             provider.GetRequiredService<IProcessRunner>(),

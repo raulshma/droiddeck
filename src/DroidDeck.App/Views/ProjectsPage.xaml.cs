@@ -252,6 +252,8 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
                 $"{configuration.Build.Task ?? "assembleDebug"} · artifact {configuration.Artifact.Glob}",
             RunConfigurationKind.Flutter =>
                 $"Flutter {FlutterAdapter.NormalizeMode(configuration.VariantName)} · artifact {configuration.Artifact.Glob}",
+            RunConfigurationKind.ReactNative =>
+                $"React Native {ReactNativeAdapter.NormalizeMode(configuration.VariantName)} · artifact {configuration.Artifact.Glob}",
             RunConfigurationKind.Apk =>
                 $"Prebuilt APK · {configuration.Artifact.Glob}",
             _ => $"{configuration.Steps.Count} custom step(s)",
@@ -869,6 +871,7 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
                 ProjectKind.ApkOnly => RunConfigurationKind.Apk,
                 ProjectKind.Custom => RunConfigurationKind.Custom,
                 ProjectKind.Flutter => RunConfigurationKind.Flutter,
+                ProjectKind.ReactNative => RunConfigurationKind.ReactNative,
                 _ => RunConfigurationKind.Gradle,
             },
             ModuleName = project.ApplicationModule,
@@ -878,6 +881,9 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
                 Task = project.Kind == ProjectKind.Flutter
                     ? null
                     : variant?.BuildTask ?? "assembleDebug",
+                WorkingDirectory = project.Kind == ProjectKind.ReactNative
+                    ? ReactNativeAdapter.AndroidHostFolder
+                    : null,
             },
             Artifact = new ArtifactConfiguration
             {
@@ -1105,6 +1111,8 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
                     $"{configuration.Build.Task ?? "assembleDebug"} · {configuration.Artifact.Glob}",
                 RunConfigurationKind.Flutter =>
                     $"Flutter {FlutterAdapter.NormalizeMode(configuration.VariantName)} · {configuration.Artifact.Glob}",
+                RunConfigurationKind.ReactNative =>
+                    $"React Native {ReactNativeAdapter.NormalizeMode(configuration.VariantName)} · {configuration.Artifact.Glob}",
                 RunConfigurationKind.Apk =>
                     $"APK · {configuration.Artifact.Glob}",
                 _ => $"Custom · {configuration.Steps.Count} step(s)",

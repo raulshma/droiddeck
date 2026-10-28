@@ -112,6 +112,13 @@ public interface IDeviceCommandService
         IReadOnlyList<string> arguments,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Maps a device port to a host port with <c>adb reverse</c>.</summary>
+    Task<DeviceCommandResult> ReverseAsync(
+        string serial,
+        int devicePort,
+        int hostPort,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Resolves the launcher activity for a package.</summary>
     Task<string?> ResolveActivityAsync(string serial, string packageName, CancellationToken cancellationToken = default);
 

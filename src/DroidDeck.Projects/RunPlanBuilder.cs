@@ -39,7 +39,10 @@ public sealed class RunPlanBuilder : IRunPlanBuilder
         var serial = string.IsNullOrWhiteSpace(context.DeviceSerial) ? "<device>" : context.DeviceSerial;
         var adb = ToolPathLocator.ResolveAdb(_configuration, _toolchain);
 
-        var isBuildable = configuration.Kind is RunConfigurationKind.Gradle or RunConfigurationKind.Flutter;
+        var isBuildable = configuration.Kind
+            is RunConfigurationKind.Gradle
+            or RunConfigurationKind.Flutter
+            or RunConfigurationKind.ReactNative;
         if (isBuildable && !configuration.Build.Skip)
         {
             var request = CreateBuildRequest(project, configuration);
@@ -226,7 +229,8 @@ public sealed class RunPlanBuilder : IRunPlanBuilder
 
         var context = RunTemplateContext.ForProject(project, configuration);
         var root = project.RootPath;
-        var wrapper = FindWrapper(root);
+        var workingDirectory = ResolveWorkingDirectory(project, configuration);
+        var wrapper = FindWrapper(workingDirectory) ?? FindWrapper(root);
         var arguments = new List<string>();
         if (configuration.Build.Clean)
         {
@@ -239,7 +243,6 @@ public sealed class RunPlanBuilder : IRunPlanBuilder
             arguments.Add(TemplateEngine.Expand(argument, context));
         }
 
-        var workingDirectory = ResolveWorkingDirectory(project, configuration);
         var environment = CreateBuildEnvironment(configuration, context);
 
         var timeout = TimeSpan.FromSeconds(Math.Clamp(configuration.Build.TimeoutSeconds, 5, 24 * 60 * 60));
@@ -305,6 +308,44 @@ public sealed class RunPlanBuilder : IRunPlanBuilder
                 extraArguments),
             WorkingDirectory = project.RootPath,
             Environment = CreateBuildEnvironment(configuration, context),
+        };
+    }
+
+    /// <inheritdoc />
+    public ProcessRequest? CreateMetroStartRequest(ProjectModel project, RunConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        ArgumentNullException.ThrowIfNull(configuration);
+        if (project.Kind != ProjectKind.ReactNative)
+        {
+            return null;
+        }
+
+        var info = project.ReactNativeInfo;
+        var isExpo = info?.IsExpo == true;
+        var port = info?.MetroPort is > 0 and <= 65535
+            ? info.MetroPort
+            : ReactNativeProjectInfo.DefaultMetroPort;
+        var context = RunTemplateContext.ForProject(project, configuration);
+        var extraArguments = configuration.Build.Arguments
+            .Select(argument => TemplateEngine.Expand(argument, context))
+            .ToArray();
+        var environment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            // Keep the interactive keypress listener off; DroidDeck owns the Metro lifetime.
+            ["CI"] = "1",
+        };
+        foreach (var (key, value) in configuration.Build.Environment)
+        {
+            environment[key] = TemplateEngine.Expand(value, context);
+        }
+
+        return new ProcessRequest
+        {
+            FileName = ResolveNpx(),
+            Arguments = ReactNativeAdapter.CreateMetroStartArguments(isExpo, port, extraArguments),
+            WorkingDirectory = project.RootPath,
+            Environment = environment,
         };
     }
 
@@ -380,6 +421,17 @@ public sealed class RunPlanBuilder : IRunPlanBuilder
 
         var fromSnapshot = _toolchain?.CachedSnapshot?.Get(ToolKind.Gradle)?.Path;
         return string.IsNullOrWhiteSpace(fromSnapshot) ? "gradle" : fromSnapshot;
+    }
+
+    private string ResolveNpx()
+    {
+        var fromSnapshot = _toolchain?.CachedSnapshot?.Get(ToolKind.Npx)?.Path;
+        if (!string.IsNullOrWhiteSpace(fromSnapshot))
+        {
+            return fromSnapshot;
+        }
+
+        return OperatingSystem.IsWindows() ? "npx.cmd" : "npx";
     }
 
     private static string? FindWrapper(string root)

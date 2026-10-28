@@ -12,7 +12,7 @@
 
     <StackPanel Spacing="10" MinWidth="560">
         <TextBlock
-            Text="Nested Gradle, Flutter, and Kotlin Multiplatform projects are detected without invoking Gradle or Flutter. APK folders are offered as APK-only projects."
+            Text="Nested Gradle, Flutter, React Native, and Kotlin Multiplatform projects are detected without invoking Gradle, Flutter, or Metro. APK folders are offered as APK-only projects."
             FontSize="12"
             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
             TextWrapping="Wrap" />

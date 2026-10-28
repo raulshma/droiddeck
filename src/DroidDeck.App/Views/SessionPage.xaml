@@ -169,6 +169,13 @@
                     ToolTipService.ToolTip="Restart the running Flutter app and apply code changes to top-level state"
                     AutomationProperties.AutomationId="SessionHotRestartButton" />
                 <Button
+                    x:Name="MetroReloadButton"
+                    Content="Reload"
+                    Click="OnMetroReloadClick"
+                    Visibility="Collapsed"
+                    ToolTipService.ToolTip="Ask Metro to reload the React Native application"
+                    AutomationProperties.AutomationId="SessionMetroReloadButton" />
+                <Button
                     x:Name="RestartButton"
                     Content="Restart app"
                     Click="OnRestartClick"

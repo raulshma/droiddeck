@@ -193,6 +193,9 @@ public interface IRunPlanBuilder
         ProjectModel project,
         RunConfiguration configuration,
         string? deviceSerial = null);
+
+    /// <summary>Creates the Metro development server start request for a React Native project, or null for other kinds.</summary>
+    Core.Processes.ProcessRequest? CreateMetroStartRequest(ProjectModel project, RunConfiguration configuration);
 }
 
 /// <summary>A previewed step in a run plan.</summary>

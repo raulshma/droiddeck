@@ -11,6 +11,9 @@ public enum RunConfigurationKind
     /// <summary>A Flutter build followed by install and launch.</summary>
     Flutter,
 
+    /// <summary>A Gradle build inside the android host of a React Native project.</summary>
+    ReactNative,
+
     /// <summary>An APK is installed directly without a build.</summary>
     Apk,
 
@@ -38,6 +41,9 @@ public enum RunStepKind
 
     /// <summary>Attaches a Flutter session or reloads the running Flutter app.</summary>
     HotReload,
+
+    /// <summary>Starts or reuses the Metro development server for React Native.</summary>
+    Metro,
 
     /// <summary>Waits for the device to be ready.</summary>
     WaitForDevice,
@@ -326,7 +332,7 @@ public static class RunConfigurationValidator
             errors.Add(new("name", "A configuration name is required."));
         }
 
-        if (configuration.Kind == RunConfigurationKind.Gradle)
+        if (configuration.Kind is RunConfigurationKind.Gradle or RunConfigurationKind.ReactNative)
         {
             if (string.IsNullOrWhiteSpace(configuration.Build.Task))
             {
@@ -340,6 +346,18 @@ public static class RunConfigurationValidator
         }
         else if (configuration.Kind == RunConfigurationKind.Flutter)
         {
+            if (string.IsNullOrWhiteSpace(configuration.Artifact.Glob))
+            {
+                errors.Add(new("artifact.glob", "An artifact glob is required so the built APK can be found."));
+            }
+        }
+        else if (configuration.Kind == RunConfigurationKind.ReactNative)
+        {
+            if (string.IsNullOrWhiteSpace(configuration.Build.Task))
+            {
+                errors.Add(new("build.task", "A Gradle task is required for the android host build."));
+            }
+
             if (string.IsNullOrWhiteSpace(configuration.Artifact.Glob))
             {
                 errors.Add(new("artifact.glob", "An artifact glob is required so the built APK can be found."));

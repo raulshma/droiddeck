@@ -538,6 +538,218 @@ public sealed class RunSessionServiceTests : IDisposable
             step => step.Name == "Attach Flutter session" && step.State == RunStepState.Succeeded);
     }
 
+    [Fact]
+    public async Task ReactNativePipeline_StartsMetroAndAppliesTheReverseTunnel()
+    {
+        EnsureAndroidHost();
+        var commands = new FakeDeviceCommands();
+        var reloads = new List<int>();
+        var probeStatuses = new Queue<MetroPortStatus>([MetroPortStatus.Free]);
+        await using var service = CreateService(
+            commands: commands,
+            planBuilder: new RunPlanBuilderStub { MetroRequest = TestProcessHelper.Create("sleep", "60000") },
+            metroProbe: (_, _) => Task.FromResult(
+                probeStatuses.Count > 0 ? probeStatuses.Dequeue() : MetroPortStatus.Running),
+            metroReload: (port, _) =>
+            {
+                reloads.Add(port);
+                return Task.FromResult((true, (string?)null));
+            });
+        var session = await service.RunAsync(CreateRequest(
+            ReactNativeConfiguration(),
+            options: ReactNativeOptions(),
+            projectKind: ProjectKind.ReactNative));
+
+        Assert.Equal(RunSessionState.Running, session.State);
+        Assert.True(session.SupportsHotReload);
+        var metro = Assert.Single(session.Steps, step => step.Id == "metro");
+        Assert.Equal(RunStepState.Succeeded, metro.State);
+        Assert.Equal(RunStepKind.Metro, metro.Kind);
+        Assert.False(string.IsNullOrWhiteSpace(metro.CommandLine));
+        var reverse = Assert.Single(session.Steps, step => step.Id == "reverse");
+        Assert.Equal(RunStepState.Succeeded, reverse.State);
+        var call = Assert.Single(commands.ReverseCalls);
+        Assert.Equal(("emulator-5554", 8081, 8081), call);
+
+        var reload = await service.HotReloadAsync(session.Id);
+
+        Assert.NotNull(reload);
+        Assert.True(reload.Succeeded);
+        Assert.Equal([8081], reloads);
+        Assert.Single(session.Steps, step => step.Name == "Reload (Metro)");
+    }
+
+    [Fact]
+    public async Task ReactNativePipeline_ReusesARunningMetroInstance()
+    {
+        EnsureAndroidHost();
+        var commands = new FakeDeviceCommands();
+        await using var service = CreateService(
+            commands: commands,
+            planBuilder: new RunPlanBuilderStub { MetroRequest = TestProcessHelper.Create("sleep", "60000") },
+            metroProbe: (_, _) => Task.FromResult(MetroPortStatus.Running));
+        var session = await service.RunAsync(CreateRequest(
+            ReactNativeConfiguration(),
+            options: ReactNativeOptions(),
+            projectKind: ProjectKind.ReactNative));
+
+        Assert.Equal(RunSessionState.Running, session.State);
+        var metro = Assert.Single(session.Steps, step => step.Id == "metro");
+        Assert.Equal(RunStepState.Succeeded, metro.State);
+        Assert.Contains("Reusing the Metro instance", metro.OutputTail, StringComparison.Ordinal);
+        Assert.Single(commands.ReverseCalls);
+    }
+
+    [Fact]
+    public async Task ReactNativePipeline_ExplainsPortConflictsWithFixes()
+    {
+        EnsureAndroidHost();
+        await using var service = CreateService(
+            planBuilder: new RunPlanBuilderStub { MetroRequest = TestProcessHelper.Create("sleep", "60000") },
+            metroProbe: (_, _) => Task.FromResult(MetroPortStatus.Conflicting));
+        var session = await service.RunAsync(CreateRequest(
+            ReactNativeConfiguration(),
+            options: ReactNativeOptions(),
+            projectKind: ProjectKind.ReactNative));
+
+        Assert.Equal(RunSessionState.Failed, session.State);
+        var metro = Assert.Single(session.Steps, step => step.Id == "metro");
+        Assert.Equal(RunStepState.Failed, metro.State);
+        Assert.Contains("8081", session.Error, StringComparison.Ordinal);
+        Assert.Contains("metro.config.js", session.Error, StringComparison.Ordinal);
+        Assert.DoesNotContain(session.Steps, step => step.Id == "launch");
+    }
+
+    [Fact]
+    public async Task ReactNativePipeline_FailsWithGuidanceWhenReverseFails()
+    {
+        EnsureAndroidHost();
+        var commands = new FakeDeviceCommands { ReverseSucceeds = false };
+        await using var service = CreateService(
+            commands: commands,
+            planBuilder: new RunPlanBuilderStub { MetroRequest = TestProcessHelper.Create("sleep", "60000") },
+            metroProbe: (_, _) => Task.FromResult(MetroPortStatus.Running));
+        var session = await service.RunAsync(CreateRequest(
+            ReactNativeConfiguration(),
+            options: ReactNativeOptions(),
+            projectKind: ProjectKind.ReactNative));
+
+        Assert.Equal(RunSessionState.Failed, session.State);
+        Assert.Contains("reverse", session.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("adb -s emulator-5554 reverse tcp:8081 tcp:8081", session.Error, StringComparison.Ordinal);
+        Assert.DoesNotContain(session.Steps, step => step.Id == "launch");
+    }
+
+    [Fact]
+    public async Task ReactNativePipeline_ReleaseBuildsSkipMetro()
+    {
+        EnsureAndroidHost();
+        var commands = new FakeDeviceCommands();
+        await using var service = CreateService(
+            commands: commands,
+            planBuilder: new RunPlanBuilderStub { MetroRequest = TestProcessHelper.Create("sleep", "60000") },
+            metroProbe: (_, _) => Task.FromResult(MetroPortStatus.Running));
+        var configuration = ReactNativeConfiguration();
+        configuration.VariantName = "release";
+        var session = await service.RunAsync(CreateRequest(
+            configuration,
+            options: ReactNativeOptions("app-release.apk"),
+            projectKind: ProjectKind.ReactNative));
+
+        Assert.Equal(RunSessionState.Running, session.State);
+        Assert.False(session.SupportsHotReload);
+        Assert.DoesNotContain(session.Steps, step => step.Id == "metro");
+        Assert.DoesNotContain(session.Steps, step => step.Id == "reverse");
+        Assert.Empty(commands.ReverseCalls);
+    }
+
+    [Fact]
+    public async Task ReactNativePipeline_StopsOwnedMetroWithTheLastSessionAndSharesItBeforeThat()
+    {
+        EnsureAndroidHost();
+        var probeStatuses = new Queue<MetroPortStatus>([MetroPortStatus.Free]);
+        var reloadResults = new Queue<(bool, string?)>([
+            (true, null),
+            (true, null),
+            (false, "Metro is not running."),
+        ]);
+        await using var service = CreateService(
+            planBuilder: new RunPlanBuilderStub { MetroRequest = TestProcessHelper.Create("sleep", "60000") },
+            metroProbe: (_, _) => Task.FromResult(
+                probeStatuses.Count > 0 ? probeStatuses.Dequeue() : MetroPortStatus.Running),
+            metroReload: (_, _) => Task.FromResult(reloadResults.Dequeue()));
+
+        var first = await service.RunAsync(CreateRequest(
+            ReactNativeConfiguration(),
+            options: ReactNativeOptions(),
+            projectKind: ProjectKind.ReactNative));
+        var second = await service.RunAsync(CreateRequest(
+            ReactNativeConfiguration(),
+            options: ReactNativeOptions(),
+            projectKind: ProjectKind.ReactNative));
+
+        var secondMetro = Assert.Single(second.Steps, step => step.Id == "metro");
+        Assert.Contains("Reusing the Metro instance", secondMetro.OutputTail, StringComparison.Ordinal);
+
+        var reloadWhileFirstRunning = await service.HotReloadAsync(second.Id);
+        Assert.NotNull(reloadWhileFirstRunning);
+        Assert.True(reloadWhileFirstRunning.Succeeded);
+
+        await service.StopAsync(first.Id);
+
+        var reloadAfterStoppingTheOwner = await service.HotReloadAsync(second.Id);
+        Assert.NotNull(reloadAfterStoppingTheOwner);
+        Assert.True(reloadAfterStoppingTheOwner.Succeeded);
+
+        await service.StopAsync(second.Id);
+
+        var reloadAfterEveryOwnerStopped = await service.HotReloadAsync(second.Id);
+        Assert.NotNull(reloadAfterEveryOwnerStopped);
+        Assert.False(reloadAfterEveryOwnerStopped.Succeeded);
+        Assert.Contains("Metro is not running", reloadAfterEveryOwnerStopped.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ReactNativePipeline_FailsWithPrebuildGuidanceWithoutTheAndroidHost()
+    {
+        await using var service = CreateService(
+            planBuilder: new RunPlanBuilderStub { MetroRequest = TestProcessHelper.Create("sleep", "60000") },
+            metroProbe: (_, _) => Task.FromResult(MetroPortStatus.Running));
+        var session = await service.RunAsync(CreateRequest(
+            ReactNativeConfiguration(),
+            options: ReactNativeOptions(),
+            projectKind: ProjectKind.ReactNative));
+
+        Assert.Equal(RunSessionState.Failed, session.State);
+        Assert.Contains("npx expo prebuild", session.Error, StringComparison.Ordinal);
+        var prepare = Assert.Single(session.Steps, step => step.Id == "prepare");
+        Assert.Equal(RunStepState.Failed, prepare.State);
+        Assert.DoesNotContain(session.Steps, step => step.Id == "metro");
+    }
+
+    private void EnsureAndroidHost()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, "android"));
+    }
+
+    private static RunConfiguration ReactNativeConfiguration() => new()
+    {
+        Name = "RN debug",
+        Kind = RunConfigurationKind.ReactNative,
+        VariantName = "debug",
+        Build = { Task = "assembleDebug", WorkingDirectory = "android" },
+        Artifact = { Glob = "android/app/build/outputs/apk/debug/*.apk" },
+        Launch = { PackageName = "com.example.rn_sample" },
+    };
+
+    private static RunOptions ReactNativeOptions(string artifactName = "app-debug.apk") => new()
+    {
+        SkipBuild = true,
+        PrebuiltArtifactFiles = [$"/tmp/{artifactName}"],
+        PrebuiltArtifactPath = $"/tmp/{artifactName}",
+        PrebuiltPackageName = "com.example.rn_sample",
+    };
+
     private static RunOptions FlutterOptions(string artifactName) => new()
     {
         SkipBuild = true,
@@ -552,7 +764,9 @@ public sealed class RunSessionServiceTests : IDisposable
         FakeDeviceCommands? commands = null,
         FakeLogcatService? logcat = null,
         IDeviceOperationCoordinator? coordinator = null,
-        IRunPlanBuilder? planBuilder = null)
+        IRunPlanBuilder? planBuilder = null,
+        MetroSession.PortProbe? metroProbe = null,
+        MetroSession.ReloadSender? metroReload = null)
     {
         return new RunSessionService(
             planBuilder ?? new RunPlanBuilderStub(),
@@ -562,20 +776,37 @@ public sealed class RunSessionServiceTests : IDisposable
             new FakeSessionStore(),
             new FakeNotificationService(),
             runner ?? new FakeRunner(),
-            coordinator: coordinator);
+            coordinator: coordinator,
+            metroProbe: metroProbe,
+            metroReload: metroReload);
     }
 
-    private RunRequest CreateRequest(RunConfiguration configuration, DeviceInfo? device = null, RunOptions? options = null)
+    private RunRequest CreateRequest(
+        RunConfiguration configuration,
+        DeviceInfo? device = null,
+        RunOptions? options = null,
+        ProjectKind projectKind = ProjectKind.Custom)
     {
+        var project = new ProjectModel
+        {
+            Id = "proj-1",
+            Name = "Sample",
+            RootPath = _root,
+            Kind = projectKind,
+        };
+        if (projectKind == ProjectKind.ReactNative)
+        {
+            project.ReactNativeInfo = new ReactNativeProjectInfo
+            {
+                IsExpo = false,
+                Workflow = "bare",
+                MetroPort = 8081,
+            };
+        }
+
         return new RunRequest
         {
-            Project = new ProjectModel
-            {
-                Id = "proj-1",
-                Name = "Sample",
-                RootPath = _root,
-                Kind = ProjectKind.Custom,
-            },
+            Project = project,
             Configuration = configuration,
             Device = device ?? new DeviceInfo { Serial = "emulator-5554" },
             DeviceSerial = device?.Serial ?? "emulator-5554",
@@ -595,6 +826,8 @@ public sealed class RunSessionServiceTests : IDisposable
     {
         public ProcessRequest? FlutterRequest { get; init; }
 
+        public ProcessRequest? MetroRequest { get; init; }
+
         public RunPlanPreview BuildPreview(ProjectModel project, RunConfiguration configuration, string? deviceSerial = null) =>
             new();
 
@@ -604,6 +837,8 @@ public sealed class RunSessionServiceTests : IDisposable
             ProjectModel project,
             RunConfiguration configuration,
             string? deviceSerial = null) => FlutterRequest;
+
+        public ProcessRequest? CreateMetroStartRequest(ProjectModel project, RunConfiguration configuration) => MetroRequest;
     }
 
     private sealed class FakeRunner : IProcessRunner
@@ -646,6 +881,10 @@ public sealed class RunSessionServiceTests : IDisposable
 
         public int? PackageUid { get; init; }
 
+        public List<(string Serial, int DevicePort, int HostPort)> ReverseCalls { get; } = [];
+
+        public bool ReverseSucceeds { get; init; } = true;
+
         public Task<DeviceCommandResult> InstallAsync(
             string serial,
             IReadOnlyList<string> apkPaths,
@@ -686,6 +925,20 @@ public sealed class RunSessionServiceTests : IDisposable
             IReadOnlyList<string> arguments,
             CancellationToken cancellationToken = default) =>
             Task.FromResult(new DeviceCommandResult { Succeeded = true });
+
+        public Task<DeviceCommandResult> ReverseAsync(
+            string serial,
+            int devicePort,
+            int hostPort,
+            CancellationToken cancellationToken = default)
+        {
+            ReverseCalls.Add((serial, devicePort, hostPort));
+            return Task.FromResult(new DeviceCommandResult
+            {
+                Succeeded = ReverseSucceeds,
+                CommandLine = $"adb -s {serial} reverse tcp:{devicePort} tcp:{hostPort}",
+            });
+        }
 
         public Task<string?> ResolveActivityAsync(
             string serial,

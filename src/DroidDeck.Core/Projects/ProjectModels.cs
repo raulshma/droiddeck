@@ -16,6 +16,9 @@ public enum ProjectKind
     /// <summary>A Flutter project with an Android host folder.</summary>
     Flutter,
 
+    /// <summary>A React Native or Expo project with an Android host folder.</summary>
+    ReactNative,
+
     /// <summary>A prebuilt APK or split APK set.</summary>
     ApkOnly,
 
@@ -235,6 +238,9 @@ public sealed class ProjectModel
     /// <summary>Gets or sets the Flutter environment constraint declared by pubspec.yaml.</summary>
     public string? FlutterEnvironment { get; set; }
 
+    /// <summary>Gets or sets the React Native specifics detected from package.json and Expo config.</summary>
+    public ReactNativeProjectInfo? ReactNativeInfo { get; set; }
+
     /// <summary>Gets or sets the application module name.</summary>
     public string? ApplicationModule { get; set; }
 
@@ -290,6 +296,7 @@ public sealed class ProjectModel
         ProjectKind.AndroidGradle => "Android Gradle",
         ProjectKind.KotlinMultiplatform => "Kotlin Multiplatform",
         ProjectKind.Flutter => "Flutter",
+        ProjectKind.ReactNative => "React Native",
         ProjectKind.ApkOnly => "APK only",
         _ => "Custom",
     };
@@ -326,6 +333,30 @@ public sealed class ProjectModel
             DroidDeck.Core.Infrastructure.DroidDeckJson.Serialize(this));
         return clone ?? throw new InvalidOperationException("The project could not be copied.");
     }
+}
+
+/// <summary>React Native specifics detected from package.json, Expo config, and the Android host.</summary>
+public sealed class ReactNativeProjectInfo
+{
+    /// <summary>Gets the default Metro development server port.</summary>
+    public const int DefaultMetroPort = 8081;
+
+    /// <summary>Gets or sets whether Expo manages the project.</summary>
+    public bool IsExpo { get; set; }
+
+    /// <summary>
+    /// Gets or sets the workflow: <c>bare</c> for plain React Native, <c>expo-prebuild</c> when Expo
+    /// has generated the android folder, or <c>expo-managed</c> when there is no native host yet.
+    /// </summary>
+    public string Workflow { get; set; } = "bare";
+
+    /// <summary>Gets or sets the Metro development server port.</summary>
+    public int MetroPort { get; set; } = DefaultMetroPort;
+
+    /// <summary>Gets whether the workflow can build, install, and launch without extra setup.</summary>
+    [JsonIgnore]
+    public bool SupportsNativeBuild =>
+        !string.Equals(Workflow, "expo-managed", StringComparison.OrdinalIgnoreCase);
 }
 
 /// <summary>A reference to an APK that belongs to an APK-only project.</summary>

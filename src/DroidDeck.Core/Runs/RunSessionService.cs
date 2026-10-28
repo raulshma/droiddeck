@@ -35,8 +35,11 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
     private readonly IResourceGuard? _resourceGuard;
     private readonly IDeviceOperationCoordinator? _coordinator;
     private readonly ILogger<RunSessionService> _logger;
+    private readonly MetroSession.PortProbe? _metroProbe;
+    private readonly MetroSession.ReloadSender? _metroReload;
     private readonly List<RunSession> _sessions = [];
     private readonly Dictionary<string, RunContext> _contexts = new(SerialComparer);
+    private readonly Dictionary<int, MetroLease> _metroByPort = new();
     private readonly object _sync = new();
     private bool _disposed;
 
@@ -51,7 +54,9 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         IProcessRunner runner,
         IResourceGuard? resourceGuard = null,
         IDeviceOperationCoordinator? coordinator = null,
-        ILogger<RunSessionService>? logger = null)
+        ILogger<RunSessionService>? logger = null,
+        MetroSession.PortProbe? metroProbe = null,
+        MetroSession.ReloadSender? metroReload = null)
     {
         _planBuilder = planBuilder ?? throw new ArgumentNullException(nameof(planBuilder));
         _artifacts = artifacts ?? throw new ArgumentNullException(nameof(artifacts));
@@ -63,6 +68,8 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         _resourceGuard = resourceGuard;
         _coordinator = coordinator;
         _logger = logger ?? NullLogger<RunSessionService>.Instance;
+        _metroProbe = metroProbe;
+        _metroReload = metroReload;
     }
 
     /// <inheritdoc />
@@ -158,6 +165,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
 
         context.Cancellation.Cancel();
         await StopFlutterAsync(context).ConfigureAwait(false);
+        await StopMetroAsync(context).ConfigureAwait(false);
         await DetachLogcatAsync(context).ConfigureAwait(false);
         await FinishCancelledAsync(context).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
@@ -174,6 +182,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
 
         var session = context.Session;
         await StopFlutterAsync(context).ConfigureAwait(false);
+        await StopMetroAsync(context).ConfigureAwait(false);
         await DetachLogcatAsync(context).ConfigureAwait(false);
         if (session.IsFinished)
         {
@@ -293,13 +302,136 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
     public async Task<HotReloadResult?> HotReloadAsync(
         string sessionId,
         CancellationToken cancellationToken = default) =>
-        await ReloadFlutterAsync(sessionId, fullRestart: false, cancellationToken).ConfigureAwait(false);
+        await ReloadSessionAsync(sessionId, fullRestart: false, cancellationToken).ConfigureAwait(false);
 
     /// <inheritdoc />
     public async Task<HotReloadResult?> HotRestartAsync(
         string sessionId,
         CancellationToken cancellationToken = default) =>
-        await ReloadFlutterAsync(sessionId, fullRestart: true, cancellationToken).ConfigureAwait(false);
+        await ReloadSessionAsync(sessionId, fullRestart: true, cancellationToken).ConfigureAwait(false);
+
+    private Task<HotReloadResult?> ReloadSessionAsync(
+        string sessionId,
+        bool fullRestart,
+        CancellationToken cancellationToken)
+    {
+        var session = GetSession(sessionId);
+        return session is { IsReactNative: true }
+            ? ReloadMetroAsync(sessionId, cancellationToken)
+            : ReloadFlutterAsync(sessionId, fullRestart, cancellationToken);
+    }
+
+    /// <summary>
+    /// Runs the guards shared by every reload path. Returns a failure result when the request
+    /// cannot proceed, or null when the caller owns the session.
+    /// </summary>
+    private static HotReloadResult? CheckReloadRequest(
+        RunSession session,
+        RunContext? context,
+        string featureName)
+    {
+        if (!session.SupportsHotReload)
+        {
+            return new HotReloadResult(
+                false,
+                $"Reload is only available for {featureName} debug run configurations.",
+                TimeSpan.Zero);
+        }
+
+        if (context is null || session.IsReadOnly)
+        {
+            return new HotReloadResult(
+                false,
+                "The session is no longer active. Run the app again to reload it.",
+                TimeSpan.Zero);
+        }
+
+        if (session.State is RunSessionState.Queued or RunSessionState.Preparing or RunSessionState.Building
+            or RunSessionState.ResolvingArtifact or RunSessionState.Installing or RunSessionState.Launching)
+        {
+            return new HotReloadResult(
+                false,
+                "Wait for the current run to finish before reloading.",
+                TimeSpan.Zero);
+        }
+
+        return null;
+    }
+
+    private async Task<HotReloadResult?> ReloadMetroAsync(
+        string sessionId,
+        CancellationToken cancellationToken)
+    {
+        var context = FindContext(sessionId);
+        var session = context?.Session ?? GetSession(sessionId);
+        if (session is null)
+        {
+            return null;
+        }
+
+        var guard = CheckReloadRequest(session, context, "React Native");
+        if (guard is not null)
+        {
+            return guard;
+        }
+
+        var metro = context!.Metro;
+        if (metro is null || !metro.IsRunning)
+        {
+            return new HotReloadResult(
+                false,
+                "Metro is not running for this session. Run the app again to start Metro, or apply the reload " +
+                "manually by shaking the device and choosing Reload in the developer menu.",
+                TimeSpan.Zero);
+        }
+
+        var step = AddStep(session, $"metro-reload-{Guid.NewGuid():N}", "Reload (Metro)", RunStepKind.HotReload);
+        context.MetroStep = step;
+        context.MetroTail.Clear();
+        StartStep(session, step);
+        session.State = RunSessionState.Running;
+        session.EndedAt = null;
+        session.Duration = null;
+        session.StatusMessage = $"Reloading on {session.DeviceName ?? session.DeviceSerial} through Metro.";
+        RaiseChanged(session);
+
+        HotReloadResult result;
+        try
+        {
+            result = await metro.ReloadAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            CancelStep(step);
+            RaiseChanged(session);
+            return new HotReloadResult(false, "The request was cancelled.", TimeSpan.Zero);
+        }
+
+        step.CommandLine = $"POST http://127.0.0.1:{metro.Port}/reload";
+        step.OutputTail = JoinTail(context.MetroTail);
+        if (result.Succeeded)
+        {
+            SucceedStep(session, step, result.Message);
+            session.StatusMessage = result.Message;
+        }
+        else
+        {
+            FailStepOnly(session, step, result.Message);
+            session.StatusMessage = result.Message;
+            _notifications.Notify(new AppNotification
+            {
+                Event = NotificationEvent.RunFailed,
+                Title = "Reload failed",
+                Message = result.Message,
+                SessionId = session.Id,
+                NavigationTarget = "session",
+            });
+        }
+
+        RaiseChanged(session);
+        await SaveSnapshotAsync(session).ConfigureAwait(false);
+        return result;
+    }
 
     private async Task<HotReloadResult?> ReloadFlutterAsync(
         string sessionId,
@@ -313,29 +445,10 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             return null;
         }
 
-        if (!session.SupportsHotReload)
+        var guard = CheckReloadRequest(session, context, "Flutter");
+        if (guard is not null)
         {
-            return new HotReloadResult(
-                false,
-                "Hot reload is only available for Flutter debug run configurations.",
-                TimeSpan.Zero);
-        }
-
-        if (context is null || session.IsReadOnly)
-        {
-            return new HotReloadResult(
-                false,
-                "The session is no longer active. Run the app again to attach a Flutter session.",
-                TimeSpan.Zero);
-        }
-
-        if (session.State is RunSessionState.Queued or RunSessionState.Preparing or RunSessionState.Building
-            or RunSessionState.ResolvingArtifact or RunSessionState.Installing or RunSessionState.Launching)
-        {
-            return new HotReloadResult(
-                false,
-                "Wait for the current run to finish before reloading.",
-                TimeSpan.Zero);
+            return guard;
         }
 
         if (string.IsNullOrWhiteSpace(session.DeviceSerial))
@@ -349,7 +462,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         FlutterRunSession? flutter;
         try
         {
-            flutter = context.Flutter;
+            flutter = context!.Flutter;
             if (flutter is null || !flutter.IsRunning)
             {
                 flutter = await AttachFlutterAsync(context, cancellationToken).ConfigureAwait(false);
@@ -731,6 +844,15 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
 
             try
             {
+                await StopMetroAsync(context).ConfigureAwait(false);
+            }
+            catch (ObjectDisposedException)
+            {
+                // The Metro session already shut down.
+            }
+
+            try
+            {
                 await DetachLogcatAsync(context).ConfigureAwait(false);
             }
             catch (ObjectDisposedException)
@@ -739,6 +861,25 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             }
 
             context.Cancellation.Dispose();
+        }
+
+        MetroLease[] leases;
+        lock (_sync)
+        {
+            leases = [.. _metroByPort.Values];
+            _metroByPort.Clear();
+        }
+
+        foreach (var lease in leases)
+        {
+            try
+            {
+                await lease.Session.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is InvalidOperationException or IOException)
+            {
+                _logger.LogWarning(exception, "A Metro instance could not be stopped during disposal.");
+            }
         }
     }
 
@@ -755,18 +896,20 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             ProjectRoot = request.Project.RootPath,
             ConfigurationId = request.Configuration.Id,
             ConfigurationName = request.Configuration.Name,
+            ConfigurationKind = request.Configuration.Kind,
             DeviceSerial = serial,
             DeviceName = request.Device?.Model ?? request.Device?.Serial,
             GroupId = request.GroupId,
             IsDryRun = request.DryRun,
-            SupportsHotReload = request.Configuration.Kind == RunConfigurationKind.Flutter &&
-                                IsDebugFlutterVariant(request.Configuration.VariantName),
+            SupportsHotReload = (request.Configuration.Kind is RunConfigurationKind.Flutter
+                                    or RunConfigurationKind.ReactNative)
+                                && IsDebugVariant(request.Configuration.VariantName),
             State = RunSessionState.Queued,
             StatusMessage = request.DryRun ? "Dry run queued." : "Queued.",
         };
     }
 
-    private static bool IsDebugFlutterVariant(string? variant) =>
+    private static bool IsDebugVariant(string? variant) =>
         string.IsNullOrWhiteSpace(variant) ||
         string.Equals(variant.Trim(), "debug", StringComparison.OrdinalIgnoreCase);
 
@@ -849,6 +992,18 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             return;
         }
 
+        if (configuration.Kind == RunConfigurationKind.ReactNative &&
+            !Directory.Exists(Path.Combine(project.RootPath, "android")))
+        {
+            await FailStepAsync(
+                context,
+                prepare,
+                "This Expo project has no android folder yet, so it cannot be built or installed. " +
+                "Run \"npx expo prebuild --platform android\" in the project, then refresh the project in DroidDeck.")
+                .ConfigureAwait(false);
+            return;
+        }
+
         SucceedStep(session, prepare, "The configuration and device are valid.");
 
         if (!await RunBuildAsync(context, cancellationToken).ConfigureAwait(false))
@@ -862,6 +1017,11 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         }
 
         if (!await InstallAsync(context, cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        if (!await PrepareMetroAsync(context, cancellationToken).ConfigureAwait(false))
         {
             return;
         }
@@ -897,6 +1057,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
 
         if (context.LaunchWasSkipped)
         {
+            await StopMetroAsync(context).ConfigureAwait(false);
             lock (session)
             {
                 session.State = RunSessionState.Succeeded;
@@ -924,7 +1085,10 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         var session = context.Session;
         var configuration = context.Request.Configuration;
         var step = AddStep(session, "build", "Build", RunStepKind.Build);
-        var isBuildable = configuration.Kind is RunConfigurationKind.Gradle or RunConfigurationKind.Flutter;
+        var isBuildable = configuration.Kind
+            is RunConfigurationKind.Gradle
+            or RunConfigurationKind.Flutter
+            or RunConfigurationKind.ReactNative;
         if (!isBuildable ||
             configuration.Build.Skip ||
             context.Request.Options.SkipBuild ||
@@ -934,7 +1098,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
                 session,
                 step,
                 !isBuildable
-                    ? "Only Gradle and Flutter projects have a build step."
+                    ? "Only Gradle, Flutter, and React Native projects have a build step."
                     : context.Request.Options.PrebuiltArtifactFiles is { Count: > 0 }
                         ? "The artifact was already built for this device group."
                         : "The build is disabled for this run.");
@@ -1209,6 +1373,191 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             CancelStep(step);
             await FinishCancelledAsync(context).ConfigureAwait(false);
             return false;
+        }
+    }
+
+    private async Task<bool> PrepareMetroAsync(RunContext context, CancellationToken cancellationToken)
+    {
+        var session = context.Session;
+        var request = context.Request;
+        var configuration = request.Configuration;
+        if (configuration.Kind != RunConfigurationKind.ReactNative || !IsDebugVariant(configuration.VariantName))
+        {
+            // Release builds bundle the JavaScript into the APK; no development server is needed.
+            return true;
+        }
+
+        var info = request.Project.ReactNativeInfo;
+        var port = info?.MetroPort is > 0 and <= 65535 ? info.MetroPort : ReactNativeProjectInfo.DefaultMetroPort;
+        var metroRequest = _planBuilder.CreateMetroStartRequest(request.Project, configuration);
+        if (metroRequest is null)
+        {
+            return true;
+        }
+
+        var step = AddStep(session, "metro", "Start Metro", RunStepKind.Metro);
+        context.MetroStep = step;
+        context.MetroTail.Clear();
+        SetSessionState(session, RunSessionState.Preparing, "Preparing the Metro development server.");
+        StartStep(session, step);
+        step.CommandLine = metroRequest.ToCommandLine();
+
+        MetroSession? metro;
+        lock (_sync)
+        {
+            if (_metroByPort.TryGetValue(port, out var lease) && lease.Session.IsRunning)
+            {
+                lease.Owners.Add(session.Id);
+                metro = lease.Session;
+            }
+            else
+            {
+                metro = null;
+            }
+        }
+
+        if (metro is null)
+        {
+            var created = new MetroSession(
+                metroRequest,
+                port,
+                line => OnMetroOutput(context, line),
+                probe: _metroProbe,
+                reload: _metroReload);
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                context.Cancellation.Token);
+            try
+            {
+                await created.StartAsync(linked.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                await created.DisposeAsync().ConfigureAwait(false);
+                CancelStep(step);
+                await FinishCancelledAsync(context).ConfigureAwait(false);
+                return false;
+            }
+            catch (Exception exception) when (
+                exception is InvalidOperationException or IOException or TimeoutException or Win32Exception)
+            {
+                await created.DisposeAsync().ConfigureAwait(false);
+                step.OutputTail = JoinTail(context.MetroTail);
+                await FailStepAsync(context, step, exception.Message).ConfigureAwait(false);
+                return false;
+            }
+
+            lock (_sync)
+            {
+                if (_metroByPort.TryGetValue(port, out var existing) && existing.Session.IsRunning)
+                {
+                    // Another session won the race for the port; share its instance instead.
+                    existing.Owners.Add(session.Id);
+                    metro = existing.Session;
+                }
+                else
+                {
+                    // A reused external server is never owned, so it is never stopped with the session.
+                    _metroByPort[port] = new MetroLease(created, !created.ReusedExisting, [session.Id]);
+                    metro = created;
+                }
+            }
+
+            if (!ReferenceEquals(metro, created))
+            {
+                await created.DisposeAsync().ConfigureAwait(false);
+                SucceedStep(session, step, $"Reusing the Metro instance already running on port {port}.");
+            }
+            else if (created.ReusedExisting)
+            {
+                SucceedStep(session, step, $"Reusing the Metro instance already running on port {port}.");
+            }
+            else
+            {
+                SucceedStep(session, step, $"Metro is running on port {port}.");
+            }
+        }
+        else
+        {
+            SucceedStep(session, step, $"Reusing the Metro instance already running on port {port}.");
+        }
+
+        context.Metro = metro;
+
+        var reverse = AddStep(session, "reverse", "Map device port", RunStepKind.Metro);
+        SetSessionState(session, RunSessionState.Preparing, $"Mapping port {port} on the device to Metro.");
+        StartStep(session, reverse);
+        var reverseResult = await _commands
+            .ReverseAsync(session.DeviceSerial, port, port, cancellationToken)
+            .ConfigureAwait(false);
+        reverse.CommandLine = reverseResult.CommandLine;
+        reverse.ExitCode = reverseResult.ExitCode;
+        if (!reverseResult.Succeeded)
+        {
+            await FailStepAsync(
+                context,
+                reverse,
+                $"The device could not map port {port} to Metro with adb reverse. " +
+                $"Reconnect the device and run the app again, or apply the tunnel manually with " +
+                $"\"adb -s {session.DeviceSerial} reverse tcp:{port} tcp:{port}\".")
+                .ConfigureAwait(false);
+            return false;
+        }
+
+        SucceedStep(session, reverse, $"Port {port} on the device maps to Metro on this computer.");
+        return true;
+    }
+
+    private void OnMetroOutput(RunContext context, ProcessOutputLine line)
+    {
+        var step = context.MetroStep;
+        OnProcessOutput(
+            context.Session,
+            step?.Id ?? "metro",
+            line,
+            context.MetroTail,
+            appendToBuildOutput: false);
+    }
+
+    private async Task StopMetroAsync(RunContext context)
+    {
+        var metro = context.Metro;
+        context.Metro = null;
+        if (metro is null)
+        {
+            return;
+        }
+
+        var shouldStop = true;
+        lock (_sync)
+        {
+            if (_metroByPort.TryGetValue(metro.Port, out var lease) &&
+                ReferenceEquals(lease.Session, metro))
+            {
+                lease.Owners.Remove(context.Session.Id);
+                shouldStop = lease.Owners.Count == 0 && lease.Owned;
+                if (lease.Owners.Count == 0)
+                {
+                    _metroByPort.Remove(metro.Port);
+                }
+            }
+        }
+
+        if (shouldStop)
+        {
+            try
+            {
+                await metro.StopAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is InvalidOperationException or IOException)
+            {
+                _logger.LogWarning(
+                    exception,
+                    "The Metro instance for run {SessionId} could not be stopped cleanly.",
+                    context.Session.Id);
+            }
+
+            await metro.DisposeAsync().ConfigureAwait(false);
         }
     }
 
@@ -1638,6 +1987,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
 
     private async Task FinishCancelledAsync(RunContext context)
     {
+        await StopMetroAsync(context).ConfigureAwait(false);
         var session = context.Session;
         var changed = false;
         lock (session)
@@ -1674,6 +2024,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
 
     private async Task FailSessionAsync(RunContext context, string message)
     {
+        await StopMetroAsync(context).ConfigureAwait(false);
         var session = context.Session;
         lock (session)
         {
@@ -1710,6 +2061,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         string message,
         int? exitCode = null)
     {
+        await StopMetroAsync(context).ConfigureAwait(false);
         var session = context.Session;
         lock (session)
         {
@@ -2060,6 +2412,12 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
 
         public Queue<string> FlutterTail { get; } = new();
 
+        public MetroSession? Metro { get; set; }
+
+        public RunStep? MetroStep { get; set; }
+
+        public Queue<string> MetroTail { get; } = new();
+
         public EventHandler<LogEntriesEventArgs>? EntriesHandler { get; set; }
 
         public EventHandler<CrashDetectedEventArgs>? CrashHandler { get; set; }
@@ -2074,6 +2432,22 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         Succeeded,
         PartiallyFailed,
         Terminal,
+    }
+
+    private sealed class MetroLease
+    {
+        public MetroLease(MetroSession session, bool owned, HashSet<string> owners)
+        {
+            Session = session;
+            Owned = owned;
+            Owners = owners;
+        }
+
+        public MetroSession Session { get; }
+
+        public bool Owned { get; }
+
+        public HashSet<string> Owners { get; }
     }
 
     private sealed class ActionProgress<T> : IProgress<T>
