@@ -9,6 +9,8 @@ using DroidDeck.Core.Configuration;
 using DroidDeck.Core.Logs;
 using DroidDeck.Core.Runs;
 using DroidDeck.Core.Sessions;
+using DroidDeck.Plugin.Abstractions;
+using DroidDeck.Plugins;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
@@ -29,6 +31,7 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
     private readonly ISavedFilterStore _filters;
     private readonly SessionWorkspace _workspace;
     private readonly IConfigurationService _configuration;
+    private readonly PluginHost _plugins;
     private readonly ILogger<SessionPage> _logger;
     private readonly DispatcherQueue? _dispatcher;
     private readonly BulkObservableCollection<string> _buildLines = [];
@@ -58,6 +61,7 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         ISavedFilterStore filters,
         SessionWorkspace workspace,
         IConfigurationService configuration,
+        PluginHost plugins,
         ILogger<SessionPage> logger)
     {
         _runs = runs ?? throw new ArgumentNullException(nameof(runs));
@@ -66,6 +70,7 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         _filters = filters ?? throw new ArgumentNullException(nameof(filters));
         _workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+        _plugins = plugins ?? throw new ArgumentNullException(nameof(plugins));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _dispatcher = DispatcherQueue.GetForCurrentThread();
 
@@ -88,6 +93,8 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         _runs.SessionChanged += OnSessionChanged;
         _runs.OutputReceived += OnOutputReceived;
         _workspace.Changed += OnWorkspaceChanged;
+        _plugins.Registry.Changed += OnPluginRegistryChanged;
+        RebuildPluginToolbar();
 
         _buildTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
         _buildTimer.Tick += OnBuildTimerTick;
@@ -138,6 +145,7 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         _runs.SessionChanged -= OnSessionChanged;
         _runs.OutputReceived -= OnOutputReceived;
         _workspace.Changed -= OnWorkspaceChanged;
+        _plugins.Registry.Changed -= OnPluginRegistryChanged;
         DetachLogcatSession();
     }
 
@@ -328,6 +336,97 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         CopyStackButton.IsEnabled = _latestCrash is not null || _session?.Crashes.Count > 0;
         PauseLogsButton.IsEnabled = _session is { IsReadOnly: false } && _logcatSession is not null;
         PauseLogsButton.Content = _logcatSession?.IsPaused == true ? "Resume logs" : "Pause logs";
+        MirrorButton.IsEnabled = CurrentDeviceSerial is { Length: > 0 };
+        foreach (var button in PluginToolbarPanel.Children.OfType<Button>())
+        {
+            button.IsEnabled = CurrentDeviceSerial is { Length: > 0 };
+        }
+    }
+
+    private string? CurrentDeviceSerial =>
+        _session?.DeviceSerial is { Length: > 0 } serial ? serial : _workspace.DeviceSerial;
+
+    private void RebuildPluginToolbar()
+    {
+        PluginToolbarPanel.Children.Clear();
+        foreach (var entry in _plugins.Extensions.ToolbarActions)
+        {
+            var button = new Button
+            {
+                Content = $"{entry.Action.Title} · {entry.SourceLabel}",
+                Tag = entry,
+                IsEnabled = CurrentDeviceSerial is { Length: > 0 },
+            };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(
+                button,
+                $"PluginToolbarAction_{entry.Action.Id}");
+            ToolTipService.SetToolTip(
+                button,
+                entry.Action.ToolTip is { Length: > 0 } tooltip
+                    ? $"{tooltip} (plugin: {entry.SourceLabel})"
+                    : $"Plugin: {entry.SourceLabel}");
+            button.Click += OnPluginToolbarClick;
+            PluginToolbarPanel.Children.Add(button);
+        }
+    }
+
+    private void OnPluginRegistryChanged(object? sender, EventArgs e) => Dispatch(RebuildPluginToolbar);
+
+    private void OnMirrorClick(object sender, RoutedEventArgs e)
+    {
+        if (CurrentDeviceSerial is not { Length: > 0 } serial)
+        {
+            ShowAction("Select a device before opening the mirror.", isError: true);
+            return;
+        }
+
+        _workspace.OpenDevice(serial);
+        App.Instance.Navigate("devices/mirror");
+    }
+
+    private async void OnPluginToolbarClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: ToolbarActionEntry entry } ||
+            CurrentDeviceSerial is not { Length: > 0 } serial)
+        {
+            return;
+        }
+
+        if (entry.Action.RequiresConfirmation &&
+            !await ConfirmAsync(
+                "Run plugin action?",
+                $"{entry.Action.Title} from {entry.SourceLabel} changes device state. Run it on {_session?.DeviceName ?? serial}?"))
+        {
+            return;
+        }
+
+        var result = await _plugins.Invoker.InvokeToolbarActionAsync(
+            entry.PluginId,
+            entry.Action,
+            new DeviceActionContext(serial, _session?.DeviceName));
+        if (result.Succeeded)
+        {
+            ShowAction(
+                $"Ran {entry.Action.Title} from {entry.SourceLabel} ({result.Duration.TotalMilliseconds:F0} ms).");
+        }
+        else
+        {
+            ShowAction($"{entry.Action.Title} from {entry.SourceLabel} failed: {result.Error}", isError: true);
+        }
+    }
+
+    private async Task<bool> ConfirmAsync(string title, string message)
+    {
+        var dialog = new ContentDialog
+        {
+            Title = title,
+            Content = message,
+            PrimaryButtonText = "Continue",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = XamlRoot,
+        };
+        return await dialog.ShowAsync() == ContentDialogResult.Primary;
     }
 
     private void UpdateBuildErrors()

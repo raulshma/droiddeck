@@ -57,6 +57,21 @@
                         <SymbolIcon Symbol="Phone" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
+                <NavigationViewItem Content="Multi-device" Tag="multi-device" AutomationProperties.AutomationId="NavMultiDevice">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Play" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Emulators" Tag="devices/emulators" AutomationProperties.AutomationId="NavEmulators">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Phone" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Wireless" Tag="devices/wireless" AutomationProperties.AutomationId="NavWireless">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="World" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
                 <NavigationViewItem Content="Projects" Tag="projects" AutomationProperties.AutomationId="NavProjects">
                     <NavigationViewItem.Icon>
                         <SymbolIcon Symbol="Library" />

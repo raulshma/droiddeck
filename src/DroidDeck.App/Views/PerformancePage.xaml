@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="DroidDeck.App.Views.PerformancePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid Padding="24" RowSpacing="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Spacing="2">
+                <TextBlock Text="Performance" Style="{StaticResource TitleTextBlockStyle}" />
+                <TextBlock
+                    Text="Read CPU, memory, frame timing, and display latency with the exact adb shell command shown for every measurement."
+                    FontSize="12"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    TextWrapping="Wrap" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <Button
+                    Content="Refresh devices"
+                    Click="OnRefreshClick"
+                    AutomationProperties.AutomationId="RefreshPerformanceDevicesButton" />
+                <Button
+                    x:Name="CancelButton"
+                    Content="Cancel"
+                    Click="OnCancelClick"
+                    IsEnabled="False"
+                    AutomationProperties.AutomationId="CancelPerformanceButton" />
+            </StackPanel>
+        </Grid>
+
+        <StackPanel Grid.Row="1" Spacing="8">
+            <InfoBar
+                x:Name="ActionBar"
+                Severity="Success"
+                IsOpen="False"
+                IsClosable="True"
+                AutomationProperties.AutomationId="PerformanceActionBar" />
+            <InfoBar
+                x:Name="GuidanceBar"
+                Severity="Informational"
+                Title="Next step"
+                IsOpen="False"
+                IsClosable="False"
+                AutomationProperties.AutomationId="PerformanceGuidanceBar" />
+            <ProgressBar
+                x:Name="BusyProgress"
+                IsIndeterminate="True"
+                Visibility="Collapsed"
+                AutomationProperties.AutomationId="PerformanceProgress" />
+        </StackPanel>
+
+        <Border Grid.Row="2" Style="{StaticResource CardBorderStyle}">
+            <Grid ColumnSpacing="12" RowSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="280" />
+                    <ColumnDefinition Width="280" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <ComboBox
+                    x:Name="DeviceCombo"
+                    Header="Device"
+                    DisplayMemberPath="DisplayName"
+                    HorizontalAlignment="Stretch"
+                    SelectionChanged="OnDeviceSelectionChanged"
+                    AutomationProperties.AutomationId="PerformanceDeviceCombo" />
+                <ComboBox
+                    x:Name="AppCombo"
+                    Grid.Column="1"
+                    Header="Application"
+                    DisplayMemberPath="Display"
+                    HorizontalAlignment="Stretch"
+                    SelectionChanged="OnAppSelectionChanged"
+                    AutomationProperties.AutomationId="PerformanceAppCombo" />
+                <TextBox
+                    x:Name="PackageBox"
+                    Grid.Column="2"
+                    Header="Package name"
+                    PlaceholderText="com.example.app"
+                    AutomationProperties.AutomationId="PerformancePackageBox" />
+                <Button
+                    Grid.Row="1"
+                    Grid.Column="0"
+                    Content="Reload applications"
+                    Click="OnReloadAppsClick"
+                    HorizontalAlignment="Left"
+                    AutomationProperties.AutomationId="ReloadPerformanceAppsButton" />
+
+                <StackPanel Grid.Row="2" Grid.ColumnSpan="3" Orientation="Horizontal" Spacing="8">
+                    <Button Content="CPU" Click="OnCpuClick" AutomationProperties.AutomationId="RunCpuButton" />
+                    <Button Content="Memory" Click="OnMemoryClick" AutomationProperties.AutomationId="RunMemoryButton" />
+                    <Button Content="Frame stats" Click="OnFrameStatsClick" AutomationProperties.AutomationId="RunFrameStatsButton" />
+                    <Button Content="Display latency" Click="OnLatencyClick" AutomationProperties.AutomationId="RunLatencyButton" />
+                    <Button Content="Battery and thermal" Click="OnBatteryClick" AutomationProperties.AutomationId="RunBatteryButton" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="3" ColumnSpacing="16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="340" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Border Style="{StaticResource CardBorderStyle}">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="Summary" Style="{StaticResource SectionHeaderStyle}" />
+                    <TextBlock
+                        x:Name="MetricTitleText"
+                        Text="No measurement yet"
+                        FontWeight="SemiBold"
+                        TextWrapping="Wrap" />
+                    <TextBlock
+                        x:Name="MetricSummaryText"
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap"
+                        IsTextSelectionEnabled="True"
+                        AutomationProperties.AutomationId="PerformanceSummary" />
+                    <TextBlock Text="Command" Style="{StaticResource FieldLabelStyle}" Margin="0,8,0,0" />
+                    <TextBlock
+                        x:Name="CommandText"
+                        FontFamily="Consolas"
+                        FontSize="12"
+                        TextWrapping="Wrap"
+                        IsTextSelectionEnabled="True"
+                        AutomationProperties.AutomationId="PerformanceCommand" />
+                </StackPanel>
+            </Border>
+
+            <Border Grid.Column="1" Style="{StaticResource CardBorderStyle}" Padding="0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <TextBlock
+                        Text="Raw output"
+                        Style="{StaticResource SectionHeaderStyle}"
+                        Margin="16,14,16,6" />
+                    <TextBox
+                        x:Name="OutputBox"
+                        Grid.Row="1"
+                        IsReadOnly="True"
+                        AcceptsReturn="True"
+                        TextWrapping="NoWrap"
+                        FontFamily="Consolas"
+                        FontSize="12"
+                        Margin="12,0,12,12"
+                        ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                        ScrollViewer.VerticalScrollBarVisibility="Auto"
+                        AutomationProperties.AutomationId="PerformanceOutput" />
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</Page>

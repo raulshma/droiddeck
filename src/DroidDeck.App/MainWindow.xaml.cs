@@ -7,6 +7,8 @@ using DroidDeck.Core.Devices;
 using DroidDeck.Core.Diagnostics;
 using DroidDeck.Core.Infrastructure;
 using DroidDeck.Core.Notifications;
+using DroidDeck.Core.Resources;
+using DroidDeck.Core.Screen;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI;
@@ -32,6 +34,13 @@ public sealed partial class MainWindow : Window
             ["home"] = typeof(HomePage),
             ["onboarding"] = typeof(OnboardingPage),
             ["devices"] = typeof(DevicesPage),
+            ["devices/tools"] = typeof(DeviceToolsPage),
+            ["devices/mirror"] = typeof(MirrorPage),
+            ["devices/emulators"] = typeof(EmulatorsPage),
+            ["devices/wireless"] = typeof(WirelessPage),
+            ["multi-device"] = typeof(MultiDevicePage),
+            ["devices/performance"] = typeof(PerformancePage),
+            ["devices/inspector"] = typeof(InspectorPage),
             ["projects"] = typeof(ProjectsPage),
             ["session"] = typeof(SessionPage),
             ["history"] = typeof(HistoryPage),
@@ -48,6 +57,7 @@ public sealed partial class MainWindow : Window
     private readonly PluginHost _pluginHost;
     private readonly SessionWorkspace _workspace;
     private readonly INotificationService _notifications;
+    private readonly IResourceGuard _resourceGuard;
     private readonly ILogger<MainWindow> _logger;
     private readonly Dictionary<string, Page> _pages = new(StringComparer.OrdinalIgnoreCase);
     private readonly DispatcherTimer _statusTimer;
@@ -66,6 +76,7 @@ public sealed partial class MainWindow : Window
         PluginHost pluginHost,
         SessionWorkspace workspace,
         INotificationService notifications,
+        IResourceGuard resourceGuard,
         ILogger<MainWindow> logger)
     {
         _services = services ?? throw new ArgumentNullException(nameof(services));
@@ -75,6 +86,7 @@ public sealed partial class MainWindow : Window
         _pluginHost = pluginHost ?? throw new ArgumentNullException(nameof(pluginHost));
         _workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
         _notifications = notifications ?? throw new ArgumentNullException(nameof(notifications));
+        _resourceGuard = resourceGuard ?? throw new ArgumentNullException(nameof(resourceGuard));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
         InitializeComponent();
@@ -87,6 +99,7 @@ public sealed partial class MainWindow : Window
         DiagnosticsIdText.Text = $"Diagnostics {_diagnostics.DiagnosticsId}";
         _devices.DevicesChanged += OnDevicesChanged;
         _notifications.NotificationRaised += OnNotificationRaised;
+        _resourceGuard.WarningRaised += OnResourceWarningRaised;
         AppWindow.Closing += OnAppWindowClosing;
         Closed += OnClosed;
 
@@ -163,6 +176,28 @@ public sealed partial class MainWindow : Window
             AppTheme.Light => ElementTheme.Light,
             _ => ElementTheme.Default,
         };
+    }
+
+    /// <summary>Computes the desktop rectangle of an element in effective pixels (DIPs).</summary>
+    internal bool TryGetScreenBounds(FrameworkElement element, out ScreenBounds bounds)
+    {
+        bounds = new ScreenBounds(0, 0, 0, 0);
+        if (element.XamlRoot is not { } root || element.ActualWidth <= 0 || element.ActualHeight <= 0)
+        {
+            return false;
+        }
+
+        // scrcpy and WinUI both express window geometry in effective pixels. The
+        // AppWindow position is physical, so convert it before adding the XAML offset.
+        var point = element.TransformToVisual(null).TransformPoint(new Windows.Foundation.Point(0, 0));
+        var scale = root.RasterizationScale > 0 ? root.RasterizationScale : 1;
+        var position = AppWindow.Position;
+        bounds = new ScreenBounds(
+            (int)Math.Round((position.X / scale) + point.X),
+            (int)Math.Round((position.Y / scale) + point.Y),
+            Math.Max(1, (int)Math.Round(element.ActualWidth)),
+            Math.Max(1, (int)Math.Round(element.ActualHeight)));
+        return bounds.IsValid;
     }
 
     /// <summary>Copies a redacted diagnostics report to the clipboard.</summary>
@@ -301,6 +336,19 @@ public sealed partial class MainWindow : Window
         });
     }
 
+    private void OnResourceWarningRaised(object? sender, ResourceWarningEventArgs e)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _notificationSessionId = null;
+            NotificationBar.Severity = InfoBarSeverity.Warning;
+            NotificationBar.Title = $"Resource warning: {e.Kind}";
+            NotificationBar.Message = e.Message;
+            NotificationActionButton.Visibility = Visibility.Collapsed;
+            NotificationBar.IsOpen = true;
+        });
+    }
+
     private void OnNotificationActionClick(object sender, RoutedEventArgs e)
     {
         NotificationBar.IsOpen = false;
@@ -407,6 +455,7 @@ public sealed partial class MainWindow : Window
         _messageTimer.Stop();
         _devices.DevicesChanged -= OnDevicesChanged;
         _notifications.NotificationRaised -= OnNotificationRaised;
+        _resourceGuard.WarningRaised -= OnResourceWarningRaised;
         AppWindow.Closing -= OnAppWindowClosing;
         foreach (var page in _pages.Values.OfType<IDisposable>())
         {

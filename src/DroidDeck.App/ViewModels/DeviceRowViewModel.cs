@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using DroidDeck.Core.Devices;
+using Microsoft.UI.Xaml.Media;
 
 namespace DroidDeck.App.ViewModels;
 
@@ -50,6 +51,7 @@ public sealed class DeviceRowViewModel : ObservableObject
     private string _tagsText;
     private string _tagsBaseline;
     private string? _metadataNote;
+    private ImageSource? _thumbnail;
 
     /// <summary>Creates a row for a device.</summary>
     public DeviceRowViewModel(DeviceInfo device)
@@ -63,6 +65,29 @@ public sealed class DeviceRowViewModel : ObservableObject
 
     /// <summary>Gets the adb serial.</summary>
     public string Serial => _device.Serial;
+
+    /// <summary>Gets the device model, when known.</summary>
+    public string? Model => _device.Model;
+
+    /// <summary>Gets or sets the latest device thumbnail.</summary>
+    public ImageSource? Thumbnail
+    {
+        get => _thumbnail;
+        set
+        {
+            if (ReferenceEquals(_thumbnail, value))
+            {
+                return;
+            }
+
+            _thumbnail = value;
+            OnPropertyChanged(nameof(Thumbnail));
+            OnPropertyChanged(nameof(HasThumbnail));
+        }
+    }
+
+    /// <summary>Gets whether a thumbnail has been captured.</summary>
+    public bool HasThumbnail => _thumbnail is not null;
 
     /// <summary>Gets the display name.</summary>
     public string DisplayName => _device.DisplayName;

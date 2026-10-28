@@ -25,10 +25,9 @@ The solution treats warnings as errors and runs analyzers on every build.
 dotnet test DroidDeck.slnx --filter "Category!=UI"
 ```
 
-This covers Core, ADB, Plugins, architecture rules, and the fake ADB command-line
-and socket fixtures. The Projects and Screen test projects are scaffolds for later
-milestones. UI automation tests launch the WinUI shell and need an interactive
-desktop; enable them explicitly:
+This covers Core, ADB, Screen, Projects, Plugins, architecture rules, and the fake
+ADB command-line and socket fixtures. UI automation tests launch the WinUI shell
+and need an interactive desktop; enable them explicitly:
 
 ```powershell
 $env:DROIDDECK_UI_TESTS = "1"
@@ -72,7 +71,7 @@ Add a `portable.marker` file next to the executable to store settings and logs i
 
 - `src/DroidDeck.App` — WinUI 3 shell and view models (highest layer)
 - `src/DroidDeck.Adb` — ADB socket tracker, CLI fallback, device metadata
-- `src/DroidDeck.Projects`, `src/DroidDeck.Screen` — scaffolds for the project and screen services in later milestones
+- `src/DroidDeck.Projects`, `src/DroidDeck.Screen` — project scanning and runs, scrcpy mirroring and recording
 - `src/DroidDeck.Plugins`, `src/DroidDeck.Plugin.Abstractions` — plugin host and contracts
 - `src/DroidDeck.Plugin.UI` — scaffold for plugin-supplied UI in a later milestone
 - `src/DroidDeck.Core` — configuration, process runner, toolchain, diagnostics

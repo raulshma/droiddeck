@@ -11,6 +11,7 @@
             </ResourceDictionary.MergedDictionaries>
 
             <converters:BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+            <converters:BooleanNegationConverter x:Key="BoolNegationConverter" />
             <converters:DeviceStateToBrushConverter x:Key="DeviceStateToBrush" />
 
             <Style x:Key="CardBorderStyle" TargetType="Border">

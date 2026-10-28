@@ -44,6 +44,7 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         PluginList.ItemsSource = _rows;
         _plugins.ResultsChanged += OnResultsChanged;
         _plugins.Registry.Changed += OnRegistryChanged;
+        _plugins.Health.HealthChanged += OnHealthChanged;
         Refresh();
     }
 
@@ -66,6 +67,7 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         _disposed = true;
         _plugins.ResultsChanged -= OnResultsChanged;
         _plugins.Registry.Changed -= OnRegistryChanged;
+        _plugins.Health.HealthChanged -= OnHealthChanged;
     }
 
     private void UpdateSummary()
@@ -83,8 +85,11 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         else
         {
             var failed = _plugins.Results.Count(result => !result.Succeeded);
+            var unhealthy = _plugins.Health.Snapshot().Count(health => !health.IsHealthy);
             PluginsStatusText.Text = failed == 0
-                ? $"{_plugins.LoadedCount} plugin(s) loaded. No plugin issues were reported."
+                ? unhealthy == 0
+                    ? $"{_plugins.LoadedCount} plugin(s) loaded. No plugin issues were reported."
+                    : $"{_plugins.LoadedCount} plugin(s) loaded, {unhealthy} unhealthy. See the health details below."
                 : $"{_plugins.LoadedCount} plugin(s) loaded, {failed} failed. Review the issues below and the Activity log.";
         }
 
@@ -99,7 +104,10 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         _rows.Clear();
         foreach (var result in _plugins.Results)
         {
-            _rows.Add(new PluginRow(result, result.Plugin is { } plugin && _plugins.IsDisabled(plugin.Id)));
+            var pluginId = result.Plugin?.Id;
+            var disabled = pluginId is not null && _plugins.IsDisabled(pluginId);
+            var health = pluginId is null ? null : _plugins.Health.Get(pluginId);
+            _rows.Add(new PluginRow(result, disabled, health));
         }
 
         EmptyText.Text = _plugins.PluginsDisabled
@@ -118,6 +126,8 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
     private void OnResultsChanged(object? sender, EventArgs e) => Dispatch(Refresh);
 
     private void OnRegistryChanged(object? sender, EventArgs e) => Dispatch(Refresh);
+
+    private void OnHealthChanged(object? sender, EventArgs e) => Dispatch(Refresh);
 
     private async void OnRunCommandClick(object sender, RoutedEventArgs e)
     {
@@ -267,8 +277,8 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
     /// <summary>One plugin result shaped for the extensions list.</summary>
     public sealed class PluginRow
     {
-        /// <summary>Creates a row from a plugin load result.</summary>
-        public PluginRow(PluginLoadResult result, bool disabled)
+        /// <summary>Creates a row from a plugin load result and its health.</summary>
+        public PluginRow(PluginLoadResult result, bool disabled, PluginHealthSnapshot? health)
         {
             ArgumentNullException.ThrowIfNull(result);
             PluginId = result.Plugin?.Id;
@@ -294,6 +304,27 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
             Issues = string.Join(
                 Environment.NewLine,
                 result.Validation.Issues.Select(issue => issue.ToString()));
+
+            HasHealth = result.Succeeded && !disabled && health is not null;
+            if (!HasHealth || health is null)
+            {
+                Health = string.Empty;
+                HealthBrush = ResolveBrush("SystemFillColorSuccessBrush");
+            }
+            else if (health.IsHealthy)
+            {
+                Health = health.SuccessCount + health.FailureCount == 0
+                    ? "Healthy · no invocations yet"
+                    : $"Healthy · {health.SuccessCount} succeeded, {health.FailureCount} failed";
+                HealthBrush = ResolveBrush("SystemFillColorSuccessBrush");
+            }
+            else
+            {
+                var timeout = health.LastFailureTimedOut ? " (timeout)" : string.Empty;
+                Health =
+                    $"Unhealthy · {health.ConsecutiveFailures} consecutive failure(s){timeout}: {health.LastError}";
+                HealthBrush = ResolveBrush("SystemFillColorCriticalBrush");
+            }
         }
 
         /// <summary>Gets the plugin identifier, if the plugin loaded.</summary>
@@ -316,6 +347,15 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
 
         /// <summary>Gets the status brush.</summary>
         public Brush StatusBrush { get; }
+
+        /// <summary>Gets the health summary.</summary>
+        public string Health { get; }
+
+        /// <summary>Gets whether the health summary should be shown.</summary>
+        public bool HasHealth { get; }
+
+        /// <summary>Gets the health brush.</summary>
+        public Brush HealthBrush { get; }
 
         /// <summary>Gets validation and load issues.</summary>
         public string Issues { get; }

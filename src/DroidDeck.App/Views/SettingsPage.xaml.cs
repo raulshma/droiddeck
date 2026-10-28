@@ -90,6 +90,7 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
             NotifyInstallFailedToggle.IsOn = settings.Notifications.InstallFailed;
             RetentionDaysBox.Value = settings.Logging.RetentionDays;
             RetentionGigabytesBox.Value = BytesToGigabytes(settings.Logging.MaxSessionBytes);
+            RunConcurrencyBox.Value = settings.Run.MaxConcurrentDevices;
             UpdateRetentionSummary();
             UpdateSourceHints();
         }
@@ -242,6 +243,30 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         catch (Exception exception)
         {
             ReportFailure("Saving the session storage limit", exception);
+        }
+    }
+
+    private async void OnRunConcurrencyChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+    {
+        if (_initializing || double.IsNaN(args.NewValue))
+        {
+            return;
+        }
+
+        var limit = Math.Clamp((int)Math.Round(args.NewValue), 1, 16);
+        if (limit == _configuration.Current.Settings.Run.MaxConcurrentDevices)
+        {
+            return;
+        }
+
+        try
+        {
+            await _configuration.SetAsync(SettingsPaths.RunMaxConcurrentDevices, limit);
+            ShowAction($"Multi-device runs use at most {limit} device(s) at a time.");
+        }
+        catch (Exception exception)
+        {
+            ReportFailure("Saving the multi-device concurrency limit", exception);
         }
     }
 

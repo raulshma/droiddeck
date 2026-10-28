@@ -112,15 +112,27 @@
                                     AutomationProperties.AutomationId="{Binding Serial}">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
+                                    <Grid Width="64" Height="36" VerticalAlignment="Center">
+                                        <FontIcon
+                                            Glyph="&#xE7F4;"
+                                            FontSize="16"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <Image
+                                            Source="{Binding Thumbnail}"
+                                            Stretch="UniformToFill"
+                                            Visibility="{Binding HasThumbnail, Converter={StaticResource BoolToVisibility}}" />
+                                    </Grid>
                                     <TextBlock
+                                        Grid.Column="1"
                                         Text="●"
                                         FontSize="14"
                                         VerticalAlignment="Center"
                                         Foreground="{Binding State, Converter={StaticResource DeviceStateToBrush}}" />
-                                    <StackPanel Grid.Column="1" Spacing="2">
+                                    <StackPanel Grid.Column="2" Spacing="2">
                                         <TextBlock
                                             Text="{Binding DisplayName}"
                                             FontWeight="SemiBold"
@@ -132,7 +144,7 @@
                                             TextTrimming="CharacterEllipsis" />
                                     </StackPanel>
                                     <TextBlock
-                                        Grid.Column="2"
+                                        Grid.Column="3"
                                         Text="{Binding StateLabel}"
                                         FontSize="12"
                                         VerticalAlignment="Center"
@@ -226,6 +238,18 @@
                                 Message="{Binding SelectedDevice.Guidance}"
                                 AutomationProperties.AutomationId="DeviceAttentionInfoBar" />
 
+                            <Border
+                                Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                CornerRadius="8"
+                                Visibility="{Binding SelectedDevice.HasThumbnail, Converter={StaticResource BoolToVisibility}}">
+                                <Image
+                                    Source="{Binding SelectedDevice.Thumbnail}"
+                                    Stretch="Uniform"
+                                    MaxHeight="220"
+                                    HorizontalAlignment="Center"
+                                    AutomationProperties.AutomationId="SelectedDeviceThumbnail" />
+                            </Border>
+
                             <StackPanel Orientation="Horizontal" Spacing="8">
                                 <Button
                                     Content="Refresh metadata"
@@ -241,6 +265,50 @@
                                     Click="OnCopySerialClick"
                                     AutomationProperties.AutomationId="CopySerialButton" />
                             </StackPanel>
+
+                            <Border Style="{StaticResource SubtleCardStyle}">
+                                <StackPanel Spacing="10">
+                                    <TextBlock Text="Device tools" Style="{StaticResource SectionHeaderStyle}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Button
+                                            Content="Toolbox"
+                                            Click="OnOpenToolboxClick"
+                                            IsEnabled="{Binding SelectedDevice.IsReady}"
+                                            AutomationProperties.AutomationId="OpenDeviceToolboxButton" />
+                                        <Button
+                                            Content="Mirror"
+                                            Click="OnOpenMirrorClick"
+                                            IsEnabled="{Binding SelectedDevice.IsReady}"
+                                            AutomationProperties.AutomationId="OpenDeviceMirrorButton" />
+                                        <Button
+                                            Content="Emulators"
+                                            Click="OnOpenEmulatorsClick"
+                                            AutomationProperties.AutomationId="OpenEmulatorsButton" />
+                                        <Button
+                                            Content="Wireless"
+                                            Click="OnOpenWirelessClick"
+                                            AutomationProperties.AutomationId="OpenWirelessButton" />
+                                    </StackPanel>
+                                    <TextBlock
+                                        FontSize="12"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        Text="Toolbox, mirror, emulator, and wireless pages use the device selected here."
+                                        TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource SubtleCardStyle}">
+                                <StackPanel Spacing="10">
+                                    <TextBlock Text="Plugin actions" Style="{StaticResource SectionHeaderStyle}" />
+                                    <TextBlock
+                                        x:Name="PluginActionsEmptyText"
+                                        Text="No plugin device actions are installed."
+                                        FontSize="12"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        TextWrapping="Wrap" />
+                                    <StackPanel x:Name="PluginActionsPanel" Spacing="6" />
+                                </StackPanel>
+                            </Border>
 
                             <Grid ColumnSpacing="12" RowSpacing="12">
                                 <Grid.ColumnDefinitions>

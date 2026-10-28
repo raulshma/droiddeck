@@ -131,6 +131,15 @@ public sealed class DevicesViewModel : ObservableObject, IDisposable
         _ = RefreshInBackgroundAsync();
     }
 
+    /// <summary>Makes the selected device the workspace device before navigating to a tool.</summary>
+    public void OpenSelectedDevice()
+    {
+        if (SelectedDevice is { } device)
+        {
+            _workspace.OpenDevice(device.Serial);
+        }
+    }
+
     /// <summary>Refreshes the device list and reports the result.</summary>
     public async Task RefreshAsync()
     {

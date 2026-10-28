@@ -2,29 +2,38 @@ using System.Runtime.InteropServices;
 using DroidDeck.Adb;
 using DroidDeck.Adb.Commands;
 using DroidDeck.Adb.Devices;
+using DroidDeck.Adb.Emulators;
 using DroidDeck.Adb.Logcat;
 using DroidDeck.Adb.Protocol;
+using DroidDeck.Adb.Toolbox;
 using DroidDeck.Adb.Tracking;
+using DroidDeck.Adb.Wireless;
 using DroidDeck.App.Services;
 using DroidDeck.App.Views;
 using DroidDeck.Core;
 using DroidDeck.Core.Configuration;
 using DroidDeck.Core.Devices;
 using DroidDeck.Core.Diagnostics;
+using DroidDeck.Core.Emulators;
 using DroidDeck.Core.Infrastructure;
 using DroidDeck.Core.Logs;
 using DroidDeck.Core.Notifications;
 using DroidDeck.Core.Processes;
 using DroidDeck.Core.Projects;
+using DroidDeck.Core.Resources;
 using DroidDeck.Core.Runs;
+using DroidDeck.Core.Screen;
 using DroidDeck.Core.Security;
 using DroidDeck.Core.Sessions;
+using DroidDeck.Core.Toolbox;
 using DroidDeck.Core.Toolchain;
+using DroidDeck.Core.Wireless;
 using DroidDeck.Plugins;
 using DroidDeck.Projects;
 using DroidDeck.Projects.Artifacts;
 using DroidDeck.Projects.Detection;
 using DroidDeck.Projects.Storage;
+using DroidDeck.Screen;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml;
@@ -84,6 +93,9 @@ public partial class App : Application, IDisposable
     /// <summary>Gets the service provider once composition completes.</summary>
     public IServiceProvider Services => _services
         ?? throw new InvalidOperationException("The application services are not ready yet.");
+
+    /// <summary>Gets the main window once it has been created.</summary>
+    internal MainWindow? Window => _window;
 
     /// <summary>Navigates the main window to a page key.</summary>
     public void Navigate(string key) => _window?.Navigate(key);
@@ -211,6 +223,17 @@ public partial class App : Application, IDisposable
 
         services.AddSingleton<IProcessRunner>(
             _ => new ProcessRunner(logger: loggerFactory.CreateLogger<ProcessRunner>()));
+        services.AddSingleton<IProcessLauncher, ProcessLauncher>();
+        services.AddSingleton<IResourceGuard>(_ => new ResourceGuard(new ResourceLimits
+        {
+            MaxBuilds = configuration.Current.Settings.Screen.MaxConcurrentBuilds,
+            MaxMirrors = configuration.Current.Settings.Screen.MaxMirrors,
+            MaxRecordings = configuration.Current.Settings.Screen.MaxRecordings,
+            WarnAtPercent = configuration.Current.Settings.Screen.WarnAtPercent,
+        }));
+        services.AddSingleton<IDeviceOperationCoordinator>(_ => new DeviceOperationCoordinator(
+            configuration.Current.Settings.Run.MaxConcurrentDevices,
+            loggerFactory.CreateLogger<DeviceOperationCoordinator>()));
         services.AddSingleton<ISecretStore, DpapiSecretStore>();
         services.AddSingleton<IDeviceRecordStore, JsonDeviceRecordStore>();
         services.AddSingleton<IAdbSocketClient>(_ => new AdbSocketClient());
@@ -296,6 +319,61 @@ public partial class App : Application, IDisposable
             provider.GetRequiredService<IDeviceCommandService>(),
             () => GetAdbPath(provider),
             loggerFactory.CreateLogger<AdbLogcatService>()));
+        services.AddSingleton<IDeviceToolboxService>(provider => new AdbToolboxService(
+            provider.GetRequiredService<IProcessRunner>(),
+            () => GetAdbPath(provider),
+            logger: loggerFactory.CreateLogger<AdbToolboxService>(),
+            coordinator: provider.GetRequiredService<IDeviceOperationCoordinator>()));
+        services.AddSingleton<IDeviceFileService>(provider => new AdbDeviceFileService(
+            provider.GetRequiredService<IProcessRunner>(),
+            () => GetAdbPath(provider),
+            logger: loggerFactory.CreateLogger<AdbDeviceFileService>(),
+            coordinator: provider.GetRequiredService<IDeviceOperationCoordinator>()));
+        services.AddSingleton<IDeviceIntentService>(provider => new AdbIntentService(
+            provider.GetRequiredService<IProcessRunner>(),
+            () => GetAdbPath(provider),
+            logger: loggerFactory.CreateLogger<AdbIntentService>(),
+            coordinator: provider.GetRequiredService<IDeviceOperationCoordinator>()));
+        services.AddSingleton<IWirelessDeviceStore>(provider => new JsonWirelessDeviceStore(
+            _paths,
+            loggerFactory.CreateLogger<JsonWirelessDeviceStore>()));
+        services.AddSingleton<IWirelessAdbService>(provider => new WirelessAdbService(
+            provider.GetRequiredService<IProcessRunner>(),
+            provider.GetRequiredService<IWirelessDeviceStore>(),
+            () => GetAdbPath(provider),
+            () =>
+            {
+                var wireless = configuration.Current.Settings.Wireless;
+                return new WirelessReconnectOptions(
+                    wireless.AutoReconnect,
+                    TimeSpan.FromSeconds(Math.Max(1, wireless.ReconnectDelaySeconds)));
+            },
+            logger: loggerFactory.CreateLogger<WirelessAdbService>()));
+        services.AddSingleton<IEmulatorService>(provider => new EmulatorService(
+            provider.GetRequiredService<IProcessRunner>(),
+            provider.GetRequiredService<IProcessLauncher>(),
+            () => configuration.Current.Settings.Tools.EmulatorPath,
+            () => GetAdbPath(provider),
+            () => Environment.GetEnvironmentVariable("ANDROID_AVD_HOME"),
+            logger: loggerFactory.CreateLogger<EmulatorService>()));
+        services.AddSingleton<IScreenWindowController, Win32ScreenWindowController>();
+        services.AddSingleton<IScreenService>(provider => new ScrcpyScreenService(
+            provider.GetRequiredService<IProcessRunner>(),
+            provider.GetRequiredService<IProcessLauncher>(),
+            provider.GetRequiredService<IScreenWindowController>(),
+            provider.GetRequiredService<IResourceGuard>(),
+            _paths,
+            () => configuration.Current.Settings.Tools.ScrcpyPath,
+            () => GetAdbPath(provider),
+            () => configuration.Current.Settings.Screen,
+            logger: loggerFactory.CreateLogger<ScrcpyScreenService>()));
+        services.AddSingleton<IThumbnailService>(provider => new AdbThumbnailService(
+            provider.GetRequiredService<IProcessRunner>(),
+            provider.GetRequiredService<IScreenService>(),
+            () => GetAdbPath(provider),
+            Path.Combine(_paths.DataDirectory, "thumbnails"),
+            logger: loggerFactory.CreateLogger<AdbThumbnailService>(),
+            resourceGuard: provider.GetRequiredService<IResourceGuard>()));
         services.AddSingleton<ISessionStore, JsonSessionStore>();
         services.AddSingleton<ISavedFilterStore, JsonSavedFilterStore>();
         services.AddSingleton<INotificationService>(_ => new NotificationService
@@ -303,6 +381,11 @@ public partial class App : Application, IDisposable
             Preferences = configuration.Current.Settings.Notifications.ToPreferences(),
         });
         services.AddSingleton<IRunSessionService, RunSessionService>();
+        services.AddSingleton<IMultiDeviceRunService>(provider => new MultiDeviceRunService(
+            provider.GetRequiredService<IRunSessionService>(),
+            provider.GetRequiredService<IDeviceOperationCoordinator>(),
+            () => configuration.Current.Settings.Run.MaxConcurrentDevices,
+            loggerFactory.CreateLogger<MultiDeviceRunService>()));
         services.AddSingleton<QuickRunMemory>();
         services.AddTransient<ViewModels.DevicesViewModel>();
 
@@ -317,6 +400,13 @@ public partial class App : Application, IDisposable
         services.AddTransient<ExtensionsPage>();
         services.AddTransient<SettingsPage>();
         services.AddTransient<DiagnosticsPage>();
+        services.AddTransient<DeviceToolsPage>();
+        services.AddTransient<MirrorPage>();
+        services.AddTransient<EmulatorsPage>();
+        services.AddTransient<WirelessPage>();
+        services.AddTransient<MultiDevicePage>();
+        services.AddTransient<PerformancePage>();
+        services.AddTransient<InspectorPage>();
 
         return services.BuildServiceProvider(new ServiceProviderOptions
         {
@@ -390,6 +480,15 @@ public partial class App : Application, IDisposable
         {
             logger.LogError(exception, "Device tracking failed to start.");
         }
+
+        try
+        {
+            await services.GetRequiredService<IWirelessAdbService>().StartAsync();
+        }
+        catch (Exception exception) when (exception is IOException or InvalidOperationException)
+        {
+            logger.LogWarning(exception, "Wireless adb reconnect could not start.");
+        }
     }
 
     private static async Task InitializePluginsAsync(
@@ -456,23 +555,42 @@ public partial class App : Application, IDisposable
             notifications.Preferences = _configuration.Current.Settings.Notifications.ToPreferences();
         }
 
-        if (!string.Equals(e.Path, SettingsPaths.AdbPath, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(e.Path, SettingsPaths.AdbPath, StringComparison.OrdinalIgnoreCase))
         {
-            return;
+            var adbPath = _configuration?.Current.Settings.Tools.AdbPath;
+            if (string.IsNullOrWhiteSpace(adbPath))
+            {
+                adbPath = "adb";
+            }
+
+            _adbTracker?.UpdateAdbExecutable(adbPath);
+            _adbMetadata?.UpdateAdbExecutable(adbPath);
+            var logger = _loggerFactory?.CreateLogger<App>();
+            if (logger?.IsEnabled(LogLevel.Information) == true)
+            {
+                logger.LogInformation("The adb executable path changed and applies to new commands.");
+            }
         }
 
-        var adbPath = _configuration?.Current.Settings.Tools.AdbPath;
-        if (string.IsNullOrWhiteSpace(adbPath))
+        if (e.Path.StartsWith("screen.", StringComparison.OrdinalIgnoreCase) &&
+            _services?.GetService<IResourceGuard>() is { } guard &&
+            _configuration is not null)
         {
-            adbPath = "adb";
+            var screen = _configuration.Current.Settings.Screen;
+            guard.UpdateLimits(new ResourceLimits
+            {
+                MaxBuilds = screen.MaxConcurrentBuilds,
+                MaxMirrors = screen.MaxMirrors,
+                MaxRecordings = screen.MaxRecordings,
+                WarnAtPercent = screen.WarnAtPercent,
+            });
         }
 
-        _adbTracker?.UpdateAdbExecutable(adbPath);
-        _adbMetadata?.UpdateAdbExecutable(adbPath);
-        var logger = _loggerFactory?.CreateLogger<App>();
-        if (logger?.IsEnabled(LogLevel.Information) == true)
+        if (string.Equals(e.Path, SettingsPaths.RunMaxConcurrentDevices, StringComparison.OrdinalIgnoreCase) &&
+            _services?.GetService<IDeviceOperationCoordinator>() is { } coordinator &&
+            _configuration is not null)
         {
-            logger.LogInformation("The adb executable path changed and applies to new commands.");
+            coordinator.MaxConcurrency = Math.Max(1, _configuration.Current.Settings.Run.MaxConcurrentDevices);
         }
     }
 

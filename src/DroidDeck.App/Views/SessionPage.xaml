@@ -179,6 +179,15 @@
                     Content="Cancel"
                     Click="OnCancelClick"
                     AutomationProperties.AutomationId="SessionCancelButton" />
+                <Button
+                    x:Name="MirrorButton"
+                    Content="Mirror"
+                    Click="OnMirrorClick"
+                    AutomationProperties.AutomationId="SessionMirrorButton" />
+                <StackPanel
+                    x:Name="PluginToolbarPanel"
+                    Orientation="Horizontal"
+                    Spacing="8" />
             </StackPanel>
         </Grid>
 

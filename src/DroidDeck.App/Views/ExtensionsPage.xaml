@@ -149,6 +149,12 @@
                                                 Foreground="{ThemeResource SystemFillColorCautionBrush}"
                                                 TextWrapping="Wrap"
                                                 Visibility="{Binding HasIssues, Converter={StaticResource BoolToVisibility}}" />
+                                            <TextBlock
+                                                Text="{Binding Health}"
+                                                FontSize="12"
+                                                Foreground="{Binding HealthBrush}"
+                                                TextWrapping="Wrap"
+                                                Visibility="{Binding HasHealth, Converter={StaticResource BoolToVisibility}}" />
                                         </StackPanel>
                                         <TextBlock
                                             Grid.Column="1"

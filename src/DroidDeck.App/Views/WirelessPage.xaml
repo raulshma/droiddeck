@@ -1,0 +1,318 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="DroidDeck.App.Views.WirelessPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Loaded="OnLoaded"
+    Unloaded="OnUnloaded">
+
+    <Grid Padding="24" RowSpacing="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Spacing="2">
+                <TextBlock Text="Wireless ADB" Style="{StaticResource TitleTextBlockStyle}" />
+                <TextBlock
+                    Text="Pair Android 11+ devices with a QR code or pairing code, discover mDNS services, and keep remembered connections alive after adb or network restarts."
+                    FontSize="12"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    TextWrapping="Wrap" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                <ToggleSwitch
+                    x:Name="AutoReconnectToggle"
+                    Header="Auto-reconnect"
+                    Toggled="OnAutoReconnectToggled"
+                    AutomationProperties.AutomationId="WirelessAutoReconnectToggle" />
+                <Button
+                    Content="Discover mDNS"
+                    Click="OnDiscoverClick"
+                    AutomationProperties.AutomationId="DiscoverWirelessButton" />
+            </StackPanel>
+        </Grid>
+
+        <StackPanel Grid.Row="1" Spacing="8">
+            <InfoBar
+                x:Name="ActionBar"
+                Severity="Success"
+                IsOpen="False"
+                IsClosable="True"
+                AutomationProperties.AutomationId="WirelessActionBar" />
+            <InfoBar
+                x:Name="GuidanceBar"
+                Severity="Informational"
+                Title="Next step"
+                IsOpen="False"
+                IsClosable="False"
+                AutomationProperties.AutomationId="WirelessGuidanceBar" />
+            <InfoBar
+                x:Name="ErrorBar"
+                Severity="Warning"
+                Title="Wireless connection issue"
+                IsOpen="False"
+                IsClosable="False"
+                AutomationProperties.AutomationId="WirelessErrorBar" />
+            <ProgressBar
+                x:Name="BusyProgress"
+                IsIndeterminate="True"
+                Visibility="Collapsed"
+                AutomationProperties.AutomationId="WirelessProgress" />
+        </StackPanel>
+
+        <Grid Grid.Row="2" ColumnSpacing="16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="400" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Border Style="{StaticResource CardBorderStyle}" Padding="0">
+                <ScrollViewer Padding="16" VerticalScrollBarVisibility="Auto">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="Pair with a QR code" Style="{StaticResource SectionHeaderStyle}" />
+                        <TextBlock
+                            Text="On the device, open Developer options → Wireless debugging → Pair device with QR code, then scan this code."
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextWrapping="Wrap" />
+                        <Button
+                            Content="Generate pairing QR"
+                            Click="OnGenerateQrClick"
+                            AutomationProperties.AutomationId="GenerateQrButton" />
+                        <Image
+                            x:Name="QrImage"
+                            Width="220"
+                            Height="220"
+                            HorizontalAlignment="Left"
+                            Visibility="Collapsed"
+                            AutomationProperties.AutomationId="WirelessQrImage" />
+                        <TextBlock
+                            x:Name="PairingCodeText"
+                            FontFamily="Consolas"
+                            FontSize="20"
+                            FontWeight="SemiBold"
+                            IsTextSelectionEnabled="True"
+                            Visibility="Collapsed" />
+                        <TextBlock
+                            x:Name="PairingSessionText"
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextWrapping="Wrap" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button
+                                x:Name="WaitForScanButton"
+                                Content="Wait for scan and pair"
+                                Click="OnWaitForScanClick"
+                                IsEnabled="False"
+                                AutomationProperties.AutomationId="WaitForScanButton" />
+                            <Button
+                                x:Name="CancelQrButton"
+                                Content="Cancel"
+                                Click="OnCancelQrClick"
+                                IsEnabled="False"
+                                AutomationProperties.AutomationId="CancelQrButton" />
+                        </StackPanel>
+                        <TextBlock
+                            x:Name="PairingStatusText"
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextWrapping="Wrap" />
+
+                        <Border Height="1" Background="{ThemeResource CardStrokeColorDefaultBrush}" />
+
+                        <TextBlock Text="Pair manually" Style="{StaticResource SectionHeaderStyle}" />
+                        <TextBox
+                            x:Name="PairAddressBox"
+                            Header="Pairing address"
+                            PlaceholderText="192.168.1.20:37123"
+                            AutomationProperties.AutomationId="PairAddressBox" />
+                        <TextBox
+                            x:Name="PairCodeBox"
+                            Header="Six-digit pairing code"
+                            PlaceholderText="123456"
+                            MaxLength="12"
+                            AutomationProperties.AutomationId="PairCodeBox" />
+                        <Button
+                            Content="Pair device"
+                            Click="OnPairClick"
+                            AutomationProperties.AutomationId="PairDeviceButton" />
+
+                        <Border Height="1" Background="{ThemeResource CardStrokeColorDefaultBrush}" />
+
+                        <TextBlock Text="Connect or disconnect" Style="{StaticResource SectionHeaderStyle}" />
+                        <TextBox
+                            x:Name="ConnectAddressBox"
+                            Header="Connection address"
+                            PlaceholderText="192.168.1.20:5555"
+                            AutomationProperties.AutomationId="ConnectAddressBox" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button
+                                Content="Connect"
+                                Click="OnConnectClick"
+                                AutomationProperties.AutomationId="ConnectWirelessButton" />
+                            <Button
+                                Content="Disconnect"
+                                Click="OnDisconnectClick"
+                                AutomationProperties.AutomationId="DisconnectWirelessButton" />
+                        </StackPanel>
+                        <TextBlock
+                            Text="The connect port is shown under Wireless debugging after pairing. Use the pairing address to pair and the connection address to reconnect later."
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+
+            <Grid Grid.Column="1" RowSpacing="16">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Border Style="{StaticResource CardBorderStyle}" Padding="0">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <TextBlock
+                            Text="Discovered services"
+                            Style="{StaticResource SectionHeaderStyle}"
+                            Margin="16,14,16,6" />
+                        <ListView
+                            x:Name="ServiceList"
+                            Grid.Row="1"
+                            SelectionMode="Single"
+                            Padding="4,0,4,8"
+                            AutomationProperties.AutomationId="WirelessServiceList">
+                            <ListView.ItemContainerStyle>
+                                <Style TargetType="ListViewItem">
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                    <Setter Property="Padding" Value="0" />
+                                    <Setter Property="Margin" Value="4,1" />
+                                </Style>
+                            </ListView.ItemContainerStyle>
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Padding="12,8" ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock
+                                                Text="{Binding Address}"
+                                                FontSize="12"
+                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                IsTextSelectionEnabled="True" />
+                                            <TextBlock
+                                                Text="{Binding Detail}"
+                                                FontSize="12"
+                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        </StackPanel>
+                                        <Button
+                                            Grid.Column="1"
+                                            Content="Use"
+                                            Click="OnUseServiceClick"
+                                            VerticalAlignment="Center"
+                                            AutomationProperties.AutomationId="{Binding UseId}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                        <TextBlock
+                            x:Name="ServiceEmptyText"
+                            Grid.Row="1"
+                            Text="No services discovered yet. Press Discover mDNS while the device shows Wireless debugging."
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            TextAlignment="Center"
+                            TextWrapping="Wrap"
+                            MaxWidth="360" />
+                    </Grid>
+                </Border>
+
+                <Border Grid.Row="1" Style="{StaticResource CardBorderStyle}" Padding="0">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <TextBlock
+                            Text="Remembered devices"
+                            Style="{StaticResource SectionHeaderStyle}"
+                            Margin="16,14,16,6" />
+                        <ListView
+                            x:Name="RememberedList"
+                            Grid.Row="1"
+                            SelectionMode="Single"
+                            Padding="4,0,4,8"
+                            AutomationProperties.AutomationId="WirelessRememberedList">
+                            <ListView.ItemContainerStyle>
+                                <Style TargetType="ListViewItem">
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                    <Setter Property="Padding" Value="0" />
+                                    <Setter Property="Margin" Value="4,1" />
+                                </Style>
+                            </ListView.ItemContainerStyle>
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Padding="12,8" ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock
+                                                Text="{Binding Address}"
+                                                FontSize="12"
+                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                IsTextSelectionEnabled="True" />
+                                            <TextBlock
+                                                Text="{Binding Detail}"
+                                                FontSize="12"
+                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                            <Button
+                                                Content="Reconnect"
+                                                Click="OnReconnectDeviceClick"
+                                                AutomationProperties.AutomationId="{Binding ReconnectId}" />
+                                            <Button
+                                                Content="Forget"
+                                                Click="OnForgetDeviceClick"
+                                                AutomationProperties.AutomationId="{Binding ForgetId}" />
+                                        </StackPanel>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                        <TextBlock
+                            x:Name="RememberedEmptyText"
+                            Grid.Row="1"
+                            Text="No remembered devices yet. A paired device is remembered automatically."
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            TextAlignment="Center"
+                            TextWrapping="Wrap"
+                            MaxWidth="360" />
+                    </Grid>
+                </Border>
+            </Grid>
+        </Grid>
+    </Grid>
+</Page>

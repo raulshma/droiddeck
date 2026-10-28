@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="DroidDeck.App.Views.EmulatorsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid Padding="24" RowSpacing="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Spacing="2">
+                <TextBlock Text="Emulators" Style="{StaticResource TitleTextBlockStyle}" />
+                <TextBlock
+                    Text="Launch AVDs, cold boot, save or load snapshots, wipe data, and stop running emulators. Create AVDs in Android Studio's Device Manager."
+                    FontSize="12"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    TextWrapping="Wrap" />
+            </StackPanel>
+            <StackPanel
+                Grid.Column="1"
+                Orientation="Horizontal"
+                Spacing="8"
+                VerticalAlignment="Center">
+                <Button
+                    Content="Refresh AVDs"
+                    Click="OnRefreshClick"
+                    AutomationProperties.AutomationId="RefreshAvdsButton" />
+                <Button
+                    Content="AVD help"
+                    Click="OnOpenDeviceManagerClick"
+                    AutomationProperties.AutomationId="OpenDeviceManagerButton" />
+            </StackPanel>
+        </Grid>
+
+        <StackPanel Grid.Row="1" Spacing="8">
+            <InfoBar
+                x:Name="AvailabilityBar"
+                Severity="Warning"
+                Title="Emulator not available"
+                IsOpen="False"
+                IsClosable="False"
+                AutomationProperties.AutomationId="EmulatorAvailabilityBar" />
+            <InfoBar
+                x:Name="ActionBar"
+                Severity="Success"
+                IsOpen="False"
+                IsClosable="True"
+                AutomationProperties.AutomationId="EmulatorActionBar" />
+            <ProgressBar
+                x:Name="Progress"
+                IsIndeterminate="True"
+                Visibility="Collapsed"
+                AutomationProperties.AutomationId="EmulatorProgress" />
+        </StackPanel>
+
+        <Grid Grid.Row="2" ColumnSpacing="16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="320" />
+            </Grid.ColumnDefinitions>
+
+            <Border Style="{StaticResource CardBorderStyle}" Padding="0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <TextBlock
+                        Text="Android virtual devices"
+                        Style="{StaticResource SectionHeaderStyle}"
+                        Margin="16,14,16,6" />
+                    <ListView
+                        x:Name="AvdList"
+                        Grid.Row="1"
+                        SelectionMode="Single"
+                        Padding="4,0,4,8"
+                        AutomationProperties.AutomationId="AvdList">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="Padding" Value="0" />
+                                <Setter Property="Margin" Value="4,1" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Padding="12,8" ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock
+                                        Text="●"
+                                        FontSize="14"
+                                        VerticalAlignment="Center"
+                                        Foreground="{Binding StateBrush}" />
+                                    <StackPanel Grid.Column="1" Spacing="2">
+                                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
+                                        <TextBlock
+                                            Text="{Binding Details}"
+                                            FontSize="12"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <TextBlock
+                                        Grid.Column="2"
+                                        Text="{Binding StateLabel}"
+                                        FontSize="12"
+                                        VerticalAlignment="Center"
+                                        Foreground="{Binding StateBrush}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                    <TextBlock
+                        x:Name="EmptyText"
+                        Grid.Row="1"
+                        Text="No AVDs were found. Create one in Android Studio's Device Manager."
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        TextWrapping="Wrap"
+                        MaxWidth="360"
+                        TextAlignment="Center" />
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="1" Style="{StaticResource CardBorderStyle}">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Selected emulator" Style="{StaticResource SectionHeaderStyle}" />
+                    <TextBlock
+                        x:Name="SelectedNameText"
+                        Text="Select an AVD"
+                        FontSize="18"
+                        FontWeight="SemiBold"
+                        TextWrapping="Wrap" />
+                    <TextBlock
+                        x:Name="SelectedDetailsText"
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button
+                            Content="Launch"
+                            Click="OnLaunchClick"
+                            AutomationProperties.AutomationId="LaunchAvdButton" />
+                        <Button
+                            Content="Cold boot"
+                            Click="OnColdBootClick"
+                            AutomationProperties.AutomationId="ColdBootAvdButton" />
+                    </StackPanel>
+
+                    <TextBox
+                        x:Name="SnapshotNameBox"
+                        Header="Snapshot name"
+                        PlaceholderText="clean-state"
+                        AutomationProperties.AutomationId="SnapshotNameBox" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button
+                            Content="Save snapshot"
+                            Click="OnSaveSnapshotClick"
+                            AutomationProperties.AutomationId="SaveSnapshotButton" />
+                        <Button
+                            Content="Load snapshot"
+                            Click="OnLoadSnapshotClick"
+                            AutomationProperties.AutomationId="LoadSnapshotButton" />
+                    </StackPanel>
+
+                    <TextBlock Text="Destructive actions" Style="{StaticResource SectionHeaderStyle}" />
+                    <Button
+                        Content="Stop emulator"
+                        Click="OnStopClick"
+                        AutomationProperties.AutomationId="StopAvdButton" />
+                    <Button
+                        Content="Wipe data and snapshots"
+                        Click="OnWipeClick"
+                        AutomationProperties.AutomationId="WipeAvdButton" />
+                    <TextBlock
+                        Text="Wipe deletes the AVD's user data and snapshots. The emulator must be stopped first."
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</Page>

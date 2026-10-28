@@ -246,6 +246,26 @@
 
             <Border Style="{StaticResource CardBorderStyle}">
                 <StackPanel Spacing="10">
+                    <TextBlock Text="Multi-device runs" Style="{StaticResource SectionHeaderStyle}" />
+                    <TextBlock
+                        Text="Cap how many devices DroidDeck builds, installs, or launches on at the same time. Changes apply to the next device operation."
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                    <NumberBox
+                        x:Name="RunConcurrencyBox"
+                        Header="Maximum concurrent devices"
+                        Minimum="1"
+                        Maximum="16"
+                        SmallChange="1"
+                        SpinButtonPlacementMode="Compact"
+                        ValueChanged="OnRunConcurrencyChanged"
+                        AutomationProperties.AutomationId="RunConcurrencyBox" />
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorderStyle}">
+                <StackPanel Spacing="10">
                     <TextBlock Text="Session retention" Style="{StaticResource SectionHeaderStyle}" />
                     <TextBlock
                         Text="Old sessions are removed at launch and when retention is applied. Keep at least one session if you want to review recent history."
