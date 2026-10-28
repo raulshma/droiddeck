@@ -28,6 +28,9 @@ public enum ProjectKind
     /// <summary>An Apache Cordova project with an Android host folder.</summary>
     Cordova,
 
+    /// <summary>A Unity project that is built and deployed through its APK.</summary>
+    Unity,
+
     /// <summary>A prebuilt APK or split APK set.</summary>
     ApkOnly,
 
@@ -259,6 +262,9 @@ public sealed class ProjectModel
     /// <summary>Gets or sets the Cordova specifics detected from config.xml and package.json.</summary>
     public CordovaProjectInfo? CordovaInfo { get; set; }
 
+    /// <summary>Gets or sets the Unity specifics detected from the project settings.</summary>
+    public UnityProjectInfo? UnityInfo { get; set; }
+
     /// <summary>Gets or sets the application module name.</summary>
     public string? ApplicationModule { get; set; }
 
@@ -318,6 +324,7 @@ public sealed class ProjectModel
         ProjectKind.Maui => ".NET MAUI",
         ProjectKind.Capacitor => "Ionic Capacitor",
         ProjectKind.Cordova => "Apache Cordova",
+        ProjectKind.Unity => "Unity",
         ProjectKind.ApkOnly => "APK only",
         _ => "Custom",
     };
@@ -418,6 +425,19 @@ public sealed class CordovaProjectInfo
 
     /// <summary>Gets or sets whether the generated android platform exists.</summary>
     public bool HasAndroidHost { get; set; }
+}
+
+/// <summary>Unity specifics detected from the project settings.</summary>
+public sealed class UnityProjectInfo
+{
+    /// <summary>Gets or sets the editor version recorded in ProjectVersion.txt.</summary>
+    public string? EditorVersion { get; set; }
+
+    /// <summary>Gets or sets the product name recorded in ProjectSettings.asset.</summary>
+    public string? ProductName { get; set; }
+
+    /// <summary>Gets or sets the company name recorded in ProjectSettings.asset.</summary>
+    public string? CompanyName { get; set; }
 }
 
 /// <summary>A reference to an APK that belongs to an APK-only project.</summary>

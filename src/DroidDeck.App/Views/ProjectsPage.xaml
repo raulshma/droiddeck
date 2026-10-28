@@ -208,6 +208,18 @@
                                     Content="Remove"
                                     Click="OnRemoveProjectClick"
                                     AutomationProperties.AutomationId="RemoveProjectButton" />
+                                <Button
+                                    x:Name="UnityOpenButton"
+                                    Content="Open in Unity"
+                                    Click="OnOpenInUnityClick"
+                                    Visibility="Collapsed"
+                                    AutomationProperties.AutomationId="OpenInUnityButton" />
+                                <Button
+                                    x:Name="UnityBuildScriptButton"
+                                    Content="Write build script"
+                                    Click="OnWriteUnityBuildScriptClick"
+                                    Visibility="Collapsed"
+                                    AutomationProperties.AutomationId="WriteUnityBuildScriptButton" />
                             </StackPanel>
 
                             <Border Style="{StaticResource SubtleCardStyle}">

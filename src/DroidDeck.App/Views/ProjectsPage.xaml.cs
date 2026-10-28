@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using DroidDeck.App.Services;
 using DroidDeck.Core;
@@ -147,6 +149,10 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
         DetailRootText.Text = project.RootPath;
         DetailConfidenceText.Text = $"{project.Confidence} confidence";
         DetailConfidenceText.Foreground = BrushForConfidence(project.Confidence);
+
+        var isUnity = project.Kind == ProjectKind.Unity;
+        UnityOpenButton.Visibility = isUnity ? Visibility.Visible : Visibility.Collapsed;
+        UnityBuildScriptButton.Visibility = isUnity ? Visibility.Visible : Visibility.Collapsed;
 
         LimitationBar.IsOpen = !string.IsNullOrWhiteSpace(project.Limitation);
         LimitationBar.Message = project.Limitation ?? string.Empty;
@@ -462,6 +468,82 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
             _selectedConfiguration = null;
             Refresh();
             ShowAction("Project removed. Its files were left untouched.");
+        });
+    }
+
+    private void OnOpenInUnityClick(object sender, RoutedEventArgs e)
+    {
+        if (_selected is not { Kind: ProjectKind.Unity } project)
+        {
+            return;
+        }
+
+        var configured = _configuration.Current.Settings.Tools.UnityPath;
+        var fileName = ResolveUnityExecutable(project, configured);
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = fileName,
+                Arguments = $"-projectPath \"{project.RootPath}\"",
+                UseShellExecute = true,
+            });
+            ShowAction($"Opening {project.Name} in Unity.");
+        }
+        catch (Win32Exception exception)
+        {
+            _logger.LogWarning(exception, "Unity could not be started.");
+            ShowAction(
+                "Unity could not be started. Set the Unity executable in Settings, or install the matching editor through Unity Hub.",
+                isError: true);
+        }
+    }
+
+    private static string ResolveUnityExecutable(ProjectModel project, string? configured)
+    {
+        var candidates = new List<string>();
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            candidates.Add(configured);
+            candidates.Add(Path.Combine(configured, "Unity.exe"));
+        }
+
+        if (project.UnityInfo?.EditorVersion is { Length: > 0 } version)
+        {
+            candidates.Add(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                "Unity",
+                "Hub",
+                "Editor",
+                version,
+                "Editor",
+                "Unity.exe"));
+        }
+
+        return candidates.FirstOrDefault(File.Exists) ?? "Unity";
+    }
+
+    private async void OnWriteUnityBuildScriptClick(object sender, RoutedEventArgs e)
+    {
+        if (_selected is not { Kind: ProjectKind.Unity } project)
+        {
+            return;
+        }
+
+        var target = Path.Combine(project.RootPath, UnityAdapter.BuildTemplatePath);
+        if (File.Exists(target))
+        {
+            ShowAction($"{UnityAdapter.BuildTemplatePath} already exists. It was left unchanged.");
+            return;
+        }
+
+        await RunBusyAsync("Writing the Unity build script", async () =>
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            await File.WriteAllTextAsync(target, UnityAdapter.BuildTemplate + Environment.NewLine);
+            ShowAction(
+                $"Wrote {UnityAdapter.BuildTemplatePath}. Run Unity with -executeMethod {UnityAdapter.BuildMethod} " +
+                "as a custom build step to produce the APK.");
         });
     }
 
@@ -876,6 +958,8 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
                 CapacitorAdapter.CreateDefaultRunConfigurations(project).FirstOrDefault(),
             ProjectKind.Cordova when project.CordovaInfo is { HasAndroidHost: true } =>
                 CordovaAdapter.CreateDefaultRunConfigurations(project).FirstOrDefault(),
+            ProjectKind.Unity =>
+                UnityAdapter.CreateDefaultRunConfigurations(project).FirstOrDefault(),
             ProjectKind.Maui when project.MauiInfo is { SupportsAndroid: true } mauiInfo =>
                 MauiAdapter.CreateDefaultRunConfigurations(project, mauiInfo).FirstOrDefault(),
             _ => null,
