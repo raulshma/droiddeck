@@ -12,5 +12,6 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="QRCoder" />
   </ItemGroup>
 </Project>
