@@ -50,6 +50,26 @@ public sealed class AppSettings
     /// <summary>Gets or sets notification settings.</summary>
     public NotificationsSettings Notifications { get; set; } = new();
 
+    /// <summary>Gets or sets home cockpit state.</summary>
+    public HomeSettings Home { get; set; } = new();
+
+    /// <summary>Gets or sets unknown keys preserved for forward compatibility.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalSettings { get; set; }
+}
+
+/// <summary>The quick run target the home cockpit restores on start.</summary>
+public sealed class HomeSettings
+{
+    /// <summary>Gets or sets the project the last quick run used.</summary>
+    public string? LastProjectId { get; set; }
+
+    /// <summary>Gets or sets the run configuration the last quick run used.</summary>
+    public string? LastConfigurationId { get; set; }
+
+    /// <summary>Gets or sets the device serial the last quick run used.</summary>
+    public string? LastDeviceSerial { get; set; }
+
     /// <summary>Gets or sets unknown keys preserved for forward compatibility.</summary>
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? AdditionalSettings { get; set; }
@@ -346,4 +366,13 @@ public static class SettingsPaths
 
     /// <summary>Install failure notifications path.</summary>
     public const string NotifyInstallFailed = "notifications.installFailed";
+
+    /// <summary>Quick run project path.</summary>
+    public const string HomeLastProjectId = "home.lastProjectId";
+
+    /// <summary>Quick run configuration path.</summary>
+    public const string HomeLastConfigurationId = "home.lastConfigurationId";
+
+    /// <summary>Quick run device path.</summary>
+    public const string HomeLastDeviceSerial = "home.lastDeviceSerial";
 }

@@ -66,5 +66,10 @@
     "runCancelled": false,
     "crash": true,
     "installFailed": true
+  },
+  "home": {
+    "lastProjectId": null,
+    "lastConfigurationId": null,
+    "lastDeviceSerial": null
   }
 }
