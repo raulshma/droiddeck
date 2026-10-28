@@ -17,6 +17,7 @@ public sealed class PluginHost : IAsyncDisposable
     private readonly AppPaths _paths;
     private readonly ILogger<PluginHost> _logger;
     private readonly object _sync = new();
+    private readonly HashSet<string> _disabledPlugins = new(StringComparer.OrdinalIgnoreCase);
     private IReadOnlyList<PluginLoadResult> _results = [];
     private bool _initialized;
     private bool _disposed;
@@ -52,7 +53,17 @@ public sealed class PluginHost : IAsyncDisposable
     }
 
     /// <summary>Gets the number of successfully loaded plugins.</summary>
-    public int LoadedCount => Results.Count(result => result.Succeeded);
+    public int LoadedCount => Results.Count(result => result.Succeeded && !IsDisabled(result.Plugin!.Id));
+
+    /// <summary>Gets whether a plugin has been disabled in this launch.</summary>
+    public bool IsDisabled(string pluginId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pluginId);
+        lock (_sync)
+        {
+            return _disabledPlugins.Contains(pluginId);
+        }
+    }
 
     /// <summary>Raised after a plugin scan completes.</summary>
     public event EventHandler? ResultsChanged;
@@ -117,6 +128,42 @@ public sealed class PluginHost : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Disables a loaded plugin by shutting it down and removing its contributions.
+    /// The plugin stays installed; restart DroidDeck to load it again.
+    /// </summary>
+    /// <returns><see langword="true"/> when the plugin was found and disabled.</returns>
+    public async Task<bool> DisableAsync(string pluginId, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pluginId);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        var plugin = Results
+            .Select(result => result.Plugin)
+            .FirstOrDefault(candidate => candidate is not null &&
+                string.Equals(candidate.Id, pluginId, StringComparison.OrdinalIgnoreCase));
+        if (plugin is null)
+        {
+            return false;
+        }
+
+        await plugin.ShutdownAsync(cancellationToken).ConfigureAwait(false);
+        lock (_sync)
+        {
+            _disabledPlugins.Add(plugin.Id);
+        }
+
+        if (_logger.IsEnabled(LogLevel.Information))
+        {
+            _logger.LogInformation(
+                "Plugin {PluginId} was disabled. Its extensions were removed; a restart is required to load it again.",
+                plugin.Id);
+        }
+
+        RaiseChanged();
+        return true;
+    }
+
     /// <summary>Builds a short health section for diagnostics reports.</summary>
     public string BuildHealthReport()
     {
@@ -138,7 +185,8 @@ public sealed class PluginHost : IAsyncDisposable
         {
             if (result.Plugin is { } plugin)
             {
-                builder.AppendLine($"- {plugin.Id} {plugin.Version}: loaded");
+                var status = IsDisabled(plugin.Id) ? "disabled (restart to re-enable)" : "loaded";
+                builder.AppendLine($"- {plugin.Id} {plugin.Version}: {status}");
             }
 
             foreach (var issue in result.Validation.Issues)

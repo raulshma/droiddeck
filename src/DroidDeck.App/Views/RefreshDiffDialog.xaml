@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentDialog
+    x:Class="DroidDeck.App.Views.RefreshDiffDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Review detected changes"
+    PrimaryButtonText="Apply selected"
+    CloseButtonText="Dismiss"
+    DefaultButton="Primary"
+    PrimaryButtonClick="OnPrimaryButtonClick">
+
+    <StackPanel Spacing="10" MinWidth="600">
+        <TextBlock
+            x:Name="IntroText"
+            FontSize="12"
+            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+            TextWrapping="Wrap" />
+        <TextBlock
+            x:Name="ErrorText"
+            FontSize="12"
+            Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+            TextWrapping="Wrap"
+            Visibility="Collapsed" />
+        <ListView
+            x:Name="ChangeList"
+            MaxHeight="380"
+            SelectionMode="None"
+            AutomationProperties.AutomationId="RefreshDiffList">
+            <ListView.ItemTemplate>
+                <DataTemplate>
+                    <Grid Padding="4,6" ColumnSpacing="10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <CheckBox
+                            IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                            VerticalAlignment="Top" />
+                        <StackPanel Grid.Column="1" Spacing="2">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock Text="{Binding Field}" FontWeight="SemiBold" />
+                                <TextBlock
+                                    Text="{Binding KindLabel}"
+                                    FontSize="11"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            </StackPanel>
+                            <TextBlock
+                                Text="{Binding OldValue}"
+                                FontSize="12"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                TextWrapping="Wrap"
+                                IsTextSelectionEnabled="True" />
+                            <TextBlock
+                                Text="{Binding NewValue}"
+                                FontSize="12"
+                                Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                TextWrapping="Wrap"
+                                IsTextSelectionEnabled="True" />
+                        </StackPanel>
+                    </Grid>
+                </DataTemplate>
+            </ListView.ItemTemplate>
+        </ListView>
+        <TextBlock
+            Text="Manual overrides are preserved. Only checked fields are replaced with the freshly detected values."
+            FontSize="12"
+            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+            TextWrapping="Wrap" />
+    </StackPanel>
+</ContentDialog>

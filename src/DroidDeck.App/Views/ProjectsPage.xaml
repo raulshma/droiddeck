@@ -1,0 +1,524 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="DroidDeck.App.Views.ProjectsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid Padding="24" RowSpacing="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Spacing="2">
+                <TextBlock Text="Projects" Style="{StaticResource TitleTextBlockStyle}" />
+                <TextBlock
+                    Text="Add a Gradle, Kotlin Multiplatform, or prebuilt APK project. Detection never invokes Gradle."
+                    FontSize="12"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            </StackPanel>
+            <StackPanel
+                Grid.Column="1"
+                Orientation="Horizontal"
+                Spacing="8"
+                VerticalAlignment="Center">
+                <Button
+                    Content="Add folder"
+                    Click="OnAddFolderClick"
+                    AutomationProperties.AutomationId="AddProjectFolderButton" />
+                <Button
+                    Content="Add APK"
+                    Click="OnAddApkClick"
+                    AutomationProperties.AutomationId="AddProjectApkButton" />
+                <Button
+                    Content="Scan monorepo"
+                    Click="OnScanClick"
+                    AutomationProperties.AutomationId="ScanProjectsButton" />
+            </StackPanel>
+        </Grid>
+
+        <InfoBar
+            x:Name="ActionBar"
+            Grid.Row="1"
+            Severity="Success"
+            IsOpen="False"
+            IsClosable="True"
+            AutomationProperties.AutomationId="ProjectsActionBar" />
+
+        <Grid Grid.Row="2" ColumnSpacing="16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="320" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Border Style="{StaticResource CardBorderStyle}" Padding="0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <TextBlock
+                        Text="Added projects"
+                        Style="{StaticResource SectionHeaderStyle}"
+                        Margin="16,14,16,6" />
+                    <ListView
+                        x:Name="ProjectList"
+                        Grid.Row="1"
+                        SelectionMode="Single"
+                        SelectionChanged="OnProjectSelectionChanged"
+                        Padding="4,0,4,8"
+                        AutomationProperties.AutomationId="ProjectList">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="Padding" Value="0" />
+                                <Setter Property="Margin" Value="4,1" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Padding="10,8" ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Spacing="2">
+                                        <TextBlock
+                                            Text="{Binding Name}"
+                                            FontWeight="SemiBold"
+                                            TextTrimming="CharacterEllipsis" />
+                                        <TextBlock
+                                            Text="{Binding Subtitle}"
+                                            FontSize="12"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                    <TextBlock
+                                        Grid.Column="1"
+                                        Text="{Binding ConfidenceLabel}"
+                                        FontSize="11"
+                                        VerticalAlignment="Center"
+                                        Foreground="{Binding ConfidenceBrush}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                    <StackPanel
+                        x:Name="EmptyProjectsPanel"
+                        Grid.Row="1"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Spacing="8"
+                        MaxWidth="260"
+                        Padding="16">
+                        <TextBlock
+                            x:Name="EmptyProjectsText"
+                            Text="No projects yet. Add a folder or an APK to get started."
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextAlignment="Center"
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="1" Style="{StaticResource CardBorderStyle}" Padding="0">
+                <Grid>
+                    <ScrollViewer
+                        x:Name="DetailScroll"
+                        Padding="20"
+                        VerticalScrollBarVisibility="Auto"
+                        Visibility="Collapsed"
+                        AutomationProperties.AutomationId="ProjectDetailPane">
+                        <StackPanel Spacing="16">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="2">
+                                    <TextBlock
+                                        x:Name="DetailNameText"
+                                        FontSize="24"
+                                        FontWeight="SemiBold"
+                                        TextWrapping="Wrap" />
+                                    <TextBlock
+                                        x:Name="DetailKindText"
+                                        FontSize="12"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <TextBlock
+                                        x:Name="DetailRootText"
+                                        FontSize="12"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        IsTextSelectionEnabled="True"
+                                        TextWrapping="Wrap" />
+                                </StackPanel>
+                                <Border
+                                    Grid.Column="1"
+                                    Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                    CornerRadius="12"
+                                    Padding="10,4"
+                                    VerticalAlignment="Top">
+                                    <TextBlock
+                                        x:Name="DetailConfidenceText"
+                                        FontSize="12"
+                                        AutomationProperties.AutomationId="ProjectConfidenceLabel" />
+                                </Border>
+                            </Grid>
+
+                            <InfoBar
+                                x:Name="LimitationBar"
+                                Severity="Warning"
+                                Title="Limited workflow"
+                                IsOpen="False"
+                                IsClosable="False"
+                                AutomationProperties.AutomationId="ProjectLimitationBar" />
+                            <TextBlock
+                                x:Name="WarningsText"
+                                FontSize="12"
+                                Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                                TextWrapping="Wrap"
+                                Visibility="Collapsed" />
+
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button
+                                    Content="Run"
+                                    Style="{StaticResource AccentButtonStyle}"
+                                    Click="OnRunClick"
+                                    AutomationProperties.AutomationId="RunProjectButton" />
+                                <Button
+                                    Content="Dry run"
+                                    Click="OnDryRunClick"
+                                    AutomationProperties.AutomationId="DryRunProjectButton" />
+                                <Button
+                                    Content="Preview commands"
+                                    Click="OnPreviewClick"
+                                    AutomationProperties.AutomationId="PreviewProjectButton" />
+                                <Button
+                                    Content="Refresh"
+                                    Click="OnRefreshProjectClick"
+                                    AutomationProperties.AutomationId="RefreshProjectButton" />
+                                <Button
+                                    Content="Remove"
+                                    Click="OnRemoveProjectClick"
+                                    AutomationProperties.AutomationId="RemoveProjectButton" />
+                            </StackPanel>
+
+                            <Border Style="{StaticResource SubtleCardStyle}">
+                                <StackPanel Spacing="10">
+                                    <TextBlock Text="Run target" Style="{StaticResource SectionHeaderStyle}" />
+                                    <Grid ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="4">
+                                            <TextBlock Text="Configuration" Style="{StaticResource FieldLabelStyle}" />
+                                            <ComboBox
+                                                x:Name="RunConfigCombo"
+                                                HorizontalAlignment="Stretch"
+                                                SelectionChanged="OnRunConfigSelectionChanged"
+                                                AutomationProperties.AutomationId="ProjectRunConfigCombo" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Spacing="4">
+                                            <TextBlock Text="Device" Style="{StaticResource FieldLabelStyle}" />
+                                            <ComboBox
+                                                x:Name="DeviceCombo"
+                                                HorizontalAlignment="Stretch"
+                                                PlaceholderText="Select a device"
+                                                AutomationProperties.AutomationId="ProjectDeviceCombo" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <TextBlock
+                                        x:Name="RunHintText"
+                                        FontSize="12"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+
+                            <Grid ColumnSpacing="12" RowSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <Border Style="{StaticResource SubtleCardStyle}">
+                                    <StackPanel Spacing="8">
+                                        <TextBlock Text="Identity" Style="{StaticResource SectionHeaderStyle}" />
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Application ID" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBlock x:Name="AppIdText" Style="{StaticResource FieldValueStyle}" IsTextSelectionEnabled="True" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Namespace" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBlock x:Name="NamespaceText" Style="{StaticResource FieldValueStyle}" IsTextSelectionEnabled="True" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Launcher activity" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBlock x:Name="LauncherText" Style="{StaticResource FieldValueStyle}" IsTextSelectionEnabled="True" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Application module" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBlock x:Name="ApplicationModuleText" Style="{StaticResource FieldValueStyle}" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Grid.Column="1" Style="{StaticResource SubtleCardStyle}">
+                                    <StackPanel Spacing="8">
+                                        <TextBlock Text="Toolchain and stack" Style="{StaticResource SectionHeaderStyle}" />
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Gradle wrapper" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBlock x:Name="WrapperText" Style="{StaticResource FieldValueStyle}" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="AGP / Kotlin" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBlock x:Name="VersionsText" Style="{StaticResource FieldValueStyle}" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Kotlin / Compose Multiplatform" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBlock x:Name="MultiplatformText" Style="{StaticResource FieldValueStyle}" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Capabilities" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBlock x:Name="CapabilitiesText" Style="{StaticResource FieldValueStyle}" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+
+                            <Border Style="{StaticResource SubtleCardStyle}">
+                                <StackPanel Spacing="10">
+                                    <TextBlock Text="Manual overrides" Style="{StaticResource SectionHeaderStyle}" />
+                                    <TextBlock
+                                        Text="Overrides survive detection refreshes. Leave a field empty to clear its override."
+                                        FontSize="12"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        TextWrapping="Wrap" />
+                                    <Grid ColumnSpacing="12" RowSpacing="8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <StackPanel Spacing="4">
+                                            <TextBlock Text="Name" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBox x:Name="OverrideNameBox" AutomationProperties.AutomationId="OverrideProjectName" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Spacing="4">
+                                            <TextBlock Text="Application ID" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBox x:Name="OverrideApplicationIdBox" AutomationProperties.AutomationId="OverrideApplicationId" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Row="1" Spacing="4">
+                                            <TextBlock Text="Namespace" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBox x:Name="OverrideNamespaceBox" AutomationProperties.AutomationId="OverrideNamespace" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Row="1" Grid.Column="1" Spacing="4">
+                                            <TextBlock Text="Launcher activity" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBox x:Name="OverrideLauncherBox" AutomationProperties.AutomationId="OverrideLauncherActivity" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Row="2" Spacing="4">
+                                            <TextBlock Text="Application module" Style="{StaticResource FieldLabelStyle}" />
+                                            <TextBox x:Name="OverrideModuleBox" AutomationProperties.AutomationId="OverrideApplicationModule" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <Button
+                                        Content="Save overrides"
+                                        Click="OnSaveOverridesClick"
+                                        HorizontalAlignment="Left"
+                                        AutomationProperties.AutomationId="SaveProjectOverridesButton" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource SubtleCardStyle}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="Detection evidence" Style="{StaticResource SectionHeaderStyle}" />
+                                    <ItemsControl x:Name="EvidenceList" AutomationProperties.AutomationId="ProjectEvidenceList">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Padding="0,4" ColumnSpacing="10">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="160" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock
+                                                        Text="{Binding Source}"
+                                                        FontFamily="Consolas"
+                                                        FontSize="12"
+                                                        TextTrimming="CharacterEllipsis"
+                                                        IsTextSelectionEnabled="True" />
+                                                    <TextBlock
+                                                        Grid.Column="1"
+                                                        Text="{Binding Detail}"
+                                                        FontSize="12"
+                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                        TextWrapping="Wrap"
+                                                        IsTextSelectionEnabled="True" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource SubtleCardStyle}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="Modules" Style="{StaticResource SectionHeaderStyle}" />
+                                    <ItemsControl x:Name="ModuleList" AutomationProperties.AutomationId="ProjectModuleList">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Padding="0,4" ColumnSpacing="10">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="160" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock
+                                                        Grid.Column="1"
+                                                        Text="{Binding Detail}"
+                                                        FontSize="12"
+                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                        TextWrapping="Wrap" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource SubtleCardStyle}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="Variants" Style="{StaticResource SectionHeaderStyle}" />
+                                    <ItemsControl x:Name="VariantList" AutomationProperties.AutomationId="ProjectVariantList">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Padding="0,4" ColumnSpacing="10">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="160" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock
+                                                        Grid.Column="1"
+                                                        Text="{Binding Detail}"
+                                                        FontSize="12"
+                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                        TextWrapping="Wrap" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource SubtleCardStyle}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="APK files" Style="{StaticResource SectionHeaderStyle}" />
+                                    <ItemsControl x:Name="ApkList" AutomationProperties.AutomationId="ProjectApkList">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Padding="0,4" Spacing="2">
+                                                    <TextBlock Text="{Binding FileName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock
+                                                        Text="{Binding Detail}"
+                                                        FontSize="12"
+                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                        TextWrapping="Wrap"
+                                                        IsTextSelectionEnabled="True" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <TextBlock
+                                        x:Name="NoApksText"
+                                        Text="No APK files are attached."
+                                        FontSize="12"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        Visibility="Collapsed" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource SubtleCardStyle}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="Run configurations" Style="{StaticResource SectionHeaderStyle}" />
+                                    <ListView
+                                        x:Name="RunConfigList"
+                                        MaxHeight="240"
+                                        SelectionMode="Single"
+                                        SelectionChanged="OnRunConfigListSelectionChanged"
+                                        AutomationProperties.AutomationId="RunConfigurationList">
+                                        <ListView.ItemTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Padding="0,4" Spacing="2">
+                                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                                                        <TextBlock
+                                                            Text="Default"
+                                                            FontSize="11"
+                                                            Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                                            Visibility="{Binding IsDefault, Converter={StaticResource BoolToVisibility}}" />
+                                                    </StackPanel>
+                                                    <TextBlock
+                                                        Text="{Binding Detail}"
+                                                        FontSize="12"
+                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                        TextWrapping="Wrap" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ListView.ItemTemplate>
+                                    </ListView>
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Button Content="Add" Click="OnAddRunConfigClick" AutomationProperties.AutomationId="AddRunConfigurationButton" />
+                                        <Button Content="Edit" Click="OnEditRunConfigClick" AutomationProperties.AutomationId="EditRunConfigurationButton" />
+                                        <Button Content="Duplicate" Click="OnDuplicateRunConfigClick" AutomationProperties.AutomationId="DuplicateRunConfigurationButton" />
+                                        <Button Content="Rename" Click="OnRenameRunConfigClick" AutomationProperties.AutomationId="RenameRunConfigurationButton" />
+                                        <Button Content="Set default" Click="OnSetDefaultRunConfigClick" AutomationProperties.AutomationId="DefaultRunConfigurationButton" />
+                                        <Button Content="Delete" Click="OnDeleteRunConfigClick" AutomationProperties.AutomationId="DeleteRunConfigurationButton" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <StackPanel
+                        x:Name="EmptyDetailPanel"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Spacing="8"
+                        MaxWidth="320"
+                        Padding="24">
+                        <FontIcon
+                            Glyph="&#xE8B7;"
+                            FontSize="28"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock
+                            Text="Select a project"
+                            Style="{StaticResource SectionHeaderStyle}"
+                            TextAlignment="Center" />
+                        <TextBlock
+                            Text="Choose a project on the left to inspect detection evidence, manage run configurations, and run it on a device."
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextAlignment="Center"
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</Page>

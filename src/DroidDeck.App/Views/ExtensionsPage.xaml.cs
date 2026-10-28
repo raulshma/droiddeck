@@ -99,7 +99,7 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         _rows.Clear();
         foreach (var result in _plugins.Results)
         {
-            _rows.Add(new PluginRow(result));
+            _rows.Add(new PluginRow(result, result.Plugin is { } plugin && _plugins.IsDisabled(plugin.Id)));
         }
 
         EmptyText.Text = _plugins.PluginsDisabled
@@ -137,6 +137,42 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
             ShowAction(
                 $"\"{row.Title}\" failed: {exception.Message} (Diagnostics ID {_diagnostics.DiagnosticsId}).",
                 isError: true);
+        }
+    }
+
+    private async void OnDisablePluginClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not PluginRow { CanDisable: true } row ||
+            row.PluginId is not { } pluginId)
+        {
+            return;
+        }
+
+        if (sender is Button button)
+        {
+            button.IsEnabled = false;
+        }
+
+        try
+        {
+            var disabled = await _plugins.DisableAsync(pluginId);
+            ShowAction(disabled
+                ? $"Disabled {row.Title}. Its extensions were removed; restart DroidDeck to load it again."
+                : $"{row.Title} is no longer loaded.");
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "The plugin {PluginId} could not be disabled.", pluginId);
+            ShowAction(
+                $"Disabling {row.Title} failed: {exception.Message} (Diagnostics ID {_diagnostics.DiagnosticsId}).",
+                isError: true);
+        }
+        finally
+        {
+            if (sender is Button current)
+            {
+                current.IsEnabled = true;
+            }
         }
     }
 
@@ -232,9 +268,12 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
     public sealed class PluginRow
     {
         /// <summary>Creates a row from a plugin load result.</summary>
-        public PluginRow(PluginLoadResult result)
+        public PluginRow(PluginLoadResult result, bool disabled)
         {
             ArgumentNullException.ThrowIfNull(result);
+            PluginId = result.Plugin?.Id;
+            CanDisable = result.Succeeded && !disabled;
+            DisableId = PluginId is null ? string.Empty : $"DisablePlugin_{PluginId}";
             if (result.Plugin is { } plugin)
             {
                 Title = plugin.Name;
@@ -246,14 +285,25 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
                 Subtitle = "A plugin folder did not pass validation or could not be loaded.";
             }
 
-            Status = result.Succeeded ? "Loaded" : "Failed";
-            StatusBrush = ResolveBrush(result.Succeeded
-                ? "SystemFillColorSuccessBrush"
-                : "SystemFillColorCriticalBrush");
+            Status = disabled ? "Disabled" : result.Succeeded ? "Loaded" : "Failed";
+            StatusBrush = ResolveBrush(disabled
+                ? "SystemFillColorCautionBrush"
+                : result.Succeeded
+                    ? "SystemFillColorSuccessBrush"
+                    : "SystemFillColorCriticalBrush");
             Issues = string.Join(
                 Environment.NewLine,
                 result.Validation.Issues.Select(issue => issue.ToString()));
         }
+
+        /// <summary>Gets the plugin identifier, if the plugin loaded.</summary>
+        public string? PluginId { get; }
+
+        /// <summary>Gets whether the plugin can be disabled now.</summary>
+        public bool CanDisable { get; }
+
+        /// <summary>Gets the disable button automation id.</summary>
+        public string DisableId { get; }
 
         /// <summary>Gets the plugin name or failure title.</summary>
         public string Title { get; }

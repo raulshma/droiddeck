@@ -1,6 +1,8 @@
 using System.Runtime.InteropServices;
 using DroidDeck.Adb;
+using DroidDeck.Adb.Commands;
 using DroidDeck.Adb.Devices;
+using DroidDeck.Adb.Logcat;
 using DroidDeck.Adb.Protocol;
 using DroidDeck.Adb.Tracking;
 using DroidDeck.App.Services;
@@ -10,10 +12,19 @@ using DroidDeck.Core.Configuration;
 using DroidDeck.Core.Devices;
 using DroidDeck.Core.Diagnostics;
 using DroidDeck.Core.Infrastructure;
+using DroidDeck.Core.Logs;
+using DroidDeck.Core.Notifications;
 using DroidDeck.Core.Processes;
+using DroidDeck.Core.Projects;
+using DroidDeck.Core.Runs;
 using DroidDeck.Core.Security;
+using DroidDeck.Core.Sessions;
 using DroidDeck.Core.Toolchain;
 using DroidDeck.Plugins;
+using DroidDeck.Projects;
+using DroidDeck.Projects.Artifacts;
+using DroidDeck.Projects.Detection;
+using DroidDeck.Projects.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml;
@@ -246,12 +257,58 @@ public partial class App : Application, IDisposable
                 logger: loggerFactory.CreateLogger<DeviceService>());
         });
         services.AddSingleton<IDiagnosticsService, DiagnosticsService>();
+
+        services.AddSingleton<SessionWorkspace>();
+        services.AddSingleton<IProjectStore>(provider => new JsonProjectStore(
+            _paths,
+            loggerFactory.CreateLogger<JsonProjectStore>()));
+        services.AddSingleton<IProjectDetector, GradleProjectDetector>();
+        services.AddSingleton<IProjectDetector, ApkProjectDetector>();
+        services.AddSingleton<IApkInspector>(provider => new Aapt2ApkInspector(
+            provider.GetRequiredService<IProcessRunner>(),
+            configuration,
+            provider.GetRequiredService<IToolchainService>(),
+            loggerFactory.CreateLogger<Aapt2ApkInspector>()));
+        services.AddSingleton<IArtifactResolver, GlobArtifactResolver>();
+        services.AddSingleton<IProjectService>(provider => new ProjectService(
+            provider.GetRequiredService<IProjectStore>(),
+            provider.GetServices<IProjectDetector>(),
+            provider.GetRequiredService<IApkInspector>(),
+            configuration,
+            provider.GetRequiredService<IToolchainService>(),
+            loggerFactory.CreateLogger<ProjectService>()));
+        services.AddSingleton<IRunPlanBuilder>(provider => new RunPlanBuilder(
+            configuration,
+            provider.GetRequiredService<IToolchainService>()));
+
+        string GetAdbPath(IServiceProvider provider) =>
+            ToolPathLocator.ResolveAdb(configuration, provider.GetRequiredService<IToolchainService>());
+
+        services.AddSingleton<IDeviceCommandService>(provider => new AdbDeviceCommandService(
+            provider.GetRequiredService<IProcessRunner>(),
+            () => GetAdbPath(provider),
+            loggerFactory.CreateLogger<AdbDeviceCommandService>()));
+        services.AddSingleton<ILogcatService>(provider => new AdbLogcatService(
+            provider.GetRequiredService<IProcessRunner>(),
+            provider.GetRequiredService<IDeviceCommandService>(),
+            () => GetAdbPath(provider),
+            loggerFactory.CreateLogger<AdbLogcatService>()));
+        services.AddSingleton<ISessionStore, JsonSessionStore>();
+        services.AddSingleton<ISavedFilterStore, JsonSavedFilterStore>();
+        services.AddSingleton<INotificationService>(_ => new NotificationService
+        {
+            Preferences = configuration.Current.Settings.Notifications.ToPreferences(),
+        });
+        services.AddSingleton<IRunSessionService, RunSessionService>();
         services.AddTransient<ViewModels.DevicesViewModel>();
 
         services.AddSingleton<MainWindow>();
         services.AddTransient<HomePage>();
         services.AddTransient<DevicesPage>();
         services.AddTransient<ActivityPage>();
+        services.AddTransient<ProjectsPage>();
+        services.AddTransient<SessionPage>();
+        services.AddTransient<HistoryPage>();
         services.AddTransient<ExtensionsPage>();
         services.AddTransient<SettingsPage>();
         services.AddTransient<DiagnosticsPage>();
@@ -279,6 +336,27 @@ public partial class App : Application, IDisposable
 
         var services = _services!;
         var configuration = _configuration!;
+        try
+        {
+            await services.GetRequiredService<IProjectService>().InitializeAsync();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            logger.LogWarning(exception, "The project list could not be loaded.");
+        }
+
+        try
+        {
+            var logging = configuration.Current.Settings.Logging;
+            await services.GetRequiredService<ISessionStore>().ApplyRetentionAsync(
+                logging.RetentionDays,
+                logging.MaxSessionBytes);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            logger.LogWarning(exception, "Session retention could not be applied.");
+        }
+
         _pluginHost = services.GetRequiredService<PluginHost>();
         var safeMode = _options.SafeMode || configuration.Current.Settings.Features.SafeMode;
         var pluginsDisabled = _options.NoPlugins || safeMode;
@@ -356,6 +434,13 @@ public partial class App : Application, IDisposable
 
     private void OnConfigurationChanged(object? sender, ConfigChangedEventArgs e)
     {
+        if (e.Path.StartsWith("notifications.", StringComparison.OrdinalIgnoreCase) &&
+            _services?.GetService<INotificationService>() is { } notifications &&
+            _configuration is not null)
+        {
+            notifications.Preferences = _configuration.Current.Settings.Notifications.ToPreferences();
+        }
+
         if (!string.Equals(e.Path, SettingsPaths.AdbPath, StringComparison.OrdinalIgnoreCase))
         {
             return;

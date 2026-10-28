@@ -1,0 +1,89 @@
+using DroidDeck.Core.Runs;
+
+namespace DroidDeck.Core.Tests.Runs;
+
+public sealed class BuildErrorParserTests
+{
+    [Fact]
+    public void ParseLine_ParsesKotlinCompilerError()
+    {
+        var error = BuildErrorParser.ParseLine(
+            "e: file:///C:/repo/app/src/main/java/Main.kt: (12, 5): Unresolved reference: missing");
+
+        Assert.NotNull(error);
+        Assert.Equal(@"C:\repo\app\src\main\java\Main.kt", error.FilePath);
+        Assert.Equal(12, error.Line);
+        Assert.Equal(5, error.Column);
+        Assert.Equal("Unresolved reference: missing", error.Message);
+        Assert.Equal("error", error.Severity);
+    }
+
+    [Fact]
+    public void ParseLine_ParsesJavaErrorWithRelativePath()
+    {
+        var error = BuildErrorParser.ParseLine(
+            "app/src/main/java/com/example/Main.java:42: error: cannot find symbol",
+            @"C:\repo");
+
+        Assert.NotNull(error);
+        Assert.Equal(Path.Combine(@"C:\repo", "app", "src", "main", "java", "com", "example", "Main.java"), error.FilePath);
+        Assert.Equal(42, error.Line);
+        Assert.Equal(0, error.Column);
+        Assert.Equal("cannot find symbol", error.Message);
+    }
+
+    [Fact]
+    public void ParseLine_ParsesGenericGradleError()
+    {
+        var error = BuildErrorParser.ParseLine("app/src/main/res/layout/main.xml:7: Error: attribute missing");
+
+        Assert.NotNull(error);
+        Assert.Equal(Path.Combine("app", "src", "main", "res", "layout", "main.xml"), error.FilePath);
+        Assert.Equal(7, error.Line);
+        Assert.Equal("attribute missing", error.Message);
+    }
+
+    [Fact]
+    public void Parse_DeduplicatesRepeatedErrors()
+    {
+        const string output = """
+            e: C:\repo\Main.kt: (10, 2): unresolved reference: foo
+            e: C:\repo\Main.kt: (10, 2): unresolved reference: foo
+            BUILD FAILED
+            """;
+
+        var errors = BuildErrorParser.Parse(output);
+
+        Assert.Single(errors);
+    }
+
+    [Theory]
+    [InlineData("BUILD SUCCESSFUL in 3s")]
+    [InlineData("warning: something might be wrong")]
+    [InlineData("> Task :app:assembleDebug")]
+    public void ParseLine_IgnoresNonErrors(string line)
+    {
+        Assert.Null(BuildErrorParser.ParseLine(line));
+    }
+
+    [Fact]
+    public void Parse_ReturnsEmptyForBlankOutput()
+    {
+        Assert.Empty(BuildErrorParser.Parse(null));
+        Assert.Empty(BuildErrorParser.Parse("   "));
+    }
+
+    [Fact]
+    public void Display_UsesFileNameLineAndColumn()
+    {
+        var error = new BuildError
+        {
+            FilePath = @"C:\repo\Main.kt",
+            Line = 12,
+            Column = 5,
+            Message = "boom",
+        };
+
+        Assert.Equal("Main.kt:12:5 boom", error.Display);
+    }
+}

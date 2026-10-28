@@ -6,6 +6,7 @@ using DroidDeck.Core.Configuration;
 using DroidDeck.Core.Devices;
 using DroidDeck.Core.Diagnostics;
 using DroidDeck.Core.Infrastructure;
+using DroidDeck.Core.Notifications;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI;
@@ -30,6 +31,9 @@ public sealed partial class MainWindow : Window
         {
             ["home"] = typeof(HomePage),
             ["devices"] = typeof(DevicesPage),
+            ["projects"] = typeof(ProjectsPage),
+            ["session"] = typeof(SessionPage),
+            ["history"] = typeof(HistoryPage),
             ["activity"] = typeof(ActivityPage),
             ["extensions"] = typeof(ExtensionsPage),
             ["settings"] = typeof(SettingsPage),
@@ -41,6 +45,8 @@ public sealed partial class MainWindow : Window
     private readonly IDiagnosticsService _diagnostics;
     private readonly IConfigurationService _configuration;
     private readonly PluginHost _pluginHost;
+    private readonly SessionWorkspace _workspace;
+    private readonly INotificationService _notifications;
     private readonly ILogger<MainWindow> _logger;
     private readonly Dictionary<string, Page> _pages = new(StringComparer.OrdinalIgnoreCase);
     private readonly DispatcherTimer _statusTimer;
@@ -48,6 +54,7 @@ public sealed partial class MainWindow : Window
     private bool _suppressSelectionChanged;
     private bool _placementRestored;
     private bool _allowClose;
+    private string? _notificationSessionId;
 
     /// <summary>Creates the main window.</summary>
     public MainWindow(
@@ -56,6 +63,8 @@ public sealed partial class MainWindow : Window
         IDiagnosticsService diagnostics,
         IConfigurationService configuration,
         PluginHost pluginHost,
+        SessionWorkspace workspace,
+        INotificationService notifications,
         ILogger<MainWindow> logger)
     {
         _services = services ?? throw new ArgumentNullException(nameof(services));
@@ -63,6 +72,8 @@ public sealed partial class MainWindow : Window
         _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         _pluginHost = pluginHost ?? throw new ArgumentNullException(nameof(pluginHost));
+        _workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
+        _notifications = notifications ?? throw new ArgumentNullException(nameof(notifications));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
         InitializeComponent();
@@ -74,6 +85,7 @@ public sealed partial class MainWindow : Window
 
         DiagnosticsIdText.Text = $"Diagnostics {_diagnostics.DiagnosticsId}";
         _devices.DevicesChanged += OnDevicesChanged;
+        _notifications.NotificationRaised += OnNotificationRaised;
         AppWindow.Closing += OnAppWindowClosing;
         Closed += OnClosed;
 
@@ -260,6 +272,39 @@ public sealed partial class MainWindow : Window
 
     private void OnCopyDiagnosticsClick(object sender, RoutedEventArgs e) => CopyDiagnosticsReport();
 
+    private void OnNotificationRaised(object? sender, AppNotification notification)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _notificationSessionId = notification.SessionId;
+            NotificationBar.Severity = notification.Event switch
+            {
+                NotificationEvent.RunSucceeded => InfoBarSeverity.Success,
+                NotificationEvent.Crash or NotificationEvent.InstallFailed or NotificationEvent.RunFailed =>
+                    InfoBarSeverity.Error,
+                _ => InfoBarSeverity.Informational,
+            };
+            NotificationBar.Title = notification.Title;
+            NotificationBar.Message = notification.Message;
+            NotificationActionButton.Visibility = string.IsNullOrWhiteSpace(notification.SessionId)
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+            NotificationBar.IsOpen = true;
+        });
+    }
+
+    private void OnNotificationActionClick(object sender, RoutedEventArgs e)
+    {
+        NotificationBar.IsOpen = false;
+        if (string.IsNullOrWhiteSpace(_notificationSessionId))
+        {
+            return;
+        }
+
+        _workspace.OpenSession(_notificationSessionId);
+        Navigate("session");
+    }
+
     private void TryEnableMica()
     {
         try
@@ -353,6 +398,7 @@ public sealed partial class MainWindow : Window
         _statusTimer.Stop();
         _messageTimer.Stop();
         _devices.DevicesChanged -= OnDevicesChanged;
+        _notifications.NotificationRaised -= OnNotificationRaised;
         AppWindow.Closing -= OnAppWindowClosing;
         foreach (var page in _pages.Values.OfType<IDisposable>())
         {

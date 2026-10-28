@@ -39,6 +39,12 @@ public sealed class AppPaths
     /// <summary>Gets the session directory.</summary>
     public string SessionsDirectory => Path.Combine(DataDirectory, "sessions");
 
+    /// <summary>Gets the project document directory.</summary>
+    public string ProjectsDirectory => Path.Combine(DataDirectory, "projects");
+
+    /// <summary>Gets the saved log filter directory.</summary>
+    public string FiltersDirectory => Path.Combine(DataDirectory, "filters");
+
     /// <summary>Gets the installed plugin directory.</summary>
     public string PluginsDirectory => Path.Combine(DataDirectory, "plugins");
 
@@ -77,6 +83,8 @@ public sealed class AppPaths
         Directory.CreateDirectory(DiagnosticsDirectory);
         Directory.CreateDirectory(DevicesDirectory);
         Directory.CreateDirectory(SessionsDirectory);
+        Directory.CreateDirectory(ProjectsDirectory);
+        Directory.CreateDirectory(FiltersDirectory);
         Directory.CreateDirectory(PluginsDirectory);
         Directory.CreateDirectory(QuarantineDirectory);
     }

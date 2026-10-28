@@ -178,6 +178,98 @@
 
             <Border Style="{StaticResource CardBorderStyle}">
                 <StackPanel Spacing="10">
+                    <TextBlock Text="Notifications" Style="{StaticResource SectionHeaderStyle}" />
+                    <TextBlock
+                        Text="In-app notifications appear in the title bar when a run finishes or a crash is detected."
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                    <ToggleSwitch
+                        x:Name="NotificationsEnabledToggle"
+                        Header="Enable in-app notifications"
+                        OnContent="On"
+                        OffContent="Off"
+                        Toggled="OnNotificationsEnabledToggled"
+                        AutomationProperties.AutomationId="NotificationsEnabledToggle" />
+                    <ToggleSwitch
+                        x:Name="NotifySucceededToggle"
+                        Header="Run succeeded"
+                        OnContent="On"
+                        OffContent="Off"
+                        Toggled="OnNotifySucceededToggled"
+                        AutomationProperties.AutomationId="NotifySucceededToggle" />
+                    <ToggleSwitch
+                        x:Name="NotifyFailedToggle"
+                        Header="Run failed"
+                        OnContent="On"
+                        OffContent="Off"
+                        Toggled="OnNotifyFailedToggled"
+                        AutomationProperties.AutomationId="NotifyFailedToggle" />
+                    <ToggleSwitch
+                        x:Name="NotifyCancelledToggle"
+                        Header="Run cancelled"
+                        OnContent="On"
+                        OffContent="Off"
+                        Toggled="OnNotifyCancelledToggled"
+                        AutomationProperties.AutomationId="NotifyCancelledToggle" />
+                    <ToggleSwitch
+                        x:Name="NotifyCrashToggle"
+                        Header="App crash or ANR"
+                        OnContent="On"
+                        OffContent="Off"
+                        Toggled="OnNotifyCrashToggled"
+                        AutomationProperties.AutomationId="NotifyCrashToggle" />
+                    <ToggleSwitch
+                        x:Name="NotifyInstallFailedToggle"
+                        Header="Install failure"
+                        OnContent="On"
+                        OffContent="Off"
+                        Toggled="OnNotifyInstallFailedToggled"
+                        AutomationProperties.AutomationId="NotifyInstallFailedToggle" />
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorderStyle}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="Session retention" Style="{StaticResource SectionHeaderStyle}" />
+                    <TextBlock
+                        Text="Old sessions are removed at launch and when retention is applied. Keep at least one session if you want to review recent history."
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                    <NumberBox
+                        x:Name="RetentionDaysBox"
+                        Header="Keep sessions for (days)"
+                        Minimum="0"
+                        Maximum="365"
+                        SmallChange="1"
+                        SpinButtonPlacementMode="Compact"
+                        ValueChanged="OnRetentionDaysChanged"
+                        AutomationProperties.AutomationId="RetentionDaysBox" />
+                    <NumberBox
+                        x:Name="RetentionGigabytesBox"
+                        Header="Maximum session storage (GB)"
+                        Minimum="0"
+                        Maximum="1024"
+                        SmallChange="0.5"
+                        SpinButtonPlacementMode="Compact"
+                        ValueChanged="OnRetentionGigabytesChanged"
+                        AutomationProperties.AutomationId="RetentionGigabytesBox" />
+                    <TextBlock
+                        x:Name="RetentionSummaryText"
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                    <Button
+                        x:Name="ApplyRetentionButton"
+                        Content="Apply retention now"
+                        Click="OnApplyRetentionClick"
+                        AutomationProperties.AutomationId="SettingsApplyRetentionButton" />
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorderStyle}">
+                <StackPanel Spacing="10">
                     <TextBlock Text="Advanced" Style="{StaticResource SectionHeaderStyle}" />
                     <ToggleSwitch
                         x:Name="SafeModeToggle"

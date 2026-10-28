@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentDialog
+    x:Class="DroidDeck.App.Views.StepEditorDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Custom step"
+    PrimaryButtonText="Save step"
+    CloseButtonText="Cancel"
+    DefaultButton="Primary"
+    PrimaryButtonClick="OnPrimaryButtonClick">
+
+    <ScrollViewer MaxHeight="560">
+        <StackPanel Spacing="10" MinWidth="560">
+            <TextBlock
+                Text="Steps run after the built-in pipeline. Placeholders such as {projectRoot}, {deviceSerial}, {packageName}, {artifactPath}, and {configurationName} are expanded before the step runs."
+                FontSize="12"
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                TextWrapping="Wrap" />
+
+            <Grid ColumnSpacing="12" RowSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <StackPanel Spacing="4">
+                    <TextBlock Text="Name" Style="{StaticResource FieldLabelStyle}" />
+                    <TextBox
+                        x:Name="NameBox"
+                        PlaceholderText="For example: Seed test data"
+                        AutomationProperties.AutomationId="StepNameBox" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Spacing="4">
+                    <TextBlock Text="Condition (optional)" Style="{StaticResource FieldLabelStyle}" />
+                    <TextBox
+                        x:Name="ConditionBox"
+                        PlaceholderText="For example: {variantName} == debug"
+                        AutomationProperties.AutomationId="StepConditionBox" />
+                </StackPanel>
+            </Grid>
+
+            <StackPanel Spacing="4">
+                <TextBlock Text="Command" Style="{StaticResource FieldLabelStyle}" />
+                <TextBox
+                    x:Name="CommandBox"
+                    PlaceholderText="For example: scripts/seed.cmd"
+                    AutomationProperties.AutomationId="StepCommandBox" />
+            </StackPanel>
+
+            <StackPanel Spacing="4">
+                <TextBlock Text="Arguments (one per line)" Style="{StaticResource FieldLabelStyle}" />
+                <TextBox
+                    x:Name="ArgumentsBox"
+                    AcceptsReturn="True"
+                    TextWrapping="Wrap"
+                    Height="72"
+                    AutomationProperties.AutomationId="StepArgumentsBox" />
+            </StackPanel>
+
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Spacing="4">
+                    <TextBlock Text="Working directory (relative to project)" Style="{StaticResource FieldLabelStyle}" />
+                    <TextBox x:Name="WorkingDirectoryBox" AutomationProperties.AutomationId="StepWorkingDirectoryBox" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Spacing="4">
+                    <TextBlock Text="Environment (KEY=VALUE, one per line)" Style="{StaticResource FieldLabelStyle}" />
+                    <TextBox
+                        x:Name="EnvironmentBox"
+                        AcceptsReturn="True"
+                        TextWrapping="Wrap"
+                        Height="72"
+                        AutomationProperties.AutomationId="StepEnvironmentBox" />
+                </StackPanel>
+            </Grid>
+
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Spacing="4">
+                    <TextBlock Text="On failure" Style="{StaticResource FieldLabelStyle}" />
+                    <ComboBox
+                        x:Name="FailurePolicyCombo"
+                        HorizontalAlignment="Stretch"
+                        AutomationProperties.AutomationId="StepFailurePolicyCombo" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Spacing="4">
+                    <TextBlock Text="Retries" Style="{StaticResource FieldLabelStyle}" />
+                    <NumberBox
+                        x:Name="RetryBox"
+                        Minimum="0"
+                        Maximum="10"
+                        SpinButtonPlacementMode="Compact"
+                        AutomationProperties.AutomationId="StepRetryBox" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Spacing="4">
+                    <TextBlock Text="Timeout (s)" Style="{StaticResource FieldLabelStyle}" />
+                    <NumberBox
+                        x:Name="TimeoutBox"
+                        Minimum="1"
+                        Maximum="86400"
+                        SpinButtonPlacementMode="Compact"
+                        AutomationProperties.AutomationId="StepTimeoutBox" />
+                </StackPanel>
+            </Grid>
+
+            <CheckBox
+                x:Name="EnabledCheck"
+                Content="Enabled"
+                AutomationProperties.AutomationId="StepEnabledCheck" />
+
+            <TextBlock
+                x:Name="ErrorText"
+                FontSize="12"
+                Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                TextWrapping="Wrap"
+                Visibility="Collapsed" />
+        </StackPanel>
+    </ScrollViewer>
+</ContentDialog>

@@ -20,7 +20,8 @@
   "logging": {
     "level": "information",
     "maxUiLines": 20000,
-    "retentionDays": 14
+    "retentionDays": 14,
+    "maxSessionBytes": 2147483648
   },
   "diagnostics": {
     "inMemoryLogEntries": 2000,
@@ -36,5 +37,34 @@
     "x": null,
     "y": null,
     "isMaximized": false
+  },
+  "projects": {
+    "scanDepth": 3,
+    "maxScanFolders": 2000,
+    "scanTimeoutSeconds": 5,
+    "ignoreFolders": [
+      ".git",
+      ".gradle",
+      ".idea",
+      "build",
+      "node_modules",
+      "dist",
+      "out",
+      "Pods",
+      ".dart_tool",
+      ".vs",
+      "bin",
+      "obj",
+      "packages"
+    ],
+    "scanMonorepos": true
+  },
+  "notifications": {
+    "enabled": true,
+    "runSucceeded": true,
+    "runFailed": true,
+    "runCancelled": false,
+    "crash": true,
+    "installFailed": true
   }
 }

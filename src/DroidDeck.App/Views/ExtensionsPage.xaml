@@ -134,6 +134,7 @@
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
                                         <StackPanel Spacing="2">
                                             <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
@@ -155,6 +156,14 @@
                                             FontSize="12"
                                             Foreground="{Binding StatusBrush}"
                                             VerticalAlignment="Top" />
+                                        <Button
+                                            Grid.Column="2"
+                                            Content="Disable"
+                                            VerticalAlignment="Top"
+                                            IsEnabled="{Binding CanDisable}"
+                                            Visibility="{Binding CanDisable, Converter={StaticResource BoolToVisibility}}"
+                                            Click="OnDisablePluginClick"
+                                            AutomationProperties.AutomationId="{Binding DisableId}" />
                                     </Grid>
                                 </DataTemplate>
                             </ListView.ItemTemplate>

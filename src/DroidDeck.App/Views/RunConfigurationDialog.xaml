@@ -1,0 +1,385 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentDialog
+    x:Class="DroidDeck.App.Views.RunConfigurationDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Run configuration"
+    PrimaryButtonText="Save"
+    CloseButtonText="Cancel"
+    DefaultButton="Primary"
+    PrimaryButtonClick="OnPrimaryButtonClick">
+
+    <ScrollViewer MaxHeight="620">
+        <StackPanel Spacing="12" MinWidth="660">
+            <TextBlock
+                Text="Configure every stage of the run. The preview shows the exact commands DroidDeck will execute without running anything."
+                FontSize="12"
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                TextWrapping="Wrap" />
+
+            <Grid ColumnSpacing="12" RowSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Spacing="4">
+                    <TextBlock Text="Name" Style="{StaticResource FieldLabelStyle}" />
+                    <TextBox x:Name="NameBox" AutomationProperties.AutomationId="RunConfigNameBox" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Spacing="4">
+                    <TextBlock Text="Kind" Style="{StaticResource FieldLabelStyle}" />
+                    <ComboBox
+                        x:Name="KindCombo"
+                        HorizontalAlignment="Stretch"
+                        AutomationProperties.AutomationId="RunConfigKindCombo" />
+                </StackPanel>
+            </Grid>
+
+            <Grid ColumnSpacing="12" RowSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Spacing="4">
+                    <TextBlock Text="Module override" Style="{StaticResource FieldLabelStyle}" />
+                    <ComboBox
+                        x:Name="ModuleCombo"
+                        IsEditable="True"
+                        HorizontalAlignment="Stretch"
+                        AutomationProperties.AutomationId="RunConfigModuleCombo" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Spacing="4">
+                    <TextBlock Text="Variant override" Style="{StaticResource FieldLabelStyle}" />
+                    <ComboBox
+                        x:Name="VariantCombo"
+                        IsEditable="True"
+                        HorizontalAlignment="Stretch"
+                        SelectionChanged="OnVariantChanged"
+                        AutomationProperties.AutomationId="RunConfigVariantCombo" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Spacing="4">
+                    <TextBlock Text="Device serial" Style="{StaticResource FieldLabelStyle}" />
+                    <ComboBox
+                        x:Name="DeviceCombo"
+                        IsEditable="True"
+                        DisplayMemberPath="Label"
+                        HorizontalAlignment="Stretch"
+                        SelectionChanged="OnDeviceChanged"
+                        AutomationProperties.AutomationId="RunConfigDeviceCombo" />
+                </StackPanel>
+            </Grid>
+
+            <Expander Header="Build" IsExpanded="True">
+                <StackPanel Spacing="8">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Gradle task or command" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBox x:Name="BuildTaskBox" AutomationProperties.AutomationId="RunConfigBuildTaskBox" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Spacing="4">
+                            <TextBlock Text="Working directory (relative to project)" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBox x:Name="BuildWorkingDirectoryBox" AutomationProperties.AutomationId="RunConfigBuildWorkingDirectoryBox" />
+                        </StackPanel>
+                    </Grid>
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Arguments (one per line)" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBox
+                                x:Name="BuildArgumentsBox"
+                                AcceptsReturn="True"
+                                TextWrapping="Wrap"
+                                Height="64"
+                                AutomationProperties.AutomationId="RunConfigBuildArgumentsBox" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Spacing="4">
+                            <TextBlock Text="Environment (KEY=VALUE, one per line)" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBox
+                                x:Name="BuildEnvironmentBox"
+                                AcceptsReturn="True"
+                                TextWrapping="Wrap"
+                                Height="64"
+                                AutomationProperties.AutomationId="RunConfigBuildEnvironmentBox" />
+                        </StackPanel>
+                    </Grid>
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="JDK home override" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBox x:Name="JavaHomeBox" AutomationProperties.AutomationId="RunConfigJavaHomeBox" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Spacing="4">
+                            <TextBlock Text="Timeout (s)" Style="{StaticResource FieldLabelStyle}" />
+                            <NumberBox
+                                x:Name="BuildTimeoutBox"
+                                Minimum="5"
+                                Maximum="86400"
+                                SpinButtonPlacementMode="Compact"
+                                AutomationProperties.AutomationId="RunConfigBuildTimeoutBox" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2" VerticalAlignment="Bottom" Spacing="4">
+                            <CheckBox x:Name="CleanCheck" Content="Run clean first" AutomationProperties.AutomationId="RunConfigCleanCheck" />
+                            <CheckBox x:Name="SkipBuildCheck" Content="Skip build" AutomationProperties.AutomationId="RunConfigSkipBuildCheck" />
+                        </StackPanel>
+                    </Grid>
+                </StackPanel>
+            </Expander>
+
+            <Expander Header="Artifact">
+                <StackPanel Spacing="8">
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="APK glob (relative to project)" Style="{StaticResource FieldLabelStyle}" />
+                        <TextBox x:Name="ArtifactGlobBox" AutomationProperties.AutomationId="RunConfigArtifactGlobBox" />
+                    </StackPanel>
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Expected package" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBox x:Name="ArtifactPackageBox" AutomationProperties.AutomationId="RunConfigArtifactPackageBox" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" VerticalAlignment="Bottom" Spacing="4">
+                            <CheckBox x:Name="IncludeSplitsCheck" Content="Install split APKs together" AutomationProperties.AutomationId="RunConfigIncludeSplitsCheck" />
+                            <CheckBox x:Name="InspectAapt2Check" Content="Inspect artifact with aapt2" AutomationProperties.AutomationId="RunConfigInspectAapt2Check" />
+                        </StackPanel>
+                    </Grid>
+                </StackPanel>
+            </Expander>
+
+            <Expander Header="Install">
+                <StackPanel Spacing="8">
+                    <StackPanel Orientation="Horizontal" Spacing="16">
+                        <CheckBox x:Name="ReplaceCheck" Content="Replace existing package" AutomationProperties.AutomationId="RunConfigReplaceCheck" />
+                        <CheckBox x:Name="TestOnlyCheck" Content="Allow test-only APK" AutomationProperties.AutomationId="RunConfigTestOnlyCheck" />
+                        <CheckBox x:Name="GrantPermissionsCheck" Content="Grant runtime permissions" AutomationProperties.AutomationId="RunConfigGrantPermissionsCheck" />
+                        <CheckBox x:Name="AllowDowngradeCheck" Content="Allow version downgrade" AutomationProperties.AutomationId="RunConfigAllowDowngradeCheck" />
+                    </StackPanel>
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Android user" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBox x:Name="InstallUserBox" AutomationProperties.AutomationId="RunConfigInstallUserBox" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Spacing="4">
+                            <TextBlock Text="Extra adb install arguments (one per line)" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBox
+                                x:Name="InstallArgumentsBox"
+                                AcceptsReturn="True"
+                                TextWrapping="Wrap"
+                                Height="56"
+                                AutomationProperties.AutomationId="RunConfigInstallArgumentsBox" />
+                        </StackPanel>
+                    </Grid>
+                </StackPanel>
+            </Expander>
+
+            <Expander Header="Launch">
+                <StackPanel Spacing="8">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Package override" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBox x:Name="LaunchPackageBox" AutomationProperties.AutomationId="RunConfigLaunchPackageBox" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Spacing="4">
+                            <TextBlock Text="Activity override" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBox x:Name="LaunchActivityBox" AutomationProperties.AutomationId="RunConfigLaunchActivityBox" />
+                        </StackPanel>
+                    </Grid>
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Intent action" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBox x:Name="LaunchActionBox" AutomationProperties.AutomationId="RunConfigLaunchActionBox" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Spacing="4">
+                            <TextBlock Text="Intent data URI" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBox x:Name="LaunchDataBox" AutomationProperties.AutomationId="RunConfigLaunchDataBox" />
+                        </StackPanel>
+                    </Grid>
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Extra am start arguments (one per line)" Style="{StaticResource FieldLabelStyle}" />
+                        <TextBox
+                            x:Name="LaunchArgumentsBox"
+                            AcceptsReturn="True"
+                            TextWrapping="Wrap"
+                            Height="56"
+                            AutomationProperties.AutomationId="RunConfigLaunchArgumentsBox" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="16">
+                        <CheckBox x:Name="WaitLaunchCheck" Content="Wait for the first frame (-W)" AutomationProperties.AutomationId="RunConfigWaitLaunchCheck" />
+                        <CheckBox x:Name="StopBeforeLaunchCheck" Content="Force-stop before launch" AutomationProperties.AutomationId="RunConfigStopBeforeLaunchCheck" />
+                        <CheckBox x:Name="WaitForDebuggerCheck" Content="Wait for debugger" AutomationProperties.AutomationId="RunConfigWaitForDebuggerCheck" />
+                    </StackPanel>
+                </StackPanel>
+            </Expander>
+
+            <Expander Header="Logs and screen">
+                <StackPanel Spacing="8">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Logcat buffers (comma separated)" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBox x:Name="LogBuffersBox" AutomationProperties.AutomationId="RunConfigLogBuffersBox" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Spacing="4">
+                            <TextBlock Text="Maximum retained lines" Style="{StaticResource FieldLabelStyle}" />
+                            <NumberBox
+                                x:Name="LogMaxLinesBox"
+                                Minimum="100"
+                                Maximum="1000000"
+                                SpinButtonPlacementMode="Compact"
+                                AutomationProperties.AutomationId="RunConfigLogMaxLinesBox" />
+                        </StackPanel>
+                    </Grid>
+                    <StackPanel Orientation="Horizontal" Spacing="16">
+                        <CheckBox x:Name="AttachLogsCheck" Content="Attach logcat automatically" AutomationProperties.AutomationId="RunConfigAttachLogsCheck" />
+                        <CheckBox x:Name="ClearLogsCheck" Content="Clear logcat before launch" AutomationProperties.AutomationId="RunConfigClearLogsCheck" />
+                        <CheckBox x:Name="AppOnlyLogsCheck" Content="Show app logs only" AutomationProperties.AutomationId="RunConfigAppOnlyLogsCheck" />
+                    </StackPanel>
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Screen mirror" Style="{StaticResource FieldLabelStyle}" />
+                            <ComboBox
+                                x:Name="ScreenModeCombo"
+                                HorizontalAlignment="Stretch"
+                                AutomationProperties.AutomationId="RunConfigScreenModeCombo" />
+                        </StackPanel>
+                        <CheckBox
+                            x:Name="AutoOpenScreenCheck"
+                            Grid.Column="1"
+                            Content="Open mirror after launch"
+                            VerticalAlignment="Bottom"
+                            AutomationProperties.AutomationId="RunConfigAutoOpenScreenCheck" />
+                    </Grid>
+                </StackPanel>
+            </Expander>
+
+            <Expander Header="Custom steps">
+                <StackPanel Spacing="8">
+                    <ListView
+                        x:Name="StepList"
+                        MaxHeight="180"
+                        SelectionMode="Single"
+                        AutomationProperties.AutomationId="RunConfigStepList">
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Padding="0,4" Spacing="2">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                                        <TextBlock
+                                            Text="{Binding Summary}"
+                                            FontSize="11"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </StackPanel>
+                                    <TextBlock
+                                        Text="{Binding Command}"
+                                        FontFamily="Consolas"
+                                        FontSize="12"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        TextWrapping="Wrap" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="Add step" Click="OnAddStepClick" AutomationProperties.AutomationId="RunConfigAddStepButton" />
+                        <Button Content="Edit step" Click="OnEditStepClick" AutomationProperties.AutomationId="RunConfigEditStepButton" />
+                        <Button Content="Remove step" Click="OnRemoveStepClick" AutomationProperties.AutomationId="RunConfigRemoveStepButton" />
+                        <Button Content="Move up" Click="OnMoveStepUpClick" AutomationProperties.AutomationId="RunConfigMoveStepUpButton" />
+                        <Button Content="Move down" Click="OnMoveStepDownClick" AutomationProperties.AutomationId="RunConfigMoveStepDownButton" />
+                    </StackPanel>
+                    <TextBlock
+                        Text="Steps run after launch and before logcat attaches. Conditions can reference the same placeholders as arguments."
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                </StackPanel>
+            </Expander>
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="Preview commands" Click="OnPreviewClick" AutomationProperties.AutomationId="RunConfigPreviewButton" />
+                <Button Content="Validate" Click="OnValidateClick" AutomationProperties.AutomationId="RunConfigValidateButton" />
+            </StackPanel>
+
+            <Border
+                x:Name="PreviewPanel"
+                Style="{StaticResource SubtleCardStyle}"
+                Visibility="Collapsed">
+                <StackPanel Spacing="6">
+                    <TextBlock Text="Exact command preview" Style="{StaticResource SectionHeaderStyle}" />
+                    <TextBlock
+                        x:Name="PreviewText"
+                        FontFamily="Consolas"
+                        FontSize="12"
+                        TextWrapping="Wrap"
+                        IsTextSelectionEnabled="True"
+                        AutomationProperties.AutomationId="RunConfigPreviewText" />
+                </StackPanel>
+            </Border>
+
+            <StackPanel x:Name="ValidationPanel" Spacing="4" Visibility="Collapsed">
+                <TextBlock
+                    Text="Validation problems"
+                    FontSize="12"
+                    FontWeight="SemiBold"
+                    Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
+                <ItemsControl x:Name="ValidationList" AutomationProperties.AutomationId="RunConfigValidationList">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock
+                                Text="{Binding Message}"
+                                FontSize="12"
+                                Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                TextWrapping="Wrap" />
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+
+            <TextBlock
+                x:Name="StatusText"
+                FontSize="12"
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                TextWrapping="Wrap"
+                Visibility="Collapsed" />
+
+            <TextBlock
+                x:Name="ErrorText"
+                FontSize="12"
+                Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                TextWrapping="Wrap"
+                Visibility="Collapsed" />
+        </StackPanel>
+    </ScrollViewer>
+</ContentDialog>

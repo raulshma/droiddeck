@@ -7,6 +7,7 @@ using DroidDeck.Core;
 using DroidDeck.Core.Configuration;
 using DroidDeck.Core.Diagnostics;
 using DroidDeck.Core.Infrastructure;
+using DroidDeck.Core.Sessions;
 using DroidDeck.Core.Toolchain;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml;
@@ -21,6 +22,7 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
     private readonly IConfigurationService _configuration;
     private readonly IToolchainService _toolchain;
     private readonly IDiagnosticsService _diagnostics;
+    private readonly ISessionStore _sessions;
     private readonly PluginHost _plugins;
     private readonly AppPaths _paths;
     private readonly ILogger<SettingsPage> _logger;
@@ -33,6 +35,7 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         IConfigurationService configuration,
         IToolchainService toolchain,
         IDiagnosticsService diagnostics,
+        ISessionStore sessions,
         PluginHost plugins,
         AppPaths paths,
         ILogger<SettingsPage> logger)
@@ -40,6 +43,7 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         _toolchain = toolchain ?? throw new ArgumentNullException(nameof(toolchain));
         _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
+        _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
         _plugins = plugins ?? throw new ArgumentNullException(nameof(plugins));
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -78,6 +82,15 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
 
             SafeModeToggle.IsOn = settings.Features.SafeMode;
             DeveloperModeToggle.IsOn = settings.Features.DeveloperMode;
+            NotificationsEnabledToggle.IsOn = settings.Notifications.Enabled;
+            NotifySucceededToggle.IsOn = settings.Notifications.RunSucceeded;
+            NotifyFailedToggle.IsOn = settings.Notifications.RunFailed;
+            NotifyCancelledToggle.IsOn = settings.Notifications.RunCancelled;
+            NotifyCrashToggle.IsOn = settings.Notifications.Crash;
+            NotifyInstallFailedToggle.IsOn = settings.Notifications.InstallFailed;
+            RetentionDaysBox.Value = settings.Logging.RetentionDays;
+            RetentionGigabytesBox.Value = BytesToGigabytes(settings.Logging.MaxSessionBytes);
+            UpdateRetentionSummary();
             UpdateSourceHints();
         }
         finally
@@ -104,6 +117,150 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         foreach (var row in _toolPaths)
         {
             row.Source = $"Source: {_configuration.GetSource(row.SettingsPath).DisplayName}";
+        }
+    }
+
+    private const double BytesPerGigabyte = 1024d * 1024d * 1024d;
+
+    private static double BytesToGigabytes(long bytes) =>
+        Math.Round(bytes / BytesPerGigabyte, 2);
+
+    private void UpdateRetentionSummary()
+    {
+        var logging = _configuration.Current.Settings.Logging;
+        var days = logging.RetentionDays <= 0 ? "no age limit" : $"{logging.RetentionDays} days";
+        var size = logging.MaxSessionBytes <= 0
+            ? "no storage limit"
+            : $"{BytesToGigabytes(logging.MaxSessionBytes):0.##} GB";
+        RetentionSummaryText.Text =
+            $"Current policy: keep sessions for {days}, up to {size}. Oldest sessions are removed first.";
+    }
+
+    private async Task SaveNotificationPreferenceAsync(string path, bool value, string message)
+    {
+        if (_initializing)
+        {
+            return;
+        }
+
+        try
+        {
+            await _configuration.SetAsync(path, value);
+            ShowAction(message);
+        }
+        catch (Exception exception)
+        {
+            ReportFailure("Saving notification preferences", exception);
+        }
+    }
+
+    private async void OnNotificationsEnabledToggled(object sender, RoutedEventArgs e) =>
+        await SaveNotificationPreferenceAsync(
+            SettingsPaths.NotificationsEnabled,
+            NotificationsEnabledToggle.IsOn,
+            "Notification preferences saved.");
+
+    private async void OnNotifySucceededToggled(object sender, RoutedEventArgs e) =>
+        await SaveNotificationPreferenceAsync(
+            SettingsPaths.NotifyRunSucceeded,
+            NotifySucceededToggle.IsOn,
+            "Successful-run notifications updated.");
+
+    private async void OnNotifyFailedToggled(object sender, RoutedEventArgs e) =>
+        await SaveNotificationPreferenceAsync(
+            SettingsPaths.NotifyRunFailed,
+            NotifyFailedToggle.IsOn,
+            "Failed-run notifications updated.");
+
+    private async void OnNotifyCancelledToggled(object sender, RoutedEventArgs e) =>
+        await SaveNotificationPreferenceAsync(
+            SettingsPaths.NotifyRunCancelled,
+            NotifyCancelledToggle.IsOn,
+            "Cancelled-run notifications updated.");
+
+    private async void OnNotifyCrashToggled(object sender, RoutedEventArgs e) =>
+        await SaveNotificationPreferenceAsync(
+            SettingsPaths.NotifyCrash,
+            NotifyCrashToggle.IsOn,
+            "Crash notifications updated.");
+
+    private async void OnNotifyInstallFailedToggled(object sender, RoutedEventArgs e) =>
+        await SaveNotificationPreferenceAsync(
+            SettingsPaths.NotifyInstallFailed,
+            NotifyInstallFailedToggle.IsOn,
+            "Install-failure notifications updated.");
+
+    private async void OnRetentionDaysChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+    {
+        if (_initializing || double.IsNaN(args.NewValue))
+        {
+            return;
+        }
+
+        var days = Math.Clamp((int)Math.Round(args.NewValue), 0, 365);
+        if (days == _configuration.Current.Settings.Logging.RetentionDays)
+        {
+            return;
+        }
+
+        try
+        {
+            await _configuration.SetAsync(SettingsPaths.SessionRetentionDays, days);
+            UpdateRetentionSummary();
+            ShowAction(days == 0
+                ? "Session age limit removed."
+                : $"Sessions are kept for {days} days.");
+        }
+        catch (Exception exception)
+        {
+            ReportFailure("Saving the session age limit", exception);
+        }
+    }
+
+    private async void OnRetentionGigabytesChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+    {
+        if (_initializing || double.IsNaN(args.NewValue))
+        {
+            return;
+        }
+
+        var gigabytes = Math.Clamp(args.NewValue, 0, 1024);
+        var bytes = gigabytes <= 0 ? 0 : (long)Math.Round(gigabytes * BytesPerGigabyte);
+        if (bytes == _configuration.Current.Settings.Logging.MaxSessionBytes)
+        {
+            return;
+        }
+
+        try
+        {
+            await _configuration.SetAsync(SettingsPaths.SessionMaxBytes, bytes);
+            UpdateRetentionSummary();
+            ShowAction(bytes == 0
+                ? "Session storage limit removed."
+                : $"Session storage is limited to {BytesToGigabytes(bytes):0.##} GB.");
+        }
+        catch (Exception exception)
+        {
+            ReportFailure("Saving the session storage limit", exception);
+        }
+    }
+
+    private async void OnApplyRetentionClick(object sender, RoutedEventArgs e)
+    {
+        ApplyRetentionButton.IsEnabled = false;
+        try
+        {
+            var logging = _configuration.Current.Settings.Logging;
+            var result = await _sessions.ApplyRetentionAsync(logging.RetentionDays, logging.MaxSessionBytes);
+            ShowAction(result.Summary);
+        }
+        catch (Exception exception)
+        {
+            ReportFailure("Applying session retention", exception);
+        }
+        finally
+        {
+            ApplyRetentionButton.IsEnabled = true;
         }
     }
 
