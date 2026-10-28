@@ -34,6 +34,9 @@ public sealed class PluginLoaderTests
         var command = Assert.Single(registry.Commands);
         Assert.Equal(SamplePluginId, command.PluginId);
         Assert.Equal(SamplePluginId, registry.GetOwner(command.Value.GetType()));
+        Assert.Equal(SamplePluginId, Assert.Single(registry.DeviceActions).PluginId);
+        Assert.Equal(SamplePluginId, Assert.Single(registry.ToolbarActions).PluginId);
+        Assert.Equal(SamplePluginId, Assert.Single(registry.DeviceTabs).PluginId);
         Assert.NotSame(AssemblyLoadContext.Default, plugin.LoadContext);
         Assert.True(plugin.LoadContext.IsCollectible);
         Assert.Same(plugin.LoadContext, AssemblyLoadContext.GetLoadContext(command.Value.GetType().Assembly));
@@ -64,6 +67,29 @@ public sealed class PluginLoaderTests
     }
 
     [Fact]
+    public async Task LoadedDeviceExtensionsExecuteAndCreateTheirContent()
+    {
+        using var temp = new TempDirectory();
+        var directory = StagePlugin(temp, CreateManifest());
+        var registry = new PluginRegistry();
+        await using var loader = CreateLoader(registry);
+        var result = await loader.LoadAsync(directory);
+        Assert.True(result.Succeeded, Describe(result.Validation));
+
+        var context = new DeviceActionContext("device-1", "Pixel");
+        await registry.DeviceActions[0].Value.ExecuteAsync(context, CancellationToken.None);
+        await registry.ToolbarActions[0].Value.ExecuteAsync(context, CancellationToken.None);
+        var content = registry.DeviceTabs[0].Value.CreateContent(
+            new DeviceTabContext("device-1", "Pixel"));
+
+        Assert.Equal("Pixel", await File.ReadAllTextAsync(
+            Path.Combine(directory, "data", "device-action-device-1.txt")));
+        Assert.Equal("device-1", await File.ReadAllTextAsync(
+            Path.Combine(directory, "data", "toolbar-action.txt")));
+        Assert.Equal("Sample plugin tab for Pixel.", content);
+    }
+
+    [Fact]
     public async Task UnloadShutsThePluginDownAndRemovesItsExtensions()
     {
         using var temp = new TempDirectory();
@@ -77,6 +103,9 @@ public sealed class PluginLoaderTests
 
         Assert.True(unloaded);
         Assert.Empty(registry.Commands);
+        Assert.Empty(registry.DeviceActions);
+        Assert.Empty(registry.ToolbarActions);
+        Assert.Empty(registry.DeviceTabs);
         Assert.Empty(loader.Plugins);
         Assert.True(File.Exists(Path.Combine(directory, "data", "shutdown.txt")));
         Assert.False(await loader.UnloadAsync(SamplePluginId));

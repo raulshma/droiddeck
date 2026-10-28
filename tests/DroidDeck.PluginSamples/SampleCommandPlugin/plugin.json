@@ -9,7 +9,10 @@
   "entryAssembly": "SampleCommandPlugin.dll",
   "entryType": "SampleCommandPlugin.SamplePlugin",
   "capabilities": [
-    "command"
+    "command",
+    "device-action",
+    "device-tab",
+    "toolbar-action"
   ],
   "homepage": "https://github.com/raulshma/droiddeck",
   "license": "MIT"

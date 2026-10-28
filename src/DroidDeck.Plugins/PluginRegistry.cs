@@ -11,6 +11,8 @@ public sealed class PluginRegistry : IPluginRegistry
     private readonly List<PluginExtension<ICommand>> _commands = [];
     private readonly List<PluginExtension<IProjectDetector>> _projectDetectors = [];
     private readonly List<PluginExtension<IDeviceAction>> _deviceActions = [];
+    private readonly List<PluginExtension<IDeviceTabProvider>> _deviceTabs = [];
+    private readonly List<PluginExtension<IDeviceToolbarAction>> _toolbarActions = [];
     private readonly List<PluginExtension<IRunStep>> _runSteps = [];
     private readonly Dictionary<Type, string> _owners = [];
     private readonly object _sync = new();
@@ -26,6 +28,12 @@ public sealed class PluginRegistry : IPluginRegistry
 
     /// <inheritdoc />
     public IReadOnlyList<PluginExtension<IDeviceAction>> DeviceActions => Snapshot(_deviceActions);
+
+    /// <inheritdoc />
+    public IReadOnlyList<PluginExtension<IDeviceTabProvider>> DeviceTabs => Snapshot(_deviceTabs);
+
+    /// <inheritdoc />
+    public IReadOnlyList<PluginExtension<IDeviceToolbarAction>> ToolbarActions => Snapshot(_toolbarActions);
 
     /// <inheritdoc />
     public IReadOnlyList<PluginExtension<IRunStep>> RunSteps => Snapshot(_runSteps);
@@ -47,6 +55,14 @@ public sealed class PluginRegistry : IPluginRegistry
     /// <inheritdoc />
     public void AddDeviceAction(IDeviceAction action)
         => AddDeviceAction(PluginConstants.BuiltInPluginId, action);
+
+    /// <inheritdoc />
+    public void AddDeviceTab(IDeviceTabProvider tab)
+        => AddDeviceTab(PluginConstants.BuiltInPluginId, tab);
+
+    /// <inheritdoc />
+    public void AddToolbarAction(IDeviceToolbarAction action)
+        => AddToolbarAction(PluginConstants.BuiltInPluginId, action);
 
     /// <inheritdoc />
     public void AddRunStep(IRunStep step) => AddRunStep(PluginConstants.BuiltInPluginId, step);
@@ -72,6 +88,8 @@ public sealed class PluginRegistry : IPluginRegistry
             removed = _commands.RemoveAll(extension => extension.PluginId == pluginId);
             removed += _projectDetectors.RemoveAll(extension => extension.PluginId == pluginId);
             removed += _deviceActions.RemoveAll(extension => extension.PluginId == pluginId);
+            removed += _deviceTabs.RemoveAll(extension => extension.PluginId == pluginId);
+            removed += _toolbarActions.RemoveAll(extension => extension.PluginId == pluginId);
             removed += _runSteps.RemoveAll(extension => extension.PluginId == pluginId);
             RebuildOwners();
         }
@@ -100,6 +118,18 @@ public sealed class PluginRegistry : IPluginRegistry
     {
         ArgumentNullException.ThrowIfNull(action);
         Add(pluginId, action, _deviceActions);
+    }
+
+    internal void AddDeviceTab(string pluginId, IDeviceTabProvider tab)
+    {
+        ArgumentNullException.ThrowIfNull(tab);
+        Add(pluginId, tab, _deviceTabs);
+    }
+
+    internal void AddToolbarAction(string pluginId, IDeviceToolbarAction action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        Add(pluginId, action, _toolbarActions);
     }
 
     internal void AddRunStep(string pluginId, IRunStep step)
@@ -139,6 +169,16 @@ public sealed class PluginRegistry : IPluginRegistry
             _owners[extension.Value.GetType()] = extension.PluginId;
         }
 
+        foreach (var extension in _deviceTabs)
+        {
+            _owners[extension.Value.GetType()] = extension.PluginId;
+        }
+
+        foreach (var extension in _toolbarActions)
+        {
+            _owners[extension.Value.GetType()] = extension.PluginId;
+        }
+
         foreach (var extension in _runSteps)
         {
             _owners[extension.Value.GetType()] = extension.PluginId;
@@ -167,6 +207,10 @@ public sealed class PluginRegistry : IPluginRegistry
 
         public IReadOnlyList<PluginExtension<IDeviceAction>> DeviceActions => root.DeviceActions;
 
+        public IReadOnlyList<PluginExtension<IDeviceTabProvider>> DeviceTabs => root.DeviceTabs;
+
+        public IReadOnlyList<PluginExtension<IDeviceToolbarAction>> ToolbarActions => root.ToolbarActions;
+
         public IReadOnlyList<PluginExtension<IRunStep>> RunSteps => root.RunSteps;
 
         public event EventHandler? Changed
@@ -180,6 +224,10 @@ public sealed class PluginRegistry : IPluginRegistry
         public void AddProjectDetector(IProjectDetector detector) => root.AddProjectDetector(pluginId, detector);
 
         public void AddDeviceAction(IDeviceAction action) => root.AddDeviceAction(pluginId, action);
+
+        public void AddDeviceTab(IDeviceTabProvider tab) => root.AddDeviceTab(pluginId, tab);
+
+        public void AddToolbarAction(IDeviceToolbarAction action) => root.AddToolbarAction(pluginId, action);
 
         public void AddRunStep(IRunStep step) => root.AddRunStep(pluginId, step);
 

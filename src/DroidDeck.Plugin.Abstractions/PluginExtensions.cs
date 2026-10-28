@@ -23,6 +23,12 @@ public interface IPluginRegistry
     /// <summary>Registers a device action.</summary>
     void AddDeviceAction(IDeviceAction action);
 
+    /// <summary>Registers a device detail tab.</summary>
+    void AddDeviceTab(IDeviceTabProvider tab);
+
+    /// <summary>Registers a toolbar action.</summary>
+    void AddToolbarAction(IDeviceToolbarAction action);
+
     /// <summary>Registers a run step.</summary>
     void AddRunStep(IRunStep step);
 
@@ -34,6 +40,12 @@ public interface IPluginRegistry
 
     /// <summary>Gets all registered device actions.</summary>
     IReadOnlyList<PluginExtension<IDeviceAction>> DeviceActions { get; }
+
+    /// <summary>Gets all registered device detail tabs.</summary>
+    IReadOnlyList<PluginExtension<IDeviceTabProvider>> DeviceTabs { get; }
+
+    /// <summary>Gets all registered toolbar actions.</summary>
+    IReadOnlyList<PluginExtension<IDeviceToolbarAction>> ToolbarActions { get; }
 
     /// <summary>Gets all registered run steps.</summary>
     IReadOnlyList<PluginExtension<IRunStep>> RunSteps { get; }

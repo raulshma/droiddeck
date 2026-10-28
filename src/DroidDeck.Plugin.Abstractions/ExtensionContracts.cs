@@ -79,6 +79,56 @@ public interface IDeviceAction
 }
 
 /// <summary>
+/// Context supplied to a plugin-contributed device tab.
+/// </summary>
+/// <param name="Serial">The target device serial.</param>
+/// <param name="Model">The device model, when known.</param>
+public sealed record DeviceTabContext(string Serial, string? Model);
+
+/// <summary>
+/// A tab contributed to the device detail page. The returned content may be a
+/// host UI element; it is created once per device and disposed when the tab closes.
+/// </summary>
+public interface IDeviceTabProvider
+{
+    /// <summary>Gets the stable tab identifier.</summary>
+    string Id { get; }
+
+    /// <summary>Gets the tab title.</summary>
+    string Title { get; }
+
+    /// <summary>Gets the ordering weight; lower values appear first.</summary>
+    int Order { get; }
+
+    /// <summary>Creates the tab content for a device. The host owns the result.</summary>
+    object CreateContent(DeviceTabContext context);
+}
+
+/// <summary>
+/// An action contributed to the session and device toolbars.
+/// </summary>
+public interface IDeviceToolbarAction
+{
+    /// <summary>Gets the stable action identifier.</summary>
+    string Id { get; }
+
+    /// <summary>Gets the display title.</summary>
+    string Title { get; }
+
+    /// <summary>Gets an optional tooltip.</summary>
+    string? ToolTip { get; }
+
+    /// <summary>Gets the ordering weight; lower values appear first.</summary>
+    int Order { get; }
+
+    /// <summary>Gets whether the action must be confirmed before running.</summary>
+    bool RequiresConfirmation { get; }
+
+    /// <summary>Executes the action for a device.</summary>
+    Task ExecuteAsync(DeviceActionContext context, CancellationToken cancellationToken);
+}
+
+/// <summary>
 /// Context supplied to a run step.
 /// </summary>
 /// <param name="ProjectRoot">The project root directory.</param>

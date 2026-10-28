@@ -18,6 +18,9 @@ public sealed class PluginHost : IAsyncDisposable
     private readonly ILogger<PluginHost> _logger;
     private readonly object _sync = new();
     private readonly HashSet<string> _disabledPlugins = new(StringComparer.OrdinalIgnoreCase);
+    private readonly PluginExtensionCatalog _catalog;
+    private readonly PluginHealthTracker _health;
+    private readonly PluginActionInvoker _invoker;
     private IReadOnlyList<PluginLoadResult> _results = [];
     private bool _initialized;
     private bool _disposed;
@@ -29,10 +32,22 @@ public sealed class PluginHost : IAsyncDisposable
         _loader = loader ?? throw new ArgumentNullException(nameof(loader));
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _catalog = new PluginExtensionCatalog(registry);
+        _health = new PluginHealthTracker();
+        _invoker = new PluginActionInvoker(_health);
     }
 
     /// <summary>Gets the shared extension registry.</summary>
     public PluginRegistry Registry => _registry;
+
+    /// <summary>Gets device actions, tabs, and toolbar actions in host order.</summary>
+    public PluginExtensionCatalog Extensions => _catalog;
+
+    /// <summary>Gets plugin health snapshots.</summary>
+    public PluginHealthTracker Health => _health;
+
+    /// <summary>Gets the timeout-isolated plugin invoker.</summary>
+    public PluginActionInvoker Invoker => _invoker;
 
     /// <summary>Gets whether plugins were skipped for this launch.</summary>
     public bool PluginsDisabled { get; private set; }
@@ -186,6 +201,12 @@ public sealed class PluginHost : IAsyncDisposable
             if (result.Plugin is { } plugin)
             {
                 var status = IsDisabled(plugin.Id) ? "disabled (restart to re-enable)" : "loaded";
+                var health = _health.Get(plugin.Id);
+                if (!health.IsHealthy)
+                {
+                    status += $", unhealthy: {health.LastError}";
+                }
+
                 builder.AppendLine($"- {plugin.Id} {plugin.Version}: {status}");
             }
 
