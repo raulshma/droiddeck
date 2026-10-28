@@ -291,6 +291,8 @@ public partial class App : Application, IDisposable
         services.AddSingleton<IProjectDetector, GradleProjectDetector>();
         services.AddSingleton<IProjectDetector, FlutterProjectDetector>();
         services.AddSingleton<IProjectDetector, ReactNativeProjectDetector>();
+        services.AddSingleton<IProjectDetector, CapacitorProjectDetector>();
+        services.AddSingleton<IProjectDetector, CordovaProjectDetector>();
         services.AddSingleton<IProjectDetector, MauiProjectDetector>();
         services.AddSingleton<IProjectDetector, ApkProjectDetector>();
         services.AddSingleton<IApkInspector>(provider => new Aapt2ApkInspector(

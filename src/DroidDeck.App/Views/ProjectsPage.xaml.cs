@@ -257,6 +257,12 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
             RunConfigurationKind.Maui =>
                 $"MAUI {MauiAdapter.NormalizeConfiguration(configuration.VariantName)} · " +
                 $"{configuration.Build.TargetFramework ?? "Android"} · artifact {configuration.Artifact.Glob}",
+            RunConfigurationKind.Capacitor =>
+                $"Capacitor {CapacitorAdapter.NormalizeMode(configuration.VariantName)} · " +
+                $"sync + Gradle build · artifact {configuration.Artifact.Glob}",
+            RunConfigurationKind.Cordova =>
+                $"Cordova {CordovaAdapter.NormalizeMode(configuration.VariantName)} · " +
+                $"prepare + Gradle build · artifact {configuration.Artifact.Glob}",
             RunConfigurationKind.Apk =>
                 $"Prebuilt APK · {configuration.Artifact.Glob}",
             _ => $"{configuration.Steps.Count} custom step(s)",
@@ -866,6 +872,10 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
     {
         var stackDefault = project.Kind switch
         {
+            ProjectKind.Capacitor when project.CapacitorInfo is { HasAndroidHost: true } =>
+                CapacitorAdapter.CreateDefaultRunConfigurations(project).FirstOrDefault(),
+            ProjectKind.Cordova when project.CordovaInfo is { HasAndroidHost: true } =>
+                CordovaAdapter.CreateDefaultRunConfigurations(project).FirstOrDefault(),
             ProjectKind.Maui when project.MauiInfo is { SupportsAndroid: true } mauiInfo =>
                 MauiAdapter.CreateDefaultRunConfigurations(project, mauiInfo).FirstOrDefault(),
             _ => null,
@@ -889,6 +899,8 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
                 ProjectKind.Custom => RunConfigurationKind.Custom,
                 ProjectKind.Flutter => RunConfigurationKind.Flutter,
                 ProjectKind.ReactNative => RunConfigurationKind.ReactNative,
+                ProjectKind.Capacitor => RunConfigurationKind.Capacitor,
+                ProjectKind.Cordova => RunConfigurationKind.Cordova,
                 _ => RunConfigurationKind.Gradle,
             },
             ModuleName = project.ApplicationModule,
@@ -898,9 +910,13 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
                 Task = project.Kind == ProjectKind.Flutter
                     ? null
                     : variant?.BuildTask ?? "assembleDebug",
-                WorkingDirectory = project.Kind == ProjectKind.ReactNative
-                    ? ReactNativeAdapter.AndroidHostFolder
-                    : null,
+                WorkingDirectory = project.Kind switch
+                {
+                    ProjectKind.ReactNative => ReactNativeAdapter.AndroidHostFolder,
+                    ProjectKind.Capacitor => CapacitorAdapter.AndroidHostFolder,
+                    ProjectKind.Cordova => CordovaAdapter.AndroidHostFolder,
+                    _ => null,
+                },
             },
             Artifact = new ArtifactConfiguration
             {
@@ -1133,6 +1149,10 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
                 RunConfigurationKind.Maui =>
                     $"MAUI {MauiAdapter.NormalizeConfiguration(configuration.VariantName)} · " +
                     $"{configuration.Build.TargetFramework ?? "Android"} · {configuration.Artifact.Glob}",
+                RunConfigurationKind.Capacitor =>
+                    $"Capacitor {CapacitorAdapter.NormalizeMode(configuration.VariantName)} · {configuration.Artifact.Glob}",
+                RunConfigurationKind.Cordova =>
+                    $"Cordova {CordovaAdapter.NormalizeMode(configuration.VariantName)} · {configuration.Artifact.Glob}",
                 RunConfigurationKind.Apk =>
                     $"APK · {configuration.Artifact.Glob}",
                 _ => $"Custom · {configuration.Steps.Count} step(s)",

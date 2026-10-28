@@ -43,7 +43,9 @@ public sealed class RunPlanBuilder : IRunPlanBuilder
             is RunConfigurationKind.Gradle
             or RunConfigurationKind.Flutter
             or RunConfigurationKind.ReactNative
-            or RunConfigurationKind.Maui;
+            or RunConfigurationKind.Maui
+            or RunConfigurationKind.Capacitor
+            or RunConfigurationKind.Cordova;
         if (isBuildable && !configuration.Build.Skip)
         {
             var commands = CreateBuildCommands(project, configuration);
@@ -312,7 +314,15 @@ public sealed class RunPlanBuilder : IRunPlanBuilder
         ArgumentNullException.ThrowIfNull(project);
         ArgumentNullException.ThrowIfNull(configuration);
         var build = CreateBuildRequest(project, configuration);
-        return build is null ? [] : [new RunBuildCommand("Build", build)];
+        if (build is null)
+        {
+            return [];
+        }
+
+        var prepare = CreateHybridPrepareCommand(project, configuration);
+        return prepare is null
+            ? [new RunBuildCommand("Build", build)]
+            : [prepare, new RunBuildCommand("Build", build)];
     }
 
     /// <inheritdoc />
@@ -380,6 +390,40 @@ public sealed class RunPlanBuilder : IRunPlanBuilder
             WorkingDirectory = project.RootPath,
             Environment = environment,
         };
+    }
+
+    private RunBuildCommand? CreateHybridPrepareCommand(ProjectModel project, RunConfiguration configuration)
+    {
+        if (configuration.Build.Skip)
+        {
+            return null;
+        }
+
+        string name;
+        IReadOnlyList<string> arguments;
+        switch (configuration.Kind)
+        {
+            case RunConfigurationKind.Capacitor:
+                name = "Sync";
+                arguments = CapacitorAdapter.CreateSyncArguments();
+                break;
+            case RunConfigurationKind.Cordova:
+                name = "Prepare";
+                arguments = CordovaAdapter.CreatePrepareArguments();
+                break;
+            default:
+                return null;
+        }
+
+        var context = RunTemplateContext.ForProject(project, configuration);
+        return new RunBuildCommand(name, new ProcessRequest
+        {
+            FileName = ResolveNpx(),
+            Arguments = arguments,
+            WorkingDirectory = project.RootPath,
+            Environment = CreateBuildEnvironment(configuration, context),
+            Timeout = TimeSpan.FromSeconds(Math.Clamp(configuration.Build.TimeoutSeconds, 5, 24 * 60 * 60)),
+        });
     }
 
     private ProcessRequest? CreateFlutterBuildRequest(ProjectModel project, RunConfiguration configuration)

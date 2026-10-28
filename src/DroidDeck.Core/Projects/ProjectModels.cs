@@ -22,6 +22,12 @@ public enum ProjectKind
     /// <summary>A .NET MAUI project targeting Android.</summary>
     Maui,
 
+    /// <summary>An Ionic Capacitor project with an Android host folder.</summary>
+    Capacitor,
+
+    /// <summary>An Apache Cordova project with an Android host folder.</summary>
+    Cordova,
+
     /// <summary>A prebuilt APK or split APK set.</summary>
     ApkOnly,
 
@@ -247,6 +253,12 @@ public sealed class ProjectModel
     /// <summary>Gets or sets the .NET MAUI specifics detected from the project file.</summary>
     public MauiProjectInfo? MauiInfo { get; set; }
 
+    /// <summary>Gets or sets the Capacitor specifics detected from package.json and the config.</summary>
+    public CapacitorProjectInfo? CapacitorInfo { get; set; }
+
+    /// <summary>Gets or sets the Cordova specifics detected from config.xml and package.json.</summary>
+    public CordovaProjectInfo? CordovaInfo { get; set; }
+
     /// <summary>Gets or sets the application module name.</summary>
     public string? ApplicationModule { get; set; }
 
@@ -304,6 +316,8 @@ public sealed class ProjectModel
         ProjectKind.Flutter => "Flutter",
         ProjectKind.ReactNative => "React Native",
         ProjectKind.Maui => ".NET MAUI",
+        ProjectKind.Capacitor => "Ionic Capacitor",
+        ProjectKind.Cordova => "Apache Cordova",
         ProjectKind.ApkOnly => "APK only",
         _ => "Custom",
     };
@@ -384,6 +398,26 @@ public sealed class MauiProjectInfo
     /// <summary>Gets whether the project has an Android target framework.</summary>
     [JsonIgnore]
     public bool SupportsAndroid => AndroidTargetFrameworks.Count > 0;
+}
+
+/// <summary>Capacitor specifics detected from package.json, the config, and the android host.</summary>
+public sealed class CapacitorProjectInfo
+{
+    /// <summary>Gets or sets the Capacitor config file name, when one exists.</summary>
+    public string? ConfigFile { get; set; }
+
+    /// <summary>Gets or sets whether the generated android host exists.</summary>
+    public bool HasAndroidHost { get; set; }
+}
+
+/// <summary>Cordova specifics detected from config.xml, package.json, and the generated platform.</summary>
+public sealed class CordovaProjectInfo
+{
+    /// <summary>Gets or sets the Cordova config file name, when one exists.</summary>
+    public string? ConfigFile { get; set; }
+
+    /// <summary>Gets or sets whether the generated android platform exists.</summary>
+    public bool HasAndroidHost { get; set; }
 }
 
 /// <summary>A reference to an APK that belongs to an APK-only project.</summary>

@@ -350,6 +350,123 @@ public sealed class RunSessionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task CapacitorPipeline_RunsTheSyncThenTheGradleBuild()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, "android"));
+        var apk = Path.Combine(_root, "app-debug.apk");
+        var configuration = HybridConfiguration(
+            RunConfigurationKind.Capacitor,
+            "android",
+            "android/app/build/outputs/apk/debug/*.apk");
+        var planBuilder = new RunPlanBuilderStub
+        {
+            BuildCommands =
+            [
+                new RunBuildCommand(
+                    "Sync",
+                    new ProcessRequest { FileName = "npx.cmd", Arguments = ["cap", "sync", "android"] }),
+                new RunBuildCommand(
+                    "Build",
+                    new ProcessRequest
+                    {
+                        FileName = "cmd.exe",
+                        Arguments = ["/d", "/s", "/c", "gradlew.bat assembleDebug"],
+                    }),
+            ],
+        };
+        var artifacts = new FakeArtifactResolver
+        {
+            Resolution = new ArtifactResolution
+            {
+                Glob = configuration.Artifact.Glob,
+                BaseApk = apk,
+                Files = [apk],
+            },
+        };
+        var runner = new FakeRunner();
+        await using var service = CreateService(runner: runner, artifacts: artifacts, planBuilder: planBuilder);
+
+        var session = await service.RunAsync(CreateRequest(configuration, projectKind: ProjectKind.Capacitor));
+
+        Assert.Equal(RunSessionState.Running, session.State);
+        var buildSteps = session.Steps.Where(step => step.Kind == RunStepKind.Build).ToArray();
+        Assert.Equal(["Sync", "Build"], buildSteps.Select(step => step.Name));
+        Assert.All(buildSteps, step => Assert.Equal(RunStepState.Succeeded, step.State));
+        Assert.Equal(["npx.cmd", "cmd.exe"], runner.Requests.Select(request => request.FileName));
+    }
+
+    [Theory]
+    [InlineData(ProjectKind.Capacitor, RunConfigurationKind.Capacitor, "android", "npx cap add android")]
+    [InlineData(ProjectKind.Cordova, RunConfigurationKind.Cordova, "platforms/android", "npx cordova platform add android")]
+    public async Task HybridPipeline_FailsBeforeBuildingWithoutTheAndroidHost(
+        ProjectKind projectKind,
+        RunConfigurationKind kind,
+        string workingDirectory,
+        string guidance)
+    {
+        var configuration = HybridConfiguration(
+            kind,
+            workingDirectory,
+            $"{workingDirectory}/app/build/outputs/apk/debug/*.apk");
+        var runner = new FakeRunner();
+        await using var service = CreateService(runner: runner);
+
+        var session = await service.RunAsync(CreateRequest(configuration, projectKind: projectKind));
+
+        Assert.Equal(RunSessionState.Failed, session.State);
+        Assert.Contains(guidance, session.Error, StringComparison.Ordinal);
+        var prepare = Assert.Single(session.Steps, step => step.Id == "prepare");
+        Assert.Equal(RunStepState.Failed, prepare.State);
+        Assert.DoesNotContain(session.Steps, step => step.Id.StartsWith("build", StringComparison.Ordinal));
+        Assert.Empty(runner.Requests);
+    }
+
+    [Fact]
+    public async Task HybridPipeline_GuidesToNodeWhenTheSyncCannotStart()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, "android"));
+        var configuration = HybridConfiguration(
+            RunConfigurationKind.Capacitor,
+            "android",
+            "android/app/build/outputs/apk/debug/*.apk");
+        var planBuilder = new RunPlanBuilderStub
+        {
+            BuildCommands =
+            [
+                new RunBuildCommand(
+                    "Sync",
+                    new ProcessRequest { FileName = "npx.cmd", Arguments = ["cap", "sync", "android"] }),
+                new RunBuildCommand(
+                    "Build",
+                    new ProcessRequest
+                    {
+                        FileName = "cmd.exe",
+                        Arguments = ["/d", "/s", "/c", "gradlew.bat assembleDebug"],
+                    }),
+            ],
+        };
+        var runner = new FakeRunner
+        {
+            Handler = request => request.FileName == "npx.cmd"
+                ? new ProcessResult
+                {
+                    CommandLine = "npx cap sync android",
+                    ExitCode = -1,
+                    StartError = "The system cannot find the file specified.",
+                }
+                : Result(0),
+        };
+        await using var service = CreateService(runner: runner, planBuilder: planBuilder);
+
+        var session = await service.RunAsync(CreateRequest(configuration, projectKind: ProjectKind.Capacitor));
+
+        Assert.Equal(RunSessionState.Failed, session.State);
+        Assert.Contains("Node.js", session.Error, StringComparison.Ordinal);
+        var sync = Assert.Single(session.Steps, step => step.Kind == RunStepKind.Build && step.Name == "Sync");
+        Assert.Equal(RunStepState.Failed, sync.State);
+    }
+
+    [Fact]
     public async Task RunAsync_HoldsTheDeviceLockWhileMutatingTheDevice()
     {
         using var coordinator = new DeviceOperationCoordinator();
@@ -774,6 +891,19 @@ public sealed class RunSessionServiceTests : IDisposable
     {
         Directory.CreateDirectory(Path.Combine(_root, "android"));
     }
+
+    private static RunConfiguration HybridConfiguration(
+        RunConfigurationKind kind,
+        string workingDirectory,
+        string glob) => new()
+    {
+        Name = "Hybrid debug",
+        Kind = kind,
+        VariantName = "debug",
+        Build = { Task = "assembleDebug", WorkingDirectory = workingDirectory },
+        Artifact = { Glob = glob, PackageName = "com.example.hybrid" },
+        Launch = { PackageName = "com.example.hybrid" },
+    };
 
     private static RunConfiguration ReactNativeConfiguration() => new()
     {

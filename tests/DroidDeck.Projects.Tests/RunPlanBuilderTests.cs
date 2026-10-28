@@ -338,6 +338,87 @@ public sealed class RunPlanBuilderTests
         Assert.Contains("-n com.example.mauiapp/com.example.mauiapp.MainActivity", launch.CommandLine, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void CreateBuildCommands_CapacitorSyncsThenBuildsTheHost()
+    {
+        using var temp = new TempDirectory();
+        temp.WriteFile("android/gradlew.bat", "@echo off");
+        var project = HybridProject(ProjectKind.Capacitor);
+        project.RootPath = temp.Path;
+        var builder = new RunPlanBuilder(toolchain: new FakeToolchain(@"C:\flutter\flutter.bat", @"C:\node\npx.cmd"));
+
+        var commands = builder.CreateBuildCommands(project, project.RunConfigurations[0]);
+
+        Assert.Equal(["Sync", "Build"], commands.Select(command => command.Name));
+        Assert.Equal(@"C:\node\npx.cmd", commands[0].Request.FileName);
+        Assert.Equal(["cap", "sync", "android"], commands[0].Request.Arguments);
+        Assert.Equal(project.RootPath, commands[0].Request.WorkingDirectory);
+        Assert.Equal("cmd.exe", commands[1].Request.FileName);
+        Assert.Contains("assembleDebug", commands[1].Request.ToCommandLine(), StringComparison.Ordinal);
+        Assert.Equal(Path.Combine(project.RootPath, "android"), commands[1].Request.WorkingDirectory);
+    }
+
+    [Fact]
+    public void CreateBuildCommands_CordovaPreparesThenBuildsThePlatform()
+    {
+        using var temp = new TempDirectory();
+        temp.WriteFile("platforms/android/gradlew.bat", "@echo off");
+        var project = HybridProject(ProjectKind.Cordova);
+        project.RootPath = temp.Path;
+        var builder = new RunPlanBuilder(toolchain: new FakeToolchain(@"C:\flutter\flutter.bat", @"C:\node\npx.cmd"));
+
+        var commands = builder.CreateBuildCommands(project, project.RunConfigurations[0]);
+
+        Assert.Equal(["Prepare", "Build"], commands.Select(command => command.Name));
+        Assert.Equal(["cordova", "prepare", "android"], commands[0].Request.Arguments);
+        Assert.Equal(project.RootPath, commands[0].Request.WorkingDirectory);
+        Assert.Contains("assembleDebug", commands[1].Request.ToCommandLine(), StringComparison.Ordinal);
+        Assert.Equal(Path.Combine(project.RootPath, "platforms/android"), commands[1].Request.WorkingDirectory);
+    }
+
+    [Fact]
+    public void CreateBuildCommands_SkipsTheHybridSyncWhenTheBuildIsDisabled()
+    {
+        var project = HybridProject(ProjectKind.Capacitor);
+        var configuration = project.RunConfigurations[0];
+        configuration.Build.Skip = true;
+
+        var commands = _builder.CreateBuildCommands(project, configuration);
+
+        Assert.Empty(commands);
+    }
+
+    [Fact]
+    public void BuildPreview_CapacitorShowsSyncThenBuild()
+    {
+        var project = HybridProject(ProjectKind.Capacitor);
+
+        var preview = _builder.BuildPreview(project, project.RunConfigurations[0], "emulator-5554");
+
+        var buildSteps = preview.Steps.Where(step => step.Kind == RunStepKind.Build).ToArray();
+        Assert.Equal(["Sync", "Build"], buildSteps.Select(step => step.Name));
+        Assert.All(buildSteps, step => Assert.True(step.WillRun));
+        Assert.Contains("cap sync android", buildSteps[0].CommandLine, StringComparison.Ordinal);
+        Assert.Contains("assembleDebug", buildSteps[1].CommandLine, StringComparison.Ordinal);
+    }
+
+    private static ProjectModel HybridProject(ProjectKind kind)
+    {
+        var project = new ProjectModel
+        {
+            Id = kind == ProjectKind.Capacitor ? "cap-1" : "cordova-1",
+            Name = kind == ProjectKind.Capacitor ? "capacitor_sample" : "cordova_sample",
+            RootPath = Path.Combine(Path.GetTempPath(), "droiddeck-hybrid-sample"),
+            Kind = kind,
+            ApplicationId = "com.example.hybrid",
+            LauncherActivity = ".MainActivity",
+        };
+        project.RunConfigurations = kind == ProjectKind.Capacitor
+            ? CapacitorAdapter.CreateDefaultRunConfigurations(project)
+            : CordovaAdapter.CreateDefaultRunConfigurations(project);
+        return project;
+    }
+
     private static ProjectModel MauiProject()
     {
         var project = new ProjectModel

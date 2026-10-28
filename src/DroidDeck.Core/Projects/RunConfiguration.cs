@@ -17,6 +17,12 @@ public enum RunConfigurationKind
     /// <summary>A .NET MAUI build for an Android target framework.</summary>
     Maui,
 
+    /// <summary>A Capacitor sync and Gradle build inside the android host.</summary>
+    Capacitor,
+
+    /// <summary>A Cordova prepare and Gradle build inside the android host.</summary>
+    Cordova,
+
     /// <summary>An APK is installed directly without a build.</summary>
     Apk,
 
@@ -338,7 +344,10 @@ public static class RunConfigurationValidator
             errors.Add(new("name", "A configuration name is required."));
         }
 
-        if (configuration.Kind is RunConfigurationKind.Gradle or RunConfigurationKind.ReactNative)
+        if (configuration.Kind is RunConfigurationKind.Gradle
+            or RunConfigurationKind.ReactNative
+            or RunConfigurationKind.Capacitor
+            or RunConfigurationKind.Cordova)
         {
             if (string.IsNullOrWhiteSpace(configuration.Build.Task))
             {

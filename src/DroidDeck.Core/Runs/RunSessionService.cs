@@ -1004,6 +1004,25 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             return;
         }
 
+        if (configuration.Kind is RunConfigurationKind.Capacitor or RunConfigurationKind.Cordova)
+        {
+            var isCapacitor = configuration.Kind == RunConfigurationKind.Capacitor;
+            var hostFolder = isCapacitor ? "android" : "platforms/android";
+            if (!Directory.Exists(Path.Combine(project.RootPath, hostFolder)))
+            {
+                var guidance = isCapacitor
+                    ? "npx cap add android"
+                    : "npx cordova platform add android";
+                await FailStepAsync(
+                    context,
+                    prepare,
+                    $"This project has no {hostFolder} folder yet, so it cannot be built or installed. " +
+                    $"Run \"{guidance}\" in the project, then refresh the project in DroidDeck.")
+                    .ConfigureAwait(false);
+                return;
+            }
+        }
+
         SucceedStep(session, prepare, "The configuration and device are valid.");
 
         if (!await RunBuildAsync(context, cancellationToken).ConfigureAwait(false))
@@ -1088,7 +1107,9 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             is RunConfigurationKind.Gradle
             or RunConfigurationKind.Flutter
             or RunConfigurationKind.ReactNative
-            or RunConfigurationKind.Maui;
+            or RunConfigurationKind.Maui
+            or RunConfigurationKind.Capacitor
+            or RunConfigurationKind.Cordova;
         if (!isBuildable ||
             configuration.Build.Skip ||
             context.Request.Options.SkipBuild ||
@@ -1114,12 +1135,15 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             return true;
         }
 
+        var mode = string.IsNullOrWhiteSpace(configuration.VariantName) ? "debug" : configuration.VariantName;
         var buildLabel = configuration.Kind switch
         {
             RunConfigurationKind.Flutter =>
                 $"the Flutter {configuration.VariantName ?? "debug"} app",
             RunConfigurationKind.Maui =>
                 $"the MAUI {(string.IsNullOrWhiteSpace(configuration.VariantName) ? "Debug" : configuration.VariantName)} app",
+            RunConfigurationKind.Capacitor => $"the Capacitor {mode} app",
+            RunConfigurationKind.Cordova => $"the Cordova {mode} app",
             _ => configuration.Build.Task,
         };
         SetSessionState(session, RunSessionState.Building, $"Building {buildLabel}.");
@@ -1176,7 +1200,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
                 {
                     var startMessage =
                         $"{Subject(command, isPipeline)} could not start: {result.StartError}" +
-                        StartGuidance(configuration);
+                        StartGuidance(configuration, index, isPipeline);
                     await FailStepAsync(
                         context,
                         step,
@@ -1229,10 +1253,12 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         return isPipeline ? command.Name : "The build";
     }
 
-    private static string StartGuidance(RunConfiguration configuration)
+    private static string StartGuidance(RunConfiguration configuration, int index, bool isPipeline)
     {
         return configuration.Kind switch
         {
+            RunConfigurationKind.Capacitor or RunConfigurationKind.Cordova when isPipeline && index == 0 =>
+                " Install Node.js (which includes npm and npx) from nodejs.org, then retry the run.",
             RunConfigurationKind.Maui =>
                 " Install the .NET SDK from dotnet.microsoft.com, then retry the build.",
             _ => string.Empty,
