@@ -134,6 +134,24 @@ public sealed class AdbToolboxServiceTests
     }
 
     [Fact]
+    public void ParsePermissions_TreatsCrLfAsASingleLineBreak()
+    {
+        // Built with escapes so the input stays CRLF regardless of the checkout's
+        // line endings; a fresh Windows checkout rewrites raw string literals to CRLF.
+        const string dump =
+            "runtime permissions:\r\n" +
+            "  android.permission.CAMERA: granted=true, flags=[ ]\r\n" +
+            "install permissions:\r\n" +
+            "  android.permission.INTERNET: granted=true\r\n";
+
+        var permissions = AdbToolboxService.ParsePermissions(dump);
+
+        Assert.Equal(2, permissions.Count);
+        Assert.True(permissions.Single(permission => permission.Name == "android.permission.CAMERA").IsRuntime);
+        Assert.False(permissions.Single(permission => permission.Name == "android.permission.INTERNET").IsRuntime);
+    }
+
+    [Fact]
     public async Task SetPermissionAsync_GrantsAndReportsFailures()
     {
         var calls = 0;

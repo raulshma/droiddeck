@@ -439,7 +439,9 @@ public sealed partial class AdbToolboxService : IDeviceToolboxService
     {
         var permissions = new List<PermissionState>();
         string? section = null;
-        foreach (var rawLine in output.Split(['\r', '\n'], StringSplitOptions.None))
+        // Splitting on '\r' and '\n' separately would surface an empty line between
+        // the two characters of a CRLF pair and end the section before any entry.
+        foreach (var rawLine in output.ReplaceLineEndings("\n").Split('\n'))
         {
             var trimmed = rawLine.Trim();
             if (trimmed.Equals("runtime permissions:", StringComparison.OrdinalIgnoreCase))
