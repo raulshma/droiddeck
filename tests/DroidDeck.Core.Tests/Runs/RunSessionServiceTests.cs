@@ -31,8 +31,7 @@ public sealed class RunSessionServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task CustomPipeline_CompletesEndToEndWithoutArtifactOrLaunch()
-    {
+    public async Task CustomPipeline_CompletesEndToEndWithoutArtifactOrLaunch()    {
         var configuration = new RunConfiguration
         {
             Name = "steps-only",
@@ -274,11 +273,80 @@ public sealed class RunSessionServiceTests : IDisposable
         return (service, session, logcat);
     }
 
+    [Fact]
+    public async Task PrebuiltArtifact_SkipsResolverAndBuildAndInstallsTheReusedFiles()
+    {
+        var configuration = new RunConfiguration
+        {
+            Name = "debug",
+            Kind = RunConfigurationKind.Gradle,
+            Artifact = { Glob = "**/*.apk" },
+        };
+        var commands = new FakeDeviceCommands();
+        var service = CreateService(commands: commands);
+        var request = CreateRequest(configuration, options: new RunOptions
+        {
+            SkipBuild = true,
+            PrebuiltArtifactFiles = ["/tmp/reused.apk"],
+            PrebuiltArtifactPath = "/tmp/reused.apk",
+            PrebuiltPackageName = "com.example.reused",
+            PrebuiltActivity = "com.example.reused.MainActivity",
+        });
+
+        var session = await service.RunAsync(request);
+
+        Assert.Equal(RunSessionState.Running, session.State);
+        Assert.Equal(["/tmp/reused.apk"], session.ArtifactFiles);
+        var artifact = Assert.Single(session.Steps, step => step.Id == "artifact");
+        Assert.Equal(RunStepState.Succeeded, artifact.State);
+        Assert.Contains("Reused", artifact.OutputTail);
+        var build = Assert.Single(session.Steps, step => step.Id == "build");
+        Assert.Equal(RunStepState.Skipped, build.State);
+        Assert.Equal("com.example.reused", session.PackageName);
+    }
+
+    [Fact]
+    public async Task RunAsync_HoldsTheDeviceLockWhileMutatingTheDevice()
+    {
+        using var coordinator = new DeviceOperationCoordinator();
+        var observed = false;
+        var configuration = new RunConfiguration
+        {
+            Name = "steps",
+            Kind = RunConfigurationKind.Custom,
+            Steps =
+            [
+                new RunStepDefinition
+                {
+                    Id = "step",
+                    Command = "cmd",
+                    Arguments = ["/c", "echo", "hello"],
+                },
+            ],
+        };
+        var runner = new FakeRunner
+        {
+            Handler = _ =>
+            {
+                observed = coordinator.ActiveOperations.Any(operation =>
+                    string.Equals(operation.Serial, "emulator-5554", StringComparison.Ordinal));
+                return Result(0);
+            },
+        };
+        await using var service = CreateService(runner: runner, coordinator: coordinator);
+
+        await service.RunAsync(CreateRequest(configuration));
+
+        Assert.True(observed);
+        Assert.Empty(coordinator.ActiveOperations);
+    }
+
     private static RunSessionService CreateService(
         FakeRunner? runner = null,
         FakeArtifactResolver? artifacts = null,
         FakeDeviceCommands? commands = null,
-        FakeLogcatService? logcat = null)
+        FakeLogcatService? logcat = null,
+        IDeviceOperationCoordinator? coordinator = null)
     {
         return new RunSessionService(
             new RunPlanBuilderStub(),
@@ -287,10 +355,11 @@ public sealed class RunSessionServiceTests : IDisposable
             logcat ?? new FakeLogcatService(new FakeLogcatSession()),
             new FakeSessionStore(),
             new FakeNotificationService(),
-            runner ?? new FakeRunner());
+            runner ?? new FakeRunner(),
+            coordinator: coordinator);
     }
 
-    private RunRequest CreateRequest(RunConfiguration configuration, DeviceInfo? device = null)
+    private RunRequest CreateRequest(RunConfiguration configuration, DeviceInfo? device = null, RunOptions? options = null)
     {
         return new RunRequest
         {
@@ -304,6 +373,7 @@ public sealed class RunSessionServiceTests : IDisposable
             Configuration = configuration,
             Device = device ?? new DeviceInfo { Serial = "emulator-5554" },
             DeviceSerial = device?.Serial ?? "emulator-5554",
+            Options = options ?? new RunOptions(),
         };
     }
 

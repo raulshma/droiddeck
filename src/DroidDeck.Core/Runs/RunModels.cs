@@ -199,6 +199,9 @@ public sealed class RunSession
     /// <summary>Gets or sets the target device name.</summary>
     public string? DeviceName { get; set; }
 
+    /// <summary>Gets or sets the multi-device group identifier, when this session is a child.</summary>
+    public string? GroupId { get; set; }
+
     /// <summary>Gets or sets the session state.</summary>
     public RunSessionState State { get; set; } = RunSessionState.Queued;
 
@@ -282,12 +285,15 @@ public sealed class RunRequest
     /// <summary>Gets or sets whether this is a dry run that executes nothing.</summary>
     public bool DryRun { get; init; }
 
+    /// <summary>Gets or sets the multi-device group identifier, when this request is a child.</summary>
+    public string? GroupId { get; init; }
+
     /// <summary>Gets or sets the options that control the run.</summary>
     public RunOptions Options { get; init; } = new();
 }
 
 /// <summary>Options that control a run.</summary>
-public sealed class RunOptions
+public sealed record RunOptions
 {
     /// <summary>Gets or sets whether the build is skipped.</summary>
     public bool SkipBuild { get; init; }
@@ -309,6 +315,30 @@ public sealed class RunOptions
 
     /// <summary>Gets or sets whether a previous install failure should be retried with test-only allowed.</summary>
     public bool AllowTestOnly { get; init; } = true;
+
+    /// <summary>
+    /// Gets or sets APK files produced by an earlier build. When set, the resolver
+    /// is skipped so a multi-device run can install the same artifact many times.
+    /// </summary>
+    public IReadOnlyList<string>? PrebuiltArtifactFiles { get; init; }
+
+    /// <summary>Gets or sets the base APK from an earlier build.</summary>
+    public string? PrebuiltArtifactPath { get; init; }
+
+    /// <summary>Gets or sets the package name discovered during the first install.</summary>
+    public string? PrebuiltPackageName { get; init; }
+
+    /// <summary>Gets or sets the launchable activity discovered during the first install.</summary>
+    public string? PrebuiltActivity { get; init; }
+
+    /// <summary>Gets or sets a description of the prebuilt artifact for the session timeline.</summary>
+    public string? PrebuiltArtifactDescription { get; init; }
+
+    /// <summary>
+    /// Gets or sets whether the caller already holds the per-device operation lock.
+    /// Multi-device runs acquire the lock before handing work to the session service.
+    /// </summary>
+    public bool DeviceLockHeld { get; init; }
 }
 
 /// <summary>Describes a session state change.</summary>

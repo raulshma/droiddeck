@@ -1,11 +1,13 @@
 using System.ComponentModel;
 using System.Globalization;
 using System.Text.Json;
+using DroidDeck.Core.Devices;
 using DroidDeck.Core.Infrastructure;
 using DroidDeck.Core.Logs;
 using DroidDeck.Core.Notifications;
 using DroidDeck.Core.Processes;
 using DroidDeck.Core.Projects;
+using DroidDeck.Core.Resources;
 using DroidDeck.Core.Sessions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -30,6 +32,8 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
     private readonly ISessionStore _sessionStore;
     private readonly INotificationService _notifications;
     private readonly IProcessRunner _runner;
+    private readonly IResourceGuard? _resourceGuard;
+    private readonly IDeviceOperationCoordinator? _coordinator;
     private readonly ILogger<RunSessionService> _logger;
     private readonly List<RunSession> _sessions = [];
     private readonly Dictionary<string, RunContext> _contexts = new(SerialComparer);
@@ -45,6 +49,8 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         ISessionStore sessionStore,
         INotificationService notifications,
         IProcessRunner runner,
+        IResourceGuard? resourceGuard = null,
+        IDeviceOperationCoordinator? coordinator = null,
         ILogger<RunSessionService>? logger = null)
     {
         _planBuilder = planBuilder ?? throw new ArgumentNullException(nameof(planBuilder));
@@ -54,6 +60,8 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         _sessionStore = sessionStore ?? throw new ArgumentNullException(nameof(sessionStore));
         _notifications = notifications ?? throw new ArgumentNullException(nameof(notifications));
         _runner = runner ?? throw new ArgumentNullException(nameof(runner));
+        _resourceGuard = resourceGuard;
+        _coordinator = coordinator;
         _logger = logger ?? NullLogger<RunSessionService>.Instance;
     }
 
@@ -226,6 +234,11 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         StartStep(session, step);
         try
         {
+            await using var deviceLease = await AcquireDeviceLockAsync(
+                session.DeviceSerial,
+                $"Restart {session.PackageName} on {session.DeviceSerial}",
+                alreadyHeld: false,
+                cancellationToken).ConfigureAwait(false);
             await _commands.ForceStopAsync(session.DeviceSerial, session.PackageName, cancellationToken).ConfigureAwait(false);
             var result = await _commands.LaunchAsync(
                 session.DeviceSerial,
@@ -337,6 +350,11 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             line => OnProcessOutput(session, step.Id, line, tail, appendToBuildOutput: false));
         try
         {
+            await using var deviceLease = await AcquireDeviceLockAsync(
+                session.DeviceSerial,
+                $"Recover {session.ProjectName} on {session.DeviceSerial}",
+                alreadyHeld: false,
+                cancellationToken).ConfigureAwait(false);
             if (action == RecoveryActionKind.UninstallAndReinstall)
             {
                 var uninstall = await _commands
@@ -462,6 +480,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             ConfigurationName = request.Configuration.Name,
             DeviceSerial = serial,
             DeviceName = request.Device?.Model ?? request.Device?.Serial,
+            GroupId = request.GroupId,
             IsDryRun = request.DryRun,
             State = RunSessionState.Queued,
             StatusMessage = request.DryRun ? "Dry run queued." : "Queued.",
@@ -509,6 +528,12 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         var request = context.Request;
         var project = request.Project;
         var configuration = request.Configuration;
+
+        await using var deviceLease = await AcquireDeviceLockAsync(
+            session.DeviceSerial,
+            $"Run {project.Name} on {session.DeviceSerial}",
+            request.Options.DeviceLockHeld,
+            cancellationToken).ConfigureAwait(false);
 
         var prepare = AddStep(session, "prepare", "Prepare", RunStepKind.WaitForDevice);
         SetSessionState(session, RunSessionState.Preparing, "Checking the run configuration and device.");
@@ -618,14 +643,17 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         var step = AddStep(session, "build", "Build", RunStepKind.Build);
         if (configuration.Kind != RunConfigurationKind.Gradle ||
             configuration.Build.Skip ||
-            context.Request.Options.SkipBuild)
+            context.Request.Options.SkipBuild ||
+            context.Request.Options.PrebuiltArtifactFiles is { Count: > 0 })
         {
             SkipStep(
                 session,
                 step,
                 configuration.Kind != RunConfigurationKind.Gradle
                     ? "Only Gradle projects have a build step."
-                    : "The build is disabled for this run.");
+                    : context.Request.Options.PrebuiltArtifactFiles is { Count: > 0 }
+                        ? "The artifact was already built for this device group."
+                        : "The build is disabled for this run.");
             return true;
         }
 
@@ -643,8 +671,19 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         var progress = new ActionProgress<ProcessOutputLine>(
             line => OnProcessOutput(session, step.Id, line, tail, appendToBuildOutput: true));
         ProcessResult result;
+        IAsyncDisposable? resourceLease = null;
         try
         {
+            if (_resourceGuard is not null)
+            {
+                resourceLease = await _resourceGuard
+                    .AcquireAsync(
+                        ResourceKind.Build,
+                        $"{session.ProjectName} on {session.DeviceName ?? session.DeviceSerial}",
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
             result = await _runner.RunAsync(buildRequest, progress, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -652,6 +691,13 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             CancelStep(step);
             await FinishCancelledAsync(context).ConfigureAwait(false);
             return false;
+        }
+        finally
+        {
+            if (resourceLease is not null)
+            {
+                await resourceLease.DisposeAsync().ConfigureAwait(false);
+            }
         }
 
         step.ExitCode = result.ExitCode;
@@ -714,6 +760,24 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
 
         SetSessionState(session, RunSessionState.ResolvingArtifact, "Locating the build artifact.");
         StartStep(session, step);
+        var prebuilt = context.Request.Options.PrebuiltArtifactFiles;
+        if (prebuilt is { Count: > 0 })
+        {
+            session.ArtifactFiles = [.. prebuilt];
+            session.ArtifactPath = context.Request.Options.PrebuiltArtifactPath ?? prebuilt[0];
+            session.PackageName ??= context.Request.Options.PrebuiltPackageName;
+            session.Activity ??= context.Request.Options.PrebuiltActivity;
+            step.CommandLine = context.Request.Options.PrebuiltArtifactDescription
+                ?? "Reusing the artifact built for this device group.";
+            SucceedStep(
+                session,
+                step,
+                prebuilt.Count == 1
+                    ? "Reused the APK built for this group."
+                    : $"Reused the base APK and {prebuilt.Count - 1} split APK(s) built for this group.");
+            return true;
+        }
+
         ArtifactResolution resolution;
         try
         {
@@ -1445,7 +1509,8 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
 
     private static bool IsArtifactPlanned(RunRequest request)
     {
-        return request.Configuration.Kind == RunConfigurationKind.Gradle ||
+        return request.Options.PrebuiltArtifactFiles is { Count: > 0 } ||
+               request.Configuration.Kind == RunConfigurationKind.Gradle ||
                !string.IsNullOrWhiteSpace(request.Configuration.Artifact.Glob) ||
                request.Project.ApkFiles.Count > 0;
     }
@@ -1652,6 +1717,20 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         {
             return _contexts.GetValueOrDefault(sessionId);
         }
+    }
+
+    private async Task<IAsyncDisposable?> AcquireDeviceLockAsync(
+        string? serial,
+        string operation,
+        bool alreadyHeld,
+        CancellationToken cancellationToken)
+    {
+        if (_coordinator is null || alreadyHeld || string.IsNullOrWhiteSpace(serial))
+        {
+            return null;
+        }
+
+        return await _coordinator.AcquireAsync(serial, operation, cancellationToken).ConfigureAwait(false);
     }
 
     private static RunContext CreateDetachedContext(RunSession session) =>
