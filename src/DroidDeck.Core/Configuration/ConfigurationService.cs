@@ -234,6 +234,7 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
         try
         {
             var global = ParseGlobal(text);
+            MigrateLegacyOnboarding(global);
             return new LoadedSettings(global, BuildSnapshot(global), Notice: null);
         }
         catch (Exception exception) when (IsInvalidSettings(exception))
@@ -281,6 +282,7 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
             {
                 var backupText = await File.ReadAllTextAsync(backupPath, cancellationToken).ConfigureAwait(false);
                 var backup = ParseGlobal(backupText);
+                MigrateLegacyOnboarding(backup);
                 var backupSnapshot = BuildSnapshot(backup);
                 await AtomicFile.WriteAllTextAsync(_paths.SettingsFile, backupText, keepBackup: false, cancellationToken)
                     .ConfigureAwait(false);
@@ -355,6 +357,19 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
 
         document["schemaVersion"] = AppSettings.CurrentSchemaVersion;
         return document;
+    }
+
+    private static void MigrateLegacyOnboarding(JsonObject document)
+    {
+        if (document.ContainsKey("onboarding"))
+        {
+            return;
+        }
+
+        document["onboarding"] = new JsonObject
+        {
+            ["completed"] = true,
+        };
     }
 
     private ConfigSnapshot BuildSnapshot(JsonObject global)

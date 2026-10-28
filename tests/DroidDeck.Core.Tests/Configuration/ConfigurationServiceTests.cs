@@ -92,6 +92,86 @@ public sealed class ConfigurationServiceTests
     }
 
     [Fact]
+    public void OnboardingDefaultsToIncompleteFirstStep()
+    {
+        using var temp = new TempDirectory();
+        using var service = CreateService(temp);
+
+        Assert.False(service.Current.Settings.Onboarding.Completed);
+        Assert.Equal("tools", service.Current.Settings.Onboarding.Step);
+        Assert.Equal(
+            ConfigScope.BuiltInDefaults,
+            service.GetSource(SettingsPaths.OnboardingCompleted).Scope);
+        Assert.Equal(
+            ConfigScope.BuiltInDefaults,
+            service.GetSource(SettingsPaths.OnboardingStep).Scope);
+    }
+
+    [Fact]
+    public async Task OnboardingStatePersistsAcrossRestartAndResetsToDefaults()
+    {
+        using var temp = new TempDirectory();
+        using (var service = CreateService(temp))
+        {
+            await service.InitializeAsync();
+            await service.SetAsync(SettingsPaths.OnboardingStep, "device");
+            await service.SetAsync(SettingsPaths.OnboardingCompleted, true);
+        }
+
+        using var restarted = CreateService(temp);
+        await restarted.InitializeAsync();
+
+        Assert.True(restarted.Current.Settings.Onboarding.Completed);
+        Assert.Equal("device", restarted.Current.Settings.Onboarding.Step);
+
+        await restarted.ResetAsync(SettingsPaths.OnboardingCompleted);
+        await restarted.ResetAsync(SettingsPaths.OnboardingStep);
+
+        Assert.False(restarted.Current.Settings.Onboarding.Completed);
+        Assert.Equal("tools", restarted.Current.Settings.Onboarding.Step);
+        Assert.Equal(
+            ConfigScope.BuiltInDefaults,
+            restarted.GetSource(SettingsPaths.OnboardingCompleted).Scope);
+    }
+
+    [Fact]
+    public async Task LegacySettingsWithoutOnboardingAreMarkedComplete()
+    {
+        using var temp = new TempDirectory();
+        Directory.CreateDirectory(temp.Combine("data"));
+        await File.WriteAllTextAsync(
+            Paths(temp).SettingsFile,
+            """{ "schemaVersion": 1, "tools": { "adbPath": "C:\\adb\\adb.exe" } }""");
+
+        using var service = CreateService(temp);
+        await service.InitializeAsync();
+
+        Assert.True(service.Current.Settings.Onboarding.Completed);
+        Assert.Equal(ConfigScope.Global, service.GetSource(SettingsPaths.OnboardingCompleted).Scope);
+
+        await service.SetAsync(SettingsPaths.Theme, AppTheme.Dark);
+
+        using var restarted = CreateService(temp);
+        await restarted.InitializeAsync();
+        Assert.True(restarted.Current.Settings.Onboarding.Completed);
+    }
+
+    [Fact]
+    public async Task ExplicitOnboardingIncompleteIsNotMigrated()
+    {
+        using var temp = new TempDirectory();
+        Directory.CreateDirectory(temp.Combine("data"));
+        await File.WriteAllTextAsync(
+            Paths(temp).SettingsFile,
+            """{ "schemaVersion": 1, "onboarding": { "completed": false } }""");
+
+        using var service = CreateService(temp);
+        await service.InitializeAsync();
+
+        Assert.False(service.Current.Settings.Onboarding.Completed);
+    }
+
+    [Fact]
     public async Task SetPersistsSchemaVersionAndRaisesChanged()
     {
         using var temp = new TempDirectory();

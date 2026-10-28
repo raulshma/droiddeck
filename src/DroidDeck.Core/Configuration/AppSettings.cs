@@ -53,6 +53,9 @@ public sealed class AppSettings
     /// <summary>Gets or sets home cockpit state.</summary>
     public HomeSettings Home { get; set; } = new();
 
+    /// <summary>Gets or sets first-run onboarding state.</summary>
+    public OnboardingSettings Onboarding { get; set; } = new();
+
     /// <summary>Gets or sets unknown keys preserved for forward compatibility.</summary>
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? AdditionalSettings { get; set; }
@@ -69,6 +72,20 @@ public sealed class HomeSettings
 
     /// <summary>Gets or sets the device serial the last quick run used.</summary>
     public string? LastDeviceSerial { get; set; }
+
+    /// <summary>Gets or sets unknown keys preserved for forward compatibility.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalSettings { get; set; }
+}
+
+/// <summary>First-run onboarding progress.</summary>
+public sealed class OnboardingSettings
+{
+    /// <summary>Gets or sets whether the onboarding flow finished.</summary>
+    public bool Completed { get; set; }
+
+    /// <summary>Gets or sets the step the user last reached ("tools", "project", or "device").</summary>
+    public string Step { get; set; } = "tools";
 
     /// <summary>Gets or sets unknown keys preserved for forward compatibility.</summary>
     [JsonExtensionData]
@@ -375,4 +392,10 @@ public static class SettingsPaths
 
     /// <summary>Quick run device path.</summary>
     public const string HomeLastDeviceSerial = "home.lastDeviceSerial";
+
+    /// <summary>Onboarding completed flag path.</summary>
+    public const string OnboardingCompleted = "onboarding.completed";
+
+    /// <summary>Onboarding last reached step path.</summary>
+    public const string OnboardingStep = "onboarding.step";
 }

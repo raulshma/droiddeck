@@ -71,5 +71,9 @@
     "lastProjectId": null,
     "lastConfigurationId": null,
     "lastDeviceSerial": null
+  },
+  "onboarding": {
+    "completed": false,
+    "step": "tools"
   }
 }
