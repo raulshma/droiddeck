@@ -227,6 +227,80 @@ public sealed class ShellAutomationTests
         }
     }
 
+    [Fact]
+    [Trait("Category", "UI")]
+    public async Task HomeCockpitLabelsEmptyRegionsAndTracksDevices()
+    {
+        if (!UiTestsEnabled())
+        {
+            return;
+        }
+
+        const string serial = "FAKE-UI-04";
+        using var temp = new TempDirectory("droiddeck-ui");
+        var stateDirectory = temp.CreateDirectory("state");
+        var dataDirectory = temp.CreateDirectory("data");
+        WriteSettings(dataDirectory);
+        await using var server = await FakeAdbServerProcess.StartAsync(stateDirectory, "hotplug", serial);
+
+        var process = StartApplication(dataDirectory, stateDirectory, server.Port, "hotplug", serial);
+        var processId = process.Id;
+        using var application = Application.Attach(process);
+        try
+        {
+            using var automation = new UIA3Automation();
+            var window = application.GetMainWindow(automation, TimeSpan.FromSeconds(30)) ??
+                throw new InvalidOperationException("The DroidDeck main window did not appear.");
+
+            await Wait.UntilAsync(
+                () => window.FindFirstDescendant(cf => cf.ByAutomationId("HomeDevicesEmptyText")) is not null,
+                TimeSpan.FromSeconds(30),
+                "The home device region did not settle into its empty state.");
+
+            var quickRun = window.FindFirstDescendant(cf => cf.ByAutomationId("HomeQuickRunEmptyText"))?.Name
+                ?? string.Empty;
+            Assert.Contains("No projects", quickRun, StringComparison.OrdinalIgnoreCase);
+
+            await Wait.UntilAsync(
+                () =>
+                {
+                    var freshness = window
+                        .FindFirstDescendant(cf => cf.ByAutomationId("HomeEnvironmentFreshness"))
+                        ?.Name;
+                    return freshness is not null &&
+                        !freshness.Contains("Waiting", StringComparison.OrdinalIgnoreCase);
+                },
+                TimeSpan.FromSeconds(60),
+                "The home environment region never reported a doctor result.");
+
+            Assert.True(
+                window.FindFirstDescendant(cf => cf.ByAutomationId("HomePluginWidgetPlaceholder")) is not null,
+                "The plugin home widget placeholder region was not rendered.");
+
+            WriteDevices(
+                stateDirectory,
+                $"{serial} device product:shiba model:Pixel_8 device:shiba transport_id:1");
+
+            await Wait.UntilAsync(
+                () => window.FindFirstDescendant(cf => cf.ByAutomationId("HomeDeviceList")) is not null,
+                TimeSpan.FromSeconds(30),
+                "The home device list did not become visible after a device connected.");
+
+            await Wait.UntilAsync(
+                () => window.FindFirstDescendant(cf => cf.ByAutomationId(serial)) is not null,
+                TimeSpan.FromSeconds(30),
+                "The hotplugged device did not appear on the home cockpit.");
+
+            Assert.True(
+                window.FindFirstDescendant(cf => cf.ByAutomationId("HomeDevicesEmptyText")) is null,
+                "The home device empty state stayed visible after a device connected.");
+        }
+        finally
+        {
+            CloseApplication(application, processId);
+        }
+    }
+
     private const uint SwpNoZOrder = 0x0004;
     private const uint SwpNoActivate = 0x0010;
 
