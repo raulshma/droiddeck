@@ -2,7 +2,114 @@
 <Page
     x:Class="DroidDeck.App.Views.SessionPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:views="using:DroidDeck.App.Views">
+
+    <Page.Resources>
+        <DataTemplate x:Key="StepRowTemplate">
+            <Grid Padding="8,6" ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Spacing="2">
+                    <TextBlock
+                        Text="{Binding Name}"
+                        FontWeight="SemiBold"
+                        TextWrapping="Wrap" />
+                    <TextBlock
+                        Text="{Binding CommandLine}"
+                        FontFamily="Consolas"
+                        FontSize="11"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap"
+                        IsTextSelectionEnabled="True"
+                        Visibility="{Binding HasCommand, Converter={StaticResource BoolToVisibility}}" />
+                    <TextBlock
+                        Text="{Binding Error}"
+                        FontSize="12"
+                        Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                        TextWrapping="Wrap"
+                        IsTextSelectionEnabled="True"
+                        Visibility="{Binding HasError, Converter={StaticResource BoolToVisibility}}" />
+                    <TextBlock
+                        Text="{Binding SkipReason}"
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap"
+                        IsTextSelectionEnabled="True"
+                        Visibility="{Binding HasSkipReason, Converter={StaticResource BoolToVisibility}}" />
+                    <TextBlock
+                        Text="{Binding DiagnosisText}"
+                        FontSize="12"
+                        Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                        TextWrapping="Wrap"
+                        IsTextSelectionEnabled="True"
+                        Visibility="{Binding HasDiagnosis, Converter={StaticResource BoolToVisibility}}" />
+                    <ItemsControl
+                        ItemsSource="{Binding RecoveryRows}"
+                        Visibility="{Binding HasRecovery, Converter={StaticResource BoolToVisibility}}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal" Spacing="6" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button
+                                    Content="{Binding Label}"
+                                    Click="OnRecoveryClick"
+                                    ToolTipService.ToolTip="{Binding Description}"
+                                    AutomationProperties.AutomationId="{Binding AutomationId}" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+                <StackPanel
+                    Grid.Column="1"
+                    Spacing="2"
+                    HorizontalAlignment="Right">
+                    <TextBlock
+                        Text="{Binding StateLabel}"
+                        FontSize="12"
+                        Foreground="{Binding StateBrush}" />
+                    <TextBlock
+                        Text="{Binding DurationLabel}"
+                        FontSize="11"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </StackPanel>
+            </Grid>
+        </DataTemplate>
+        <DataTemplate x:Key="CrashRowTemplate">
+            <Grid Padding="8,6" ColumnSpacing="8" Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Spacing="2">
+                    <TextBlock
+                        Text="{Binding KindLabel}"
+                        FontWeight="SemiBold"
+                        Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
+                    <TextBlock
+                        Text="{Binding Summary}"
+                        FontSize="12"
+                        TextWrapping="Wrap"
+                        IsTextSelectionEnabled="True" />
+                </StackPanel>
+                <TextBlock
+                    Grid.Column="1"
+                    Text="{Binding TimeLabel}"
+                    FontSize="11"
+                    VerticalAlignment="Top"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            </Grid>
+        </DataTemplate>
+        <views:TimelineTemplateSelector
+            x:Key="TimelineSelector"
+            StepTemplate="{StaticResource StepRowTemplate}"
+            CrashTemplate="{StaticResource CrashRowTemplate}" />
+    </Page.Resources>
 
     <Grid Padding="24" RowSpacing="12">
         <Grid.RowDefinitions>
@@ -91,8 +198,26 @@
             IsOpen="False"
             IsClosable="True"
             AutomationProperties.AutomationId="SessionCrashBar">
+            <InfoBar.Content>
+                <StackPanel
+                    Orientation="Horizontal"
+                    Spacing="6"
+                    Margin="0,0,0,8">
+                    <Button
+                        Content="Copy stack"
+                        Click="OnCopyStackClick"
+                        AutomationProperties.AutomationId="SessionCrashCopyButton" />
+                    <Button
+                        Content="Restart app"
+                        Click="OnRestartClick"
+                        AutomationProperties.AutomationId="SessionCrashRestartButton" />
+                </StackPanel>
+            </InfoBar.Content>
             <InfoBar.ActionButton>
-                <Button Content="Jump to crash" Click="OnJumpToCrashClick" />
+                <Button
+                    Content="Jump to crash"
+                    Click="OnJumpToCrashClick"
+                    AutomationProperties.AutomationId="SessionCrashJumpButton" />
             </InfoBar.ActionButton>
         </InfoBar>
 
@@ -125,75 +250,9 @@
                                 <Setter Property="Margin" Value="4,1" />
                             </Style>
                         </ListView.ItemContainerStyle>
-                        <ListView.ItemTemplate>
-                            <DataTemplate>
-                                <Grid Padding="8,6" ColumnSpacing="8">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel Spacing="2">
-                                        <TextBlock
-                                            Text="{Binding Name}"
-                                            FontWeight="SemiBold"
-                                            TextWrapping="Wrap" />
-                                        <TextBlock
-                                            Text="{Binding CommandLine}"
-                                            FontFamily="Consolas"
-                                            FontSize="11"
-                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                            TextWrapping="Wrap"
-                                            IsTextSelectionEnabled="True"
-                                            Visibility="{Binding HasCommand, Converter={StaticResource BoolToVisibility}}" />
-                                        <TextBlock
-                                            Text="{Binding Error}"
-                                            FontSize="12"
-                                            Foreground="{ThemeResource SystemFillColorCriticalBrush}"
-                                            TextWrapping="Wrap"
-                                            IsTextSelectionEnabled="True"
-                                            Visibility="{Binding HasError, Converter={StaticResource BoolToVisibility}}" />
-                                        <TextBlock
-                                            Text="{Binding DiagnosisText}"
-                                            FontSize="12"
-                                            Foreground="{ThemeResource SystemFillColorCautionBrush}"
-                                            TextWrapping="Wrap"
-                                            IsTextSelectionEnabled="True"
-                                            Visibility="{Binding HasDiagnosis, Converter={StaticResource BoolToVisibility}}" />
-                                        <ItemsControl
-                                            ItemsSource="{Binding RecoveryRows}"
-                                            Visibility="{Binding HasRecovery, Converter={StaticResource BoolToVisibility}}">
-                                            <ItemsControl.ItemsPanel>
-                                                <ItemsPanelTemplate>
-                                                    <StackPanel Orientation="Horizontal" Spacing="6" />
-                                                </ItemsPanelTemplate>
-                                            </ItemsControl.ItemsPanel>
-                                            <ItemsControl.ItemTemplate>
-                                                <DataTemplate>
-                                                    <Button
-                                                        Content="{Binding Label}"
-                                                        Click="OnRecoveryClick"
-                                                        ToolTipService.ToolTip="{Binding Description}"
-                                                        AutomationProperties.AutomationId="{Binding AutomationId}" />
-                                                </DataTemplate>
-                                            </ItemsControl.ItemTemplate>
-                                        </ItemsControl>
-                                    </StackPanel>
-                                    <StackPanel
-                                        Grid.Column="1"
-                                        Spacing="2"
-                                        HorizontalAlignment="Right">
-                                        <TextBlock
-                                            Text="{Binding StateLabel}"
-                                            FontSize="12"
-                                            Foreground="{Binding StateBrush}" />
-                                        <TextBlock
-                                            Text="{Binding DurationLabel}"
-                                            FontSize="11"
-                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                    </StackPanel>
-                                </Grid>
-                            </DataTemplate>
-                        </ListView.ItemTemplate>
+                        <ListView.ItemTemplateSelector>
+                            <StaticResource ResourceKey="TimelineSelector" />
+                        </ListView.ItemTemplateSelector>
                     </ListView>
                     <TextBlock
                         x:Name="NoStepsText"
@@ -400,6 +459,25 @@
                                             MinWidth="90"
                                             AutomationProperties.AutomationId="LogSearchCount" />
                                     </Grid>
+                                    <Expander
+                                        Header="Highlight rules"
+                                        HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Stretch"
+                                        AutomationProperties.AutomationId="LogHighlightExpander">
+                                        <ItemsControl x:Name="HighlightList">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <CheckBox
+                                                        Content="{Binding Label}"
+                                                        IsChecked="{Binding IsEnabled, Mode=OneWay}"
+                                                        Checked="OnHighlightToggled"
+                                                        Unchecked="OnHighlightToggled"
+                                                        ToolTipService.ToolTip="{Binding Pattern}"
+                                                        AutomationProperties.AutomationId="{Binding AutomationId}" />
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </Expander>
                                 </StackPanel>
 
                                 <ListView

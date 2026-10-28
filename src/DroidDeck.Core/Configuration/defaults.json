@@ -41,7 +41,7 @@
   "projects": {
     "scanDepth": 3,
     "maxScanFolders": 2000,
-    "scanTimeoutSeconds": 5,
+    "scanTimeoutSeconds": 2,
     "ignoreFolders": [
       ".git",
       ".gradle",

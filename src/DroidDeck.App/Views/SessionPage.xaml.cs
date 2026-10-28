@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
@@ -32,12 +31,14 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
     private readonly IConfigurationService _configuration;
     private readonly ILogger<SessionPage> _logger;
     private readonly DispatcherQueue? _dispatcher;
-    private readonly ObservableCollection<string> _buildLines = [];
-    private readonly ObservableCollection<LogRow> _logRows = [];
+    private readonly BulkObservableCollection<string> _buildLines = [];
+    private readonly BulkObservableCollection<LogRow> _logRows = [];
     private readonly ConcurrentQueue<string> _pendingBuildLines = new();
     private readonly List<LogEntry> _allEntries = [];
     private readonly List<LogRow> _searchRows = [];
     private readonly DispatcherTimer _buildTimer;
+    private readonly List<HighlightRuleRow> _highlightRules = [];
+    private HighlightEngine _highlightEngine = new([]);
     private RunSession? _session;
     private RunSession? _boundReadOnly;
     private ILogcatSession? _logcatSession;
@@ -45,6 +46,7 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
     private CrashEvent? _latestCrash;
     private int _searchIndex = -1;
     private int _maxLogLines = 20_000;
+    private int _logRebuildGeneration;
     private bool _initializingFilters;
     private bool _disposed;
 
@@ -81,6 +83,7 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         LevelCombo.SelectedIndex = 0;
         BuildOutputList.ItemsSource = _buildLines;
         LogList.ItemsSource = _logRows;
+        ResetHighlightRules();
 
         _runs.SessionChanged += OnSessionChanged;
         _runs.OutputReceived += OnOutputReceived;
@@ -257,14 +260,30 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
             return;
         }
 
-        StepRow[] rows;
+        List<object> items;
         lock (_session)
         {
-            rows = _session.Steps.Select(StepRow.From).ToArray();
+            items = [];
+            var crashes = new Queue<CrashEvent>(_session.Crashes);
+            foreach (var step in _session.Steps)
+            {
+                while (crashes.Count > 0 &&
+                       (step.StartedAt is null || crashes.Peek().Timestamp <= step.StartedAt))
+                {
+                    items.Add(new CrashRow(crashes.Dequeue()));
+                }
+
+                items.Add(StepRow.From(step));
+            }
+
+            while (crashes.Count > 0)
+            {
+                items.Add(new CrashRow(crashes.Dequeue()));
+            }
         }
 
-        StepList.ItemsSource = rows;
-        NoStepsText.Visibility = rows.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        StepList.ItemsSource = items;
+        NoStepsText.Visibility = items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void UpdateCrashBar()
@@ -461,11 +480,7 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
 
         if (_buildLines.Count > MaxBuildLines)
         {
-            var remove = _buildLines.Count - MaxBuildLines;
-            for (var index = 0; index < remove; index++)
-            {
-                _buildLines.RemoveAt(0);
-            }
+            _buildLines.RemoveFromStart(_buildLines.Count - MaxBuildLines);
         }
     }
 
@@ -500,13 +515,19 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
 
     private void AddEntries(IReadOnlyList<LogEntry> entries)
     {
+        List<LogRow>? added = null;
         foreach (var entry in entries)
         {
             _allEntries.Add(entry);
             if (_filter.Matches(entry))
             {
-                _logRows.Add(LogRow.Create(entry));
+                (added ??= []).Add(LogRow.Create(entry, _highlightEngine));
             }
+        }
+
+        if (added is not null)
+        {
+            _logRows.AddRange(added);
         }
 
         if (_allEntries.Count > _maxLogLines)
@@ -514,28 +535,89 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
             _allEntries.RemoveRange(0, _allEntries.Count - _maxLogLines);
         }
 
-        while (_logRows.Count > _maxLogLines)
-        {
-            _logRows.RemoveAt(0);
-        }
-
+        _logRows.RemoveFromStart(_logRows.Count - _maxLogLines);
         NoLogsText.Visibility = _logRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private void RebuildLogRows()
+    private void RebuildLogRows() => _ = RebuildLogRowsAsync();
+
+    /// <summary>
+    /// Filters the buffered entries off the UI thread and swaps the visible rows in
+    /// one reset, so filtering a full buffer never blocks input or rendering.
+    /// </summary>
+    private async Task RebuildLogRowsAsync()
     {
-        _logRows.Clear();
-        foreach (var entry in _allEntries)
+        var generation = ++_logRebuildGeneration;
+        var entries = _allEntries.ToArray();
+        var snapshotCount = entries.Length;
+        var filter = _filter;
+        var engine = _highlightEngine;
+        var rows = await Task.Run(() =>
         {
-            if (_filter.Matches(entry))
+            var result = new List<LogRow>(entries.Length);
+            foreach (var entry in entries)
             {
-                _logRows.Add(LogRow.Create(entry));
+                if (filter.Matches(entry))
+                {
+                    result.Add(LogRow.Create(entry, engine));
+                }
             }
+
+            return result;
+        }).ConfigureAwait(true);
+
+        if (_disposed || generation != _logRebuildGeneration)
+        {
+            return;
         }
 
-        NoLogsText.Visibility = _logRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        // Include entries appended between the snapshot and the swap so no line
+        // is lost from view while a rebuild was in flight.
+        if (_allEntries.Count > snapshotCount)
+        {
+            var appended = new List<LogRow>(_allEntries.Count - snapshotCount);
+            for (var index = snapshotCount; index < _allEntries.Count; index++)
+            {
+                if (filter.Matches(_allEntries[index]))
+                {
+                    appended.Add(LogRow.Create(_allEntries[index], engine));
+                }
+            }
+
+            rows.AddRange(appended);
+        }
+
+        _logRows.ResetAll(rows);
+        NoLogsText.Visibility = rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         ResetSearchState();
         UpdateLogStatus();
+    }
+
+    private void ResetHighlightRules()
+    {
+        _highlightRules.Clear();
+        foreach (var rule in HighlightRule.BuiltIn)
+        {
+            _highlightRules.Add(new HighlightRuleRow(rule));
+        }
+
+        RebuildHighlightEngine();
+        HighlightList.ItemsSource = _highlightRules;
+    }
+
+    private void RebuildHighlightEngine() =>
+        _highlightEngine = new HighlightEngine(_highlightRules.Select(row => row.Rule));
+
+    private void OnHighlightToggled(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not HighlightRuleRow row)
+        {
+            return;
+        }
+
+        row.Rule.IsEnabled = (sender as CheckBox)?.IsChecked == true;
+        RebuildHighlightEngine();
+        RebuildLogRows();
     }
 
     private LogFilterCriteria BuildCriteria()
@@ -1112,20 +1194,19 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         private static readonly Brush PrimaryBrush = ResolveBrush("TextFillColorPrimaryBrush");
         private static readonly Brush SearchBrush = new SolidColorBrush(
             Windows.UI.Color.FromArgb(64, 255, 193, 7));
+        private static readonly Dictionary<string, Brush> RuleBrushCache = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Brush? _ruleBackground;
         private bool _isSearchMatch;
 
-        private LogRow(LogEntry entry)
+        private LogRow(LogEntry entry, HighlightRule? rule)
         {
             Entry = entry;
             Text = entry.IsContinuation ? $"    {entry.Raw}" : entry.Raw;
-            Foreground = entry.Level switch
-            {
-                "E" or "F" or "A" => ErrorBrush,
-                "W" => WarningBrush,
-                "D" or "V" => SecondaryBrush,
-                _ => PrimaryBrush,
-            };
-            Weight = entry.Level is "F" or "A"
+            Foreground = rule is { } highlight
+                ? BrushFor(highlight.Foreground, BrushForLevel(entry.Level))
+                : BrushForLevel(entry.Level);
+            _ruleBackground = rule?.Background is { } background ? BrushFor(background, null) : null;
+            Weight = rule?.Bold == true || entry.Level is "F" or "A"
                 ? Microsoft.UI.Text.FontWeights.Bold
                 : Microsoft.UI.Text.FontWeights.Normal;
         }
@@ -1145,8 +1226,8 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         /// <summary>Gets the level font weight.</summary>
         public FontWeight Weight { get; }
 
-        /// <summary>Gets the search highlight background.</summary>
-        public Brush? Background => _isSearchMatch ? SearchBrush : null;
+        /// <summary>Gets the highlight or search background; the search marker wins.</summary>
+        public Brush? Background => _isSearchMatch ? SearchBrush : _ruleBackground;
 
         /// <summary>Gets or sets whether the line matches the current search.</summary>
         public bool IsSearchMatch
@@ -1164,11 +1245,64 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
             }
         }
 
-        /// <summary>Creates a row from a log entry.</summary>
-        public static LogRow Create(LogEntry entry)
+        /// <summary>Creates a row from a log entry, applying the first matching highlight rule.</summary>
+        public static LogRow Create(LogEntry entry, HighlightEngine? highlights = null)
         {
             ArgumentNullException.ThrowIfNull(entry);
-            return new LogRow(entry);
+            return new LogRow(entry, highlights?.Match(entry));
+        }
+
+        private static Brush BrushForLevel(string? level) => level switch
+        {
+            "E" or "F" or "A" => ErrorBrush,
+            "W" => WarningBrush,
+            "D" or "V" => SecondaryBrush,
+            _ => PrimaryBrush,
+        };
+
+        private static Brush BrushFor(string color, Brush? fallback)
+        {
+            lock (RuleBrushCache)
+            {
+                if (RuleBrushCache.TryGetValue(color, out var cached))
+                {
+                    return cached;
+                }
+            }
+
+            Brush? parsed = null;
+            var hex = color.TrimStart('#');
+            if (hex.Length is 6 or 8)
+            {
+                try
+                {
+                    var value = byte.Parse(hex[^6..], NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+                    var alpha = hex.Length == 8
+                        ? byte.Parse(hex[..2], NumberStyles.HexNumber, CultureInfo.InvariantCulture)
+                        : (byte)255;
+                    parsed = new SolidColorBrush(Windows.UI.Color.FromArgb(
+                        alpha,
+                        (byte)(value >> 16),
+                        (byte)(value >> 8),
+                        (byte)value));
+                }
+                catch (FormatException)
+                {
+                    // A malformed color string falls back to the level color.
+                }
+                catch (OverflowException)
+                {
+                    // A malformed color string falls back to the level color.
+                }
+            }
+
+            var brush = parsed ?? fallback ?? PrimaryBrush;
+            lock (RuleBrushCache)
+            {
+                RuleBrushCache[color] = brush;
+            }
+
+            return brush;
         }
     }
 
@@ -1192,6 +1326,8 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
             HasCommand = CommandLine.Length > 0;
             Error = step.Error ?? string.Empty;
             HasError = Error.Length > 0;
+            SkipReason = step.SkipReason ?? string.Empty;
+            HasSkipReason = SkipReason.Length > 0;
             DiagnosisText = step.Diagnosis is { } diagnosis
                 ? $"{diagnosis.Title}: {diagnosis.Explanation} {diagnosis.Guidance}".Trim()
                 : string.Empty;
@@ -1226,6 +1362,12 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         /// <summary>Gets whether the step failed.</summary>
         public bool HasError { get; }
 
+        /// <summary>Gets the reason the step was skipped.</summary>
+        public string SkipReason { get; }
+
+        /// <summary>Gets whether a skip reason is available.</summary>
+        public bool HasSkipReason { get; }
+
         /// <summary>Gets the install diagnosis.</summary>
         public string DiagnosisText { get; }
 
@@ -1244,6 +1386,60 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
             ArgumentNullException.ThrowIfNull(step);
             return new StepRow(step);
         }
+    }
+
+    /// <summary>One crash or ANR event shaped for the timeline.</summary>
+    public sealed class CrashRow
+    {
+        /// <summary>Creates a row from a crash event.</summary>
+        public CrashRow(CrashEvent crash)
+        {
+            ArgumentNullException.ThrowIfNull(crash);
+            KindLabel = crash.Kind switch
+            {
+                CrashKind.Anr => "Application not responding",
+                CrashKind.Native => "Native crash",
+                _ => "Crash",
+            };
+            Summary = crash.Summary;
+            TimeLabel = crash.Timestamp.ToLocalTime().ToString("g", CultureInfo.CurrentCulture);
+        }
+
+        /// <summary>Gets the event kind label.</summary>
+        public string KindLabel { get; }
+
+        /// <summary>Gets the short summary.</summary>
+        public string Summary { get; }
+
+        /// <summary>Gets the local timestamp label.</summary>
+        public string TimeLabel { get; }
+    }
+
+    /// <summary>One toggleable highlight rule shown in the log panel.</summary>
+    public sealed class HighlightRuleRow
+    {
+        /// <summary>Creates a row wrapping a highlight rule.</summary>
+        public HighlightRuleRow(HighlightRule rule)
+        {
+            Rule = rule ?? throw new ArgumentNullException(nameof(rule));
+            Label = string.IsNullOrWhiteSpace(rule.Name) ? rule.Pattern : rule.Name;
+            AutomationId = $"HighlightRule_{rule.Id}";
+        }
+
+        /// <summary>Gets the wrapped rule.</summary>
+        public HighlightRule Rule { get; }
+
+        /// <summary>Gets the display label.</summary>
+        public string Label { get; }
+
+        /// <summary>Gets whether the rule is enabled.</summary>
+        public bool IsEnabled => Rule.IsEnabled;
+
+        /// <summary>Gets the pattern shown as a tooltip.</summary>
+        public string Pattern => Rule.Pattern;
+
+        /// <summary>Gets the automation identifier.</summary>
+        public string AutomationId { get; }
     }
 
     /// <summary>One recovery action shaped for the timeline.</summary>

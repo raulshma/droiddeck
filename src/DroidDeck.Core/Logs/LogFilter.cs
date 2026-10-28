@@ -248,7 +248,7 @@ public sealed class HighlightRule
     /// <summary>Gets the built-in rules.</summary>
     public static IReadOnlyList<HighlightRule> BuiltIn { get; } =
     [
-        new() { Id = "fatal", Name = "Crashes", Pattern = "FATAL EXCEPTION|ANR in |*** *** ***", IsRegex = true, Foreground = "#FF4D6D", Bold = true, IsBuiltIn = true },
+        new() { Id = "fatal", Name = "Crashes", Pattern = "FATAL EXCEPTION|ANR in |\\*\\*\\* \\*\\*\\* \\*\\*\\*", IsRegex = true, Foreground = "#FF4D6D", Bold = true, IsBuiltIn = true },
         new() { Id = "error", Name = "Errors", Pattern = "E/|error:", IsRegex = true, Foreground = "#FF6B6B", IsBuiltIn = true },
         new() { Id = "warning", Name = "Warnings", Pattern = "W/|warning:", IsRegex = true, Foreground = "#F5A524", IsBuiltIn = true },
         new() { Id = "test-failure", Name = "Test failures", Pattern = "FAILED|AssertionError", IsRegex = true, Foreground = "#FF6B6B", Bold = true, IsBuiltIn = true },

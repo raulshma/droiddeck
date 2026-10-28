@@ -80,7 +80,7 @@ public sealed class RunPlanBuilder : IRunPlanBuilder
             });
         }
 
-        if (!configuration.Install.ExtraArguments.Contains("--no-install", StringComparer.Ordinal))
+        if (hasArtifact && !configuration.Install.ExtraArguments.Contains("--no-install", StringComparer.Ordinal))
         {
             var installCommand = BuildInstallPreview(adb, serial, configuration, preview.ArtifactGlob, project);
             preview.Steps.Add(new RunPlanPreviewStep
@@ -98,53 +98,51 @@ public sealed class RunPlanBuilder : IRunPlanBuilder
         var activity = TemplateEngine.Expand(
             configuration.Launch.Activity ?? project.LauncherActivity,
             context);
-        var launchArguments = new List<string> { "-s", serial, "shell", "am", "start", "-W" };
-        if (!string.IsNullOrWhiteSpace(configuration.Launch.Action))
+        if (string.IsNullOrWhiteSpace(packageName))
         {
-            launchArguments.AddRange(["-a", TemplateEngine.Expand(configuration.Launch.Action, context)]);
-        }
-
-        if (!string.IsNullOrWhiteSpace(configuration.Launch.Data))
-        {
-            launchArguments.AddRange(["-d", TemplateEngine.Expand(configuration.Launch.Data, context)]);
-        }
-
-        if (!string.IsNullOrWhiteSpace(activity) && !string.IsNullOrWhiteSpace(packageName))
-        {
-            var component = activity.StartsWith('.') ? packageName + activity : activity;
-            if (!component.Contains('/', StringComparison.Ordinal))
+            preview.Steps.Add(new RunPlanPreviewStep
             {
-                component = packageName + "/" + component;
+                Name = "Launch",
+                Kind = RunStepKind.Launch,
+                CommandLine = string.Empty,
+                WillRun = false,
+                SkipReason = "No package name is configured for this project.",
+            });
+        }
+        else
+        {
+            if (configuration.Launch.StopBeforeLaunch)
+            {
+                preview.Steps.Add(new RunPlanPreviewStep
+                {
+                    Name = "Force stop",
+                    Kind = RunStepKind.Launch,
+                    CommandLine = ProcessRequest.FormatCommandLine(
+                        adb,
+                        ["-s", serial, "shell", "am", "force-stop", packageName]),
+                    WillRun = true,
+                });
             }
 
-            launchArguments.AddRange(["-n", component]);
-        }
-        else if (!string.IsNullOrWhiteSpace(packageName))
-        {
-            launchArguments.AddRange([
-                "-a", "android.intent.action.MAIN",
-                "-c", "android.intent.category.LAUNCHER",
-                "-p", packageName,
-            ]);
-        }
+            if (configuration.Logs.Attach && configuration.Logs.ClearBeforeLaunch)
+            {
+                preview.Steps.Add(new RunPlanPreviewStep
+                {
+                    Name = "Clear logcat",
+                    Kind = RunStepKind.Logcat,
+                    CommandLine = ProcessRequest.FormatCommandLine(adb, ["-s", serial, "logcat", "-c"]),
+                    WillRun = true,
+                });
+            }
 
-        if (configuration.Launch.WaitForDebugger)
-        {
-            launchArguments.Add("-D");
+            preview.Steps.Add(new RunPlanPreviewStep
+            {
+                Name = "Launch",
+                Kind = RunStepKind.Launch,
+                CommandLine = BuildLaunchPreview(adb, serial, configuration, packageName, activity, context),
+                WillRun = true,
+            });
         }
-
-        foreach (var extra in configuration.Launch.ExtraArguments)
-        {
-            launchArguments.Add(TemplateEngine.Expand(extra, context));
-        }
-
-        preview.Steps.Add(new RunPlanPreviewStep
-        {
-            Name = "Launch",
-            Kind = RunStepKind.Launch,
-            CommandLine = ProcessRequest.FormatCommandLine(adb, launchArguments),
-            WillRun = true,
-        });
 
         if (configuration.Logs.Attach)
         {
@@ -160,7 +158,10 @@ public sealed class RunPlanBuilder : IRunPlanBuilder
                 Name = "Attach logcat",
                 Kind = RunStepKind.Logcat,
                 CommandLine = ProcessRequest.FormatCommandLine(adb, logArguments),
-                WillRun = true,
+                WillRun = !string.IsNullOrWhiteSpace(packageName),
+                SkipReason = string.IsNullOrWhiteSpace(packageName)
+                    ? "No package is associated with this run; logcat is not attached."
+                    : null,
             });
         }
 
@@ -312,6 +313,62 @@ public sealed class RunPlanBuilder : IRunPlanBuilder
 
         var shell = Path.Combine(root, "gradlew");
         return File.Exists(shell) ? shell : null;
+    }
+
+    private static string BuildLaunchPreview(
+        string adb,
+        string serial,
+        RunConfiguration configuration,
+        string packageName,
+        string activity,
+        RunTemplateContext context)
+    {
+        var arguments = new List<string> { "-s", serial, "shell" };
+        var component = string.IsNullOrWhiteSpace(activity)
+            ? null
+            : NormalizeComponent(packageName, activity);
+        if (component is null)
+        {
+            arguments.AddRange([
+                "monkey",
+                "-p", packageName,
+                "-c", "android.intent.category.LAUNCHER",
+                "1",
+            ]);
+            return ProcessRequest.FormatCommandLine(adb, arguments);
+        }
+
+        arguments.Add("am");
+        arguments.Add("start");
+        arguments.Add("-W");
+        if (!string.IsNullOrWhiteSpace(configuration.Launch.Action))
+        {
+            arguments.AddRange(["-a", TemplateEngine.Expand(configuration.Launch.Action, context)]);
+        }
+
+        if (!string.IsNullOrWhiteSpace(configuration.Launch.Data))
+        {
+            arguments.AddRange(["-d", TemplateEngine.Expand(configuration.Launch.Data, context)]);
+        }
+
+        arguments.AddRange(["-n", component]);
+        if (configuration.Launch.WaitForDebugger)
+        {
+            arguments.Add("-D");
+        }
+
+        foreach (var extra in configuration.Launch.ExtraArguments)
+        {
+            arguments.Add(TemplateEngine.Expand(extra, context));
+        }
+
+        return ProcessRequest.FormatCommandLine(adb, arguments);
+    }
+
+    private static string NormalizeComponent(string packageName, string activity)
+    {
+        var component = activity.StartsWith('.') ? packageName + activity : activity;
+        return component.Contains('/', StringComparison.Ordinal) ? component : packageName + "/" + component;
     }
 
     private static string BuildInstallPreview(

@@ -21,6 +21,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
     private const int MaxBuildOutputLines = 100_000;
     private const int MaxStepOutputTailLines = 200;
     private const int MaxLogEntries = 1_000_000;
+    private static readonly TimeSpan CrashDedupeWindow = TimeSpan.FromSeconds(10);
     private static readonly StringComparer SerialComparer = StringComparer.Ordinal;
 
     private readonly IRunPlanBuilder _planBuilder;
@@ -576,7 +577,23 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             {
                 session.State = RunSessionState.PartiallyFailed;
                 session.Error ??= "One or more custom steps failed.";
-                session.StatusMessage = "The app is running, but some custom steps failed.";
+                session.StatusMessage = context.LaunchWasSkipped
+                    ? "The run steps completed, but some failed."
+                    : "The app is running, but some custom steps failed.";
+                CompleteSession(session);
+            }
+
+            RaiseChanged(session);
+            await SaveAndNotifyAsync(session).ConfigureAwait(false);
+            return;
+        }
+
+        if (context.LaunchWasSkipped)
+        {
+            lock (session)
+            {
+                session.State = RunSessionState.Succeeded;
+                session.StatusMessage = "The run steps completed.";
                 CompleteSession(session);
             }
 
@@ -690,6 +707,12 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
     {
         var session = context.Session;
         var step = AddStep(session, "artifact", "Locate artifact", RunStepKind.Install);
+        if (!IsArtifactPlanned(context.Request))
+        {
+            SkipStep(session, step, "No artifact glob is configured for this project.");
+            return true;
+        }
+
         SetSessionState(session, RunSessionState.ResolvingArtifact, "Locating the build artifact.");
         StartStep(session, step);
         ArtifactResolution resolution;
@@ -744,6 +767,12 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         var session = context.Session;
         var configuration = context.Request.Configuration;
         var step = AddStep(session, "install", "Install", RunStepKind.Install);
+        if (!IsArtifactPlanned(context.Request))
+        {
+            SkipStep(session, step, "No artifact is configured for this project.");
+            return true;
+        }
+
         if (context.Request.Options.SkipInstall ||
             configuration.Install.ExtraArguments.Contains("--no-install", StringComparer.Ordinal))
         {
@@ -844,14 +873,19 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             return true;
         }
 
-        var template = RunTemplateContext.ForProject(context.Request.Project, configuration);
-        template.DeviceSerial = session.DeviceSerial;
-        template.ApkPath = session.ArtifactPath;
+        var template = CreateTemplateContext(context);
         var packageName = TemplateEngine.Expand(
             configuration.Launch.PackageName ?? session.PackageName ?? context.Request.Project.ApplicationId,
             template);
         if (string.IsNullOrWhiteSpace(packageName))
         {
+            if (configuration.Kind == RunConfigurationKind.Custom)
+            {
+                context.LaunchWasSkipped = true;
+                SkipStep(session, step, "No package name is configured for this project.");
+                return true;
+            }
+
             await FailStepAsync(
                 context,
                 step,
@@ -936,10 +970,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
     {
         var session = context.Session;
         var configuration = context.Request.Configuration;
-        var template = RunTemplateContext.ForProject(context.Request.Project, configuration);
-        template.DeviceSerial = session.DeviceSerial;
-        template.ApkPath = session.ArtifactPath;
-        template.Activity = session.Activity;
+        var template = CreateTemplateContext(context);
         var partiallyFailed = false;
         var index = 0;
         foreach (var definition in configuration.Steps)
@@ -1094,6 +1125,12 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         }
 
         StartStep(session, step);
+        if (string.IsNullOrWhiteSpace(session.PackageName))
+        {
+            SkipStep(session, step, "No package is associated with this run; logcat is not attached.");
+            return;
+        }
+
         try
         {
             var uid = await _commands.GetPackageUidAsync(
@@ -1194,8 +1231,17 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         var session = context.Session;
         lock (session)
         {
-            if (session.Crashes.Any(crash =>
-                    string.Equals(crash.DedupeKey, args.Crash.DedupeKey, StringComparison.Ordinal)))
+            var now = DateTimeOffset.UtcNow;
+            var stale = context.RecentCrashes
+                .Where(pair => now - pair.Value > CrashDedupeWindow)
+                .Select(pair => pair.Key)
+                .ToArray();
+            foreach (var key in stale)
+            {
+                context.RecentCrashes.Remove(key);
+            }
+
+            if (!context.RecentCrashes.TryAdd(args.Crash.DedupeKey, now))
             {
                 return;
             }
@@ -1409,6 +1455,27 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         }
 
         return string.IsNullOrWhiteSpace(session.ArtifactPath) ? [] : [session.ArtifactPath];
+    }
+
+    private static bool IsArtifactPlanned(RunRequest request)
+    {
+        return request.Configuration.Kind == RunConfigurationKind.Gradle ||
+               !string.IsNullOrWhiteSpace(request.Configuration.Artifact.Glob) ||
+               request.Project.ApkFiles.Count > 0;
+    }
+
+    private static RunTemplateContext CreateTemplateContext(RunContext context)
+    {
+        var session = context.Session;
+        var template = RunTemplateContext.ForProject(context.Request.Project, context.Request.Configuration);
+        template.DeviceSerial = session.DeviceSerial;
+        template.DeviceModel = context.Request.Device?.Model;
+        template.DeviceApiLevel = context.Request.Device?.ApiLevel;
+        template.IsEmulator = context.Request.Device?.IsEmulator
+            ?? session.DeviceSerial.StartsWith("emulator-", StringComparison.Ordinal);
+        template.ApkPath = session.ArtifactPath;
+        template.Activity = session.Activity;
+        return template;
     }
 
     private static RecoveryAction RetryAction(string id, string label, string description) => new()
@@ -1640,6 +1707,10 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         public EventHandler<CrashDetectedEventArgs>? CrashHandler { get; set; }
 
         public bool StoppedByUser { get; set; }
+
+        public bool LaunchWasSkipped { get; set; }
+
+        public Dictionary<string, DateTimeOffset> RecentCrashes { get; } = new(StringComparer.Ordinal);
     }
 
     private enum CustomStepResult

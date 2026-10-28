@@ -191,7 +191,7 @@ public sealed class ProjectsSettings
     public int MaxScanFolders { get; set; } = 2_000;
 
     /// <summary>Gets or sets the scan timeout in seconds.</summary>
-    public int ScanTimeoutSeconds { get; set; } = 5;
+    public int ScanTimeoutSeconds { get; set; } = 2;
 
     /// <summary>Gets or sets folder names that are never scanned.</summary>
     public List<string> IgnoreFolders { get; set; } =
