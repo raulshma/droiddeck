@@ -45,6 +45,15 @@ public sealed class AppPaths
     /// <summary>Gets the saved log filter directory.</summary>
     public string FiltersDirectory => Path.Combine(DataDirectory, "filters");
 
+    /// <summary>Gets the remembered wireless device directory.</summary>
+    public string WirelessDirectory => Path.Combine(DataDirectory, "wireless");
+
+    /// <summary>Gets the screenshot directory.</summary>
+    public string ScreenshotsDirectory => Path.Combine(DataDirectory, "screenshots");
+
+    /// <summary>Gets the screen recording directory.</summary>
+    public string RecordingsDirectory => Path.Combine(DataDirectory, "recordings");
+
     /// <summary>Gets the installed plugin directory.</summary>
     public string PluginsDirectory => Path.Combine(DataDirectory, "plugins");
 
@@ -85,6 +94,9 @@ public sealed class AppPaths
         Directory.CreateDirectory(SessionsDirectory);
         Directory.CreateDirectory(ProjectsDirectory);
         Directory.CreateDirectory(FiltersDirectory);
+        Directory.CreateDirectory(WirelessDirectory);
+        Directory.CreateDirectory(ScreenshotsDirectory);
+        Directory.CreateDirectory(RecordingsDirectory);
         Directory.CreateDirectory(PluginsDirectory);
         Directory.CreateDirectory(QuarantineDirectory);
     }

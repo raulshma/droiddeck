@@ -238,22 +238,33 @@ public sealed class ProcessRunner : IProcessRunner
                 var chunk = chars.AsSpan(0, read);
                 while (!chunk.IsEmpty)
                 {
-                    var newline = chunk.IndexOf('\n');
-                    if (newline < 0)
+                    var separator = request.SplitOnCarriageReturn
+                        ? chunk.IndexOfAny('\r', '\n')
+                        : chunk.IndexOf('\n');
+                    if (separator < 0)
                     {
                         AppendLineSegment(line, chunk, ref lineTruncated);
                         break;
                     }
 
-                    var segment = chunk[..newline];
-                    if (!segment.IsEmpty && segment[^1] == '\r')
+                    var segment = chunk[..separator];
+                    if (chunk[separator] == '\n' && !segment.IsEmpty && segment[^1] == '\r')
                     {
                         segment = segment[..^1];
                     }
 
                     AppendLineSegment(line, segment, ref lineTruncated);
                     EmitLine(line, ref lineTruncated, stream, buffer, request, output);
-                    chunk = chunk[(newline + 1)..];
+                    var consumed = separator + 1;
+                    if (request.SplitOnCarriageReturn &&
+                        chunk[separator] == '\r' &&
+                        consumed < chunk.Length &&
+                        chunk[consumed] == '\n')
+                    {
+                        consumed++;
+                    }
+
+                    chunk = chunk[consumed..];
                 }
             }
 

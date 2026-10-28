@@ -75,5 +75,30 @@
   "onboarding": {
     "completed": false,
     "step": "tools"
+  },
+  "run": {
+    "maxConcurrentDevices": 3,
+    "buildOnce": true
+  },
+  "screen": {
+    "hostingMode": "auto",
+    "maxMirrors": 3,
+    "maxRecordings": 2,
+    "maxConcurrentBuilds": 1,
+    "warnAtPercent": 80,
+    "maxSize": 1024,
+    "maxFps": 60,
+    "videoBitRate": "8M",
+    "stayAwake": false,
+    "clipboardSync": true,
+    "audio": false,
+    "screenshotsDirectory": null,
+    "recordingsDirectory": null,
+    "thumbnailsEnabled": true,
+    "thumbnailFps": 1
+  },
+  "wireless": {
+    "autoReconnect": true,
+    "reconnectDelaySeconds": 10
   }
 }

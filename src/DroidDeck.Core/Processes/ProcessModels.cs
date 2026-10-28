@@ -43,6 +43,12 @@ public sealed record ProcessRequest
     /// <summary>Gets whether ANSI escape sequences are removed from captured output.</summary>
     public bool StripAnsi { get; init; } = true;
 
+    /// <summary>
+    /// Gets whether a bare carriage return also terminates a line. adb uses
+    /// carriage returns for push and pull progress updates.
+    /// </summary>
+    public bool SplitOnCarriageReturn { get; init; }
+
     /// <summary>Gets optional text written to standard input before it is closed.</summary>
     public string? StandardInput { get; init; }
 

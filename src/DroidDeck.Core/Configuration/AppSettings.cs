@@ -56,6 +56,96 @@ public sealed class AppSettings
     /// <summary>Gets or sets first-run onboarding state.</summary>
     public OnboardingSettings Onboarding { get; set; } = new();
 
+    /// <summary>Gets or sets multi-device run settings.</summary>
+    public RunSettings Run { get; set; } = new();
+
+    /// <summary>Gets or sets screen mirroring settings.</summary>
+    public ScreenSettings Screen { get; set; } = new();
+
+    /// <summary>Gets or sets wireless ADB settings.</summary>
+    public WirelessSettings Wireless { get; set; } = new();
+
+    /// <summary>Gets or sets unknown keys preserved for forward compatibility.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalSettings { get; set; }
+}
+
+/// <summary>Settings for running a project on multiple devices.</summary>
+public sealed class RunSettings
+{
+    /// <summary>Gets or sets the global limit for concurrent device mutations.</summary>
+    public int MaxConcurrentDevices { get; set; } = 3;
+
+    /// <summary>Gets or sets whether a multi-device run builds once and reuses the artifact.</summary>
+    public bool BuildOnce { get; set; } = true;
+
+    /// <summary>Gets or sets unknown keys preserved for forward compatibility.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalSettings { get; set; }
+}
+
+/// <summary>Settings for scrcpy mirroring, screenshots, and recordings.</summary>
+public sealed class ScreenSettings
+{
+    /// <summary>Gets or sets the default hosting mode: auto, docked, external, or popout.</summary>
+    public string HostingMode { get; set; } = "auto";
+
+    /// <summary>Gets or sets the maximum number of concurrent mirrors.</summary>
+    public int MaxMirrors { get; set; } = 3;
+
+    /// <summary>Gets or sets the maximum number of concurrent recordings.</summary>
+    public int MaxRecordings { get; set; } = 2;
+
+    /// <summary>Gets or sets the maximum number of concurrent builds counted by the resource guard.</summary>
+    public int MaxConcurrentBuilds { get; set; } = 1;
+
+    /// <summary>Gets or sets the warning threshold percentage for the resource guard.</summary>
+    public int WarnAtPercent { get; set; } = 80;
+
+    /// <summary>Gets or sets the scrcpy maximum size in pixels.</summary>
+    public int MaxSize { get; set; } = 1024;
+
+    /// <summary>Gets or sets the scrcpy frame rate limit.</summary>
+    public int MaxFps { get; set; } = 60;
+
+    /// <summary>Gets or sets the scrcpy video bit rate, such as <c>8M</c>.</summary>
+    public string VideoBitRate { get; set; } = "8M";
+
+    /// <summary>Gets or sets whether the device stays awake while mirroring.</summary>
+    public bool StayAwake { get; set; }
+
+    /// <summary>Gets or sets whether clipboard synchronization is enabled.</summary>
+    public bool ClipboardSync { get; set; } = true;
+
+    /// <summary>Gets or sets whether audio is captured. Off by default to avoid desktop echo.</summary>
+    public bool Audio { get; set; }
+
+    /// <summary>Gets or sets the directory for screenshots, or <see langword="null"/> for the default.</summary>
+    public string? ScreenshotsDirectory { get; set; }
+
+    /// <summary>Gets or sets the directory for recordings, or <see langword="null"/> for the default.</summary>
+    public string? RecordingsDirectory { get; set; }
+
+    /// <summary>Gets or sets whether device-list thumbnails are captured.</summary>
+    public bool ThumbnailsEnabled { get; set; } = true;
+
+    /// <summary>Gets or sets the thumbnail capture rate per second.</summary>
+    public double ThumbnailFps { get; set; } = 1;
+
+    /// <summary>Gets or sets unknown keys preserved for forward compatibility.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalSettings { get; set; }
+}
+
+/// <summary>Settings for wireless ADB pairing and reconnect.</summary>
+public sealed class WirelessSettings
+{
+    /// <summary>Gets or sets whether remembered devices reconnect automatically.</summary>
+    public bool AutoReconnect { get; set; } = true;
+
+    /// <summary>Gets or sets the reconnect delay in seconds.</summary>
+    public int ReconnectDelaySeconds { get; set; } = 10;
+
     /// <summary>Gets or sets unknown keys preserved for forward compatibility.</summary>
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? AdditionalSettings { get; set; }
@@ -398,4 +488,61 @@ public static class SettingsPaths
 
     /// <summary>Onboarding last reached step path.</summary>
     public const string OnboardingStep = "onboarding.step";
+
+    /// <summary>Multi-device concurrency limit path.</summary>
+    public const string RunMaxConcurrentDevices = "run.maxConcurrentDevices";
+
+    /// <summary>Build-once multi-device path.</summary>
+    public const string RunBuildOnce = "run.buildOnce";
+
+    /// <summary>Default screen hosting mode path.</summary>
+    public const string ScreenHostingMode = "screen.hostingMode";
+
+    /// <summary>Maximum concurrent mirrors path.</summary>
+    public const string ScreenMaxMirrors = "screen.maxMirrors";
+
+    /// <summary>Maximum concurrent recordings path.</summary>
+    public const string ScreenMaxRecordings = "screen.maxRecordings";
+
+    /// <summary>Maximum concurrent builds counted by the resource guard path.</summary>
+    public const string ScreenMaxConcurrentBuilds = "screen.maxConcurrentBuilds";
+
+    /// <summary>Resource warning threshold path.</summary>
+    public const string ScreenWarnAtPercent = "screen.warnAtPercent";
+
+    /// <summary>scrcpy maximum size path.</summary>
+    public const string ScreenMaxSize = "screen.maxSize";
+
+    /// <summary>scrcpy frame rate path.</summary>
+    public const string ScreenMaxFps = "screen.maxFps";
+
+    /// <summary>scrcpy bit rate path.</summary>
+    public const string ScreenVideoBitRate = "screen.videoBitRate";
+
+    /// <summary>Stay awake path.</summary>
+    public const string ScreenStayAwake = "screen.stayAwake";
+
+    /// <summary>Clipboard sync path.</summary>
+    public const string ScreenClipboardSync = "screen.clipboardSync";
+
+    /// <summary>Screen audio path.</summary>
+    public const string ScreenAudio = "screen.audio";
+
+    /// <summary>Screenshots directory path.</summary>
+    public const string ScreenScreenshotsDirectory = "screen.screenshotsDirectory";
+
+    /// <summary>Recordings directory path.</summary>
+    public const string ScreenRecordingsDirectory = "screen.recordingsDirectory";
+
+    /// <summary>Thumbnails enabled path.</summary>
+    public const string ScreenThumbnailsEnabled = "screen.thumbnailsEnabled";
+
+    /// <summary>Thumbnail rate path.</summary>
+    public const string ScreenThumbnailFps = "screen.thumbnailFps";
+
+    /// <summary>Wireless auto reconnect path.</summary>
+    public const string WirelessAutoReconnect = "wireless.autoReconnect";
+
+    /// <summary>Wireless reconnect delay path.</summary>
+    public const string WirelessReconnectDelaySeconds = "wireless.reconnectDelaySeconds";
 }

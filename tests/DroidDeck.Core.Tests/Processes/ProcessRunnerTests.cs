@@ -170,6 +170,22 @@ public sealed class ProcessRunnerTests
     }
 
     [Fact]
+    public async Task SplitsCarriageReturnProgressUpdatesIntoSeparateLines()
+    {
+        var progress = new CollectingProgress();
+
+        var result = await Runner.RunAsync(
+            TestProcessHelper.Create("progress") with { SplitOnCarriageReturn = true },
+            progress);
+
+        Assert.True(result.Succeeded, result.StartError);
+        var lines = progress.Snapshot().Select(line => line.Text).ToArray();
+        Assert.Contains("[ 10%] first", lines);
+        Assert.Contains("[ 60%] second", lines);
+        Assert.Contains("[100%] third", lines);
+    }
+
+    [Fact]
     public async Task RejectsNonPositiveOutputLimit()
     {
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => Runner.RunAsync(

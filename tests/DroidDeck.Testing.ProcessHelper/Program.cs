@@ -102,6 +102,10 @@ switch (command)
         return 0;
     }
 
+    case "progress":
+        Console.Write("[ 10%] first\r[ 60%] second\r[100%] third\n");
+        return 0;
+
     case "stdin":
         Console.Write(Console.In.ReadToEnd());
         return 0;
