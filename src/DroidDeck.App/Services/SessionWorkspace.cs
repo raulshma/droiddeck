@@ -3,15 +3,16 @@ using DroidDeck.Core.Runs;
 namespace DroidDeck.App.Services;
 
 /// <summary>
-/// Tracks which project and run session the workspace is showing so the
-/// projects, history, notification, and session pages can navigate to the same
-/// selection.
+/// Tracks which project, device, and run session the workspace is showing so the
+/// projects, devices, history, notification, and session pages can navigate to the
+/// same selection.
 /// </summary>
 public sealed class SessionWorkspace
 {
     private readonly object _sync = new();
     private string? _projectId;
     private string? _sessionId;
+    private string? _deviceSerial;
     private RunSession? _readOnlySession;
 
     /// <summary>Raised when the selected project or session changes.</summary>
@@ -53,6 +54,18 @@ public sealed class SessionWorkspace
         }
     }
 
+    /// <summary>Gets the device serial another page asked the devices page to show.</summary>
+    public string? DeviceSerial
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _deviceSerial;
+            }
+        }
+    }
+
     /// <summary>Selects a project without changing the session.</summary>
     public void OpenProject(string projectId)
     {
@@ -60,6 +73,18 @@ public sealed class SessionWorkspace
         lock (_sync)
         {
             _projectId = projectId;
+        }
+
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>Selects a device without changing the project or session.</summary>
+    public void OpenDevice(string deviceSerial)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(deviceSerial);
+        lock (_sync)
+        {
+            _deviceSerial = deviceSerial;
         }
 
         Changed?.Invoke(this, EventArgs.Empty);

@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Text;
+using DroidDeck.App.Services;
 using DroidDeck.Core.Devices;
 using DroidDeck.Core.Diagnostics;
 using Microsoft.Extensions.Logging;
@@ -16,6 +17,7 @@ public sealed class DevicesViewModel : ObservableObject, IDisposable
 {
     private readonly IDeviceService _devices;
     private readonly IDiagnosticsService _diagnostics;
+    private readonly SessionWorkspace _workspace;
     private readonly ILogger<DevicesViewModel> _logger;
     private readonly DispatcherQueue? _dispatcher;
     private DeviceRowViewModel? _selectedDevice;
@@ -31,10 +33,12 @@ public sealed class DevicesViewModel : ObservableObject, IDisposable
     public DevicesViewModel(
         IDeviceService devices,
         IDiagnosticsService diagnostics,
+        SessionWorkspace workspace,
         ILogger<DevicesViewModel> logger)
     {
         _devices = devices ?? throw new ArgumentNullException(nameof(devices));
         _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
+        _workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         _devices.DevicesChanged += OnDevicesChanged;
@@ -123,6 +127,7 @@ public sealed class DevicesViewModel : ObservableObject, IDisposable
     public void Refresh()
     {
         ApplySnapshot(_devices.Devices);
+        SelectRequestedDevice();
         _ = RefreshInBackgroundAsync();
     }
 
@@ -402,11 +407,25 @@ public sealed class DevicesViewModel : ObservableObject, IDisposable
         _hadDevices = Devices.Count > 0;
         if (!hadDevices && _hadDevices && SelectedDevice is null)
         {
-            SelectedDevice = Devices[0];
+            SelectedDevice = FindRow(_workspace.DeviceSerial) ?? Devices[0];
         }
 
         NotifyListState();
     }
+
+    private void SelectRequestedDevice()
+    {
+        var row = FindRow(_workspace.DeviceSerial);
+        if (row is not null)
+        {
+            SelectedDevice = row;
+        }
+    }
+
+    private DeviceRowViewModel? FindRow(string? serial) =>
+        string.IsNullOrWhiteSpace(serial)
+            ? null
+            : Devices.FirstOrDefault(row => string.Equals(row.Serial, serial, StringComparison.Ordinal));
 
     private void NotifyListState()
     {
