@@ -3,6 +3,7 @@ using DroidDeck.Core.Processes;
 using DroidDeck.Core.Projects;
 using DroidDeck.Core.Runs;
 using DroidDeck.Core.Toolchain;
+using DroidDeck.Projects.Adapters;
 
 namespace DroidDeck.Projects;
 
@@ -38,9 +39,8 @@ public sealed class RunPlanBuilder : IRunPlanBuilder
         var serial = string.IsNullOrWhiteSpace(context.DeviceSerial) ? "<device>" : context.DeviceSerial;
         var adb = ToolPathLocator.ResolveAdb(_configuration, _toolchain);
 
-        if (configuration.Kind == RunConfigurationKind.Gradle &&
-            !configuration.Build.Skip &&
-            !string.IsNullOrWhiteSpace(configuration.Build.Task))
+        var isBuildable = configuration.Kind is RunConfigurationKind.Gradle or RunConfigurationKind.Flutter;
+        if (isBuildable && !configuration.Build.Skip)
         {
             var request = CreateBuildRequest(project, configuration);
             preview.Steps.Add(new RunPlanPreviewStep
@@ -52,7 +52,7 @@ public sealed class RunPlanBuilder : IRunPlanBuilder
                 SkipReason = request is null ? "The build is disabled for this configuration." : null,
             });
         }
-        else if (configuration.Kind == RunConfigurationKind.Gradle)
+        else if (isBuildable)
         {
             preview.Steps.Add(new RunPlanPreviewStep
             {
@@ -214,6 +214,11 @@ public sealed class RunPlanBuilder : IRunPlanBuilder
     {
         ArgumentNullException.ThrowIfNull(project);
         ArgumentNullException.ThrowIfNull(configuration);
+        if (configuration.Kind == RunConfigurationKind.Flutter)
+        {
+            return CreateFlutterBuildRequest(project, configuration);
+        }
+
         if (configuration.Build.Skip || string.IsNullOrWhiteSpace(configuration.Build.Task))
         {
             return null;
@@ -234,22 +239,8 @@ public sealed class RunPlanBuilder : IRunPlanBuilder
             arguments.Add(TemplateEngine.Expand(argument, context));
         }
 
-        var workingDirectory = string.IsNullOrWhiteSpace(configuration.Build.WorkingDirectory)
-            ? root
-            : Path.IsPathRooted(configuration.Build.WorkingDirectory)
-                ? configuration.Build.WorkingDirectory
-                : Path.Combine(root, configuration.Build.WorkingDirectory);
-        var environment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (key, value) in configuration.Build.Environment)
-        {
-            environment[key] = TemplateEngine.Expand(value, context);
-        }
-
-        var javaHome = TemplateEngine.Expand(configuration.Build.JavaHome, context);
-        if (!string.IsNullOrWhiteSpace(javaHome))
-        {
-            environment["JAVA_HOME"] = javaHome;
-        }
+        var workingDirectory = ResolveWorkingDirectory(project, configuration);
+        var environment = CreateBuildEnvironment(configuration, context);
 
         var timeout = TimeSpan.FromSeconds(Math.Clamp(configuration.Build.TimeoutSeconds, 5, 24 * 60 * 60));
         if (wrapper is not null)
@@ -286,6 +277,97 @@ public sealed class RunPlanBuilder : IRunPlanBuilder
             Environment = environment,
             Timeout = timeout,
         };
+    }
+
+    /// <inheritdoc />
+    public ProcessRequest? CreateFlutterRunRequest(
+        ProjectModel project,
+        RunConfiguration configuration,
+        string? deviceSerial = null)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        ArgumentNullException.ThrowIfNull(configuration);
+        if (string.IsNullOrWhiteSpace(deviceSerial))
+        {
+            return null;
+        }
+
+        var context = RunTemplateContext.ForProject(project, configuration);
+        var extraArguments = configuration.Build.Arguments
+            .Select(argument => TemplateEngine.Expand(argument, context))
+            .ToArray();
+        return new ProcessRequest
+        {
+            FileName = ResolveFlutter(),
+            Arguments = FlutterAdapter.CreateRunSessionArguments(
+                deviceSerial,
+                configuration.VariantName,
+                extraArguments),
+            WorkingDirectory = project.RootPath,
+            Environment = CreateBuildEnvironment(configuration, context),
+        };
+    }
+
+    private ProcessRequest? CreateFlutterBuildRequest(ProjectModel project, RunConfiguration configuration)
+    {
+        if (configuration.Build.Skip)
+        {
+            return null;
+        }
+
+        var context = RunTemplateContext.ForProject(project, configuration);
+        var extraArguments = configuration.Build.Arguments
+            .Select(argument => TemplateEngine.Expand(argument, context))
+            .ToArray();
+        return new ProcessRequest
+        {
+            FileName = ResolveFlutter(),
+            Arguments = FlutterAdapter.CreateBuildArguments(configuration.VariantName, extraArguments),
+            WorkingDirectory = ResolveWorkingDirectory(project, configuration),
+            Environment = CreateBuildEnvironment(configuration, context),
+            Timeout = TimeSpan.FromSeconds(Math.Clamp(configuration.Build.TimeoutSeconds, 5, 24 * 60 * 60)),
+        };
+    }
+
+    private static string ResolveWorkingDirectory(ProjectModel project, RunConfiguration configuration)
+    {
+        var root = project.RootPath;
+        return string.IsNullOrWhiteSpace(configuration.Build.WorkingDirectory)
+            ? root
+            : Path.IsPathRooted(configuration.Build.WorkingDirectory)
+                ? configuration.Build.WorkingDirectory
+                : Path.Combine(root, configuration.Build.WorkingDirectory);
+    }
+
+    private static Dictionary<string, string> CreateBuildEnvironment(
+        RunConfiguration configuration,
+        RunTemplateContext context)
+    {
+        var environment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, value) in configuration.Build.Environment)
+        {
+            environment[key] = TemplateEngine.Expand(value, context);
+        }
+
+        var javaHome = TemplateEngine.Expand(configuration.Build.JavaHome, context);
+        if (!string.IsNullOrWhiteSpace(javaHome))
+        {
+            environment["JAVA_HOME"] = javaHome;
+        }
+
+        return environment;
+    }
+
+    private string ResolveFlutter()
+    {
+        var configured = _configuration?.Current.Settings.Tools.FlutterPath;
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            return configured;
+        }
+
+        var fromSnapshot = _toolchain?.CachedSnapshot?.Get(ToolKind.Flutter)?.Path;
+        return string.IsNullOrWhiteSpace(fromSnapshot) ? "flutter" : fromSnapshot;
     }
 
     private string ResolveGradle()

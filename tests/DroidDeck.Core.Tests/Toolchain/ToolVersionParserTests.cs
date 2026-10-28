@@ -34,6 +34,15 @@ public sealed class ToolVersionParserTests
     }
 
     [Fact]
+    public void ParsesDartBanner()
+    {
+        Assert.Equal(
+            "3.5.4",
+            ToolVersionParser.Dart("Dart SDK version: 3.5.4 (stable) (Tue Sep 24 2024) on \"windows_x64\""));
+        Assert.Null(ToolVersionParser.Dart("no version here"));
+    }
+
+    [Fact]
     public void ParsesEmulatorScrcpyAndNodeVersions()
     {
         Assert.Equal(

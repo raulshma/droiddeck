@@ -298,6 +298,7 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         ToolKind.Java => tools.JavaHome,
         ToolKind.Gradle => tools.GradlePath,
         ToolKind.Flutter => tools.FlutterPath,
+        ToolKind.Dart => tools.DartPath,
         ToolKind.Node => tools.NodePath,
         ToolKind.Scrcpy => tools.ScrcpyPath,
         ToolKind.Unity => tools.UnityPath,

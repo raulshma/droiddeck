@@ -253,6 +253,12 @@ public sealed class MultiDeviceRunServiceTests
 
         public Task RestartAppAsync(string sessionId, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
+        public Task<HotReloadResult?> HotReloadAsync(string sessionId, CancellationToken cancellationToken = default) =>
+            Task.FromResult<HotReloadResult?>(null);
+
+        public Task<HotReloadResult?> HotRestartAsync(string sessionId, CancellationToken cancellationToken = default) =>
+            Task.FromResult<HotReloadResult?>(null);
+
         public Task<RunSession> ApplyRecoveryAsync(
             string sessionId,
             RecoveryActionKind action,

@@ -24,6 +24,9 @@ public enum ToolKind
     /// <summary>The Flutter executable.</summary>
     Flutter,
 
+    /// <summary>The Dart executable bundled with Flutter or installed separately.</summary>
+    Dart,
+
     /// <summary>The Node.js executable.</summary>
     Node,
 

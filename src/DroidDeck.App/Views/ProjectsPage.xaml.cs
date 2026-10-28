@@ -5,6 +5,7 @@ using DroidDeck.Core.Configuration;
 using DroidDeck.Core.Devices;
 using DroidDeck.Core.Projects;
 using DroidDeck.Core.Runs;
+using DroidDeck.Projects.Adapters;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Dispatching;
@@ -249,6 +250,8 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
         {
             RunConfigurationKind.Gradle =>
                 $"{configuration.Build.Task ?? "assembleDebug"} · artifact {configuration.Artifact.Glob}",
+            RunConfigurationKind.Flutter =>
+                $"Flutter {FlutterAdapter.NormalizeMode(configuration.VariantName)} · artifact {configuration.Artifact.Glob}",
             RunConfigurationKind.Apk =>
                 $"Prebuilt APK · {configuration.Artifact.Glob}",
             _ => $"{configuration.Steps.Count} custom step(s)",
@@ -861,16 +864,20 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
         {
             Id = Guid.NewGuid().ToString("N"),
             Name = project.Kind == ProjectKind.ApkOnly ? "Install APK" : "New configuration",
-            Kind = project.Kind == ProjectKind.ApkOnly
-                ? RunConfigurationKind.Apk
-                : project.Kind == ProjectKind.Custom
-                    ? RunConfigurationKind.Custom
-                    : RunConfigurationKind.Gradle,
+            Kind = project.Kind switch
+            {
+                ProjectKind.ApkOnly => RunConfigurationKind.Apk,
+                ProjectKind.Custom => RunConfigurationKind.Custom,
+                ProjectKind.Flutter => RunConfigurationKind.Flutter,
+                _ => RunConfigurationKind.Gradle,
+            },
             ModuleName = project.ApplicationModule,
             VariantName = variant?.Name,
             Build = new BuildConfiguration
             {
-                Task = variant?.BuildTask ?? "assembleDebug",
+                Task = project.Kind == ProjectKind.Flutter
+                    ? null
+                    : variant?.BuildTask ?? "assembleDebug",
             },
             Artifact = new ArtifactConfiguration
             {
@@ -1096,6 +1103,8 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
             {
                 RunConfigurationKind.Gradle =>
                     $"{configuration.Build.Task ?? "assembleDebug"} · {configuration.Artifact.Glob}",
+                RunConfigurationKind.Flutter =>
+                    $"Flutter {FlutterAdapter.NormalizeMode(configuration.VariantName)} · {configuration.Artifact.Glob}",
                 RunConfigurationKind.Apk =>
                     $"APK · {configuration.Artifact.Glob}",
                 _ => $"Custom · {configuration.Steps.Count} step(s)",

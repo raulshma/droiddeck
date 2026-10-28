@@ -128,6 +128,12 @@ public sealed class ToolPathRow : INotifyPropertyChanged
             "flutter.bat (FLUTTER_ROOT or PATH)",
             SettingsPaths.FlutterPath),
         new(
+            ToolKind.Dart,
+            "Dart",
+            "dart executable path",
+            "dart.bat (bundled with the Flutter SDK)",
+            SettingsPaths.DartPath),
+        new(
             ToolKind.Node,
             "Node.js",
             "Node.js executable path",

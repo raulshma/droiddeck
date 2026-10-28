@@ -235,6 +235,9 @@ public sealed class RunSession
     /// <summary>Gets or sets whether this session was a dry run that executed nothing.</summary>
     public bool IsDryRun { get; set; }
 
+    /// <summary>Gets or sets whether the session can hot reload and hot restart a Flutter app.</summary>
+    public bool SupportsHotReload { get; set; }
+
     /// <summary>Gets or sets the installed package.</summary>
     public string? PackageName { get; set; }
 
@@ -396,6 +399,12 @@ public interface IRunSessionService
 
     /// <summary>Restarts the application without rebuilding.</summary>
     Task RestartAppAsync(string sessionId, CancellationToken cancellationToken = default);
+
+    /// <summary>Attaches a Flutter session when needed and performs a hot reload.</summary>
+    Task<HotReloadResult?> HotReloadAsync(string sessionId, CancellationToken cancellationToken = default);
+
+    /// <summary>Attaches a Flutter session when needed and performs a hot restart.</summary>
+    Task<HotReloadResult?> HotRestartAsync(string sessionId, CancellationToken cancellationToken = default);
 
     /// <summary>Applies a recovery action to a failed step.</summary>
     Task<RunSession> ApplyRecoveryAsync(

@@ -53,6 +53,7 @@ public static partial class BuildErrorParser
 
             var parsed = ParseKotlin(line, projectRoot)
                 ?? ParseJava(line, projectRoot)
+                ?? ParseDart(line, projectRoot)
                 ?? ParseGenericGradle(line, projectRoot);
             if (parsed is null)
             {
@@ -79,6 +80,7 @@ public static partial class BuildErrorParser
 
         return ParseKotlin(line, projectRoot)
             ?? ParseJava(line, projectRoot)
+            ?? ParseDart(line, projectRoot)
             ?? ParseGenericGradle(line, projectRoot);
     }
 
@@ -119,6 +121,25 @@ public static partial class BuildErrorParser
             Line = ParseInt(match.Groups["line"].Value),
             Column = 0,
             Message = message,
+            Severity = "error",
+            Raw = line.Trim(),
+        };
+    }
+
+    private static BuildError? ParseDart(string line, string? projectRoot)
+    {
+        var match = DartErrorRegex().Match(line);
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        return new BuildError
+        {
+            FilePath = NormalizePath(match.Groups["file"].Value, projectRoot),
+            Line = ParseInt(match.Groups["line"].Value),
+            Column = ParseInt(match.Groups["column"].Value),
+            Message = match.Groups["message"].Value.Trim(),
             Severity = "error",
             Raw = line.Trim(),
         };
@@ -180,6 +201,12 @@ public static partial class BuildErrorParser
         RegexOptions.CultureInvariant,
         matchTimeoutMilliseconds: 1000)]
     private static partial Regex JavaErrorRegex();
+
+    [GeneratedRegex(
+        @"^\s*(?<file>(?:[A-Za-z]:[\\/]|/)?[^:\r\n]+?\.dart):(?<line>\d+):(?<column>\d+):\s*(?:error|Error):\s*(?<message>.+)$",
+        RegexOptions.CultureInvariant,
+        matchTimeoutMilliseconds: 1000)]
+    private static partial Regex DartErrorRegex();
 
     [GeneratedRegex(
         @"^\s*(?<file>(?:[A-Za-z]:[\\/]|/)?[^:\r\n]+?\.(?:kt|kts|java|xml|gradle)):(?<line>\d+):\s*(?:error|Error):\s*(?<message>.+)$",

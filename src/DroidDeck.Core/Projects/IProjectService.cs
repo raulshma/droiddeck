@@ -187,6 +187,12 @@ public interface IRunPlanBuilder
 
     /// <summary>Creates the process request for a Gradle build.</summary>
     Core.Processes.ProcessRequest? CreateBuildRequest(ProjectModel project, RunConfiguration configuration);
+
+    /// <summary>Creates the attached <c>flutter run --machine</c> request for a device, or null without a device.</summary>
+    Core.Processes.ProcessRequest? CreateFlutterRunRequest(
+        ProjectModel project,
+        RunConfiguration configuration,
+        string? deviceSerial = null);
 }
 
 /// <summary>A previewed step in a run plan.</summary>

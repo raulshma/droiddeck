@@ -1,6 +1,8 @@
 using DroidDeck.Core.Projects;
 using DroidDeck.Core.Runs;
+using DroidDeck.Core.Toolchain;
 using DroidDeck.Projects;
+using DroidDeck.Projects.Adapters;
 
 namespace DroidDeck.Projects.Tests;
 
@@ -93,6 +95,110 @@ public sealed class RunPlanBuilderTests
         Assert.DoesNotContain(preview.Steps, step => step.Name == "Install");
         var logcat = Assert.Single(preview.Steps, step => step.Name == "Attach logcat");
         Assert.False(logcat.WillRun);
+    }
+
+    [Fact]
+    public void BuildPreview_FlutterConfigurationShowsFlutterBuildAndLaunch()
+    {
+        var project = FlutterProject();
+        var configuration = project.RunConfigurations[0];
+
+        var preview = _builder.BuildPreview(project, configuration, "emulator-5554");
+
+        var build = Assert.Single(preview.Steps, step => step.Kind == RunStepKind.Build);
+        Assert.True(build.WillRun);
+        Assert.Contains("build apk --debug", build.CommandLine, StringComparison.Ordinal);
+        Assert.DoesNotContain("gradle", build.CommandLine, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("build/app/outputs/flutter-apk/app-debug.apk", preview.ArtifactGlob);
+        var launch = Assert.Single(preview.Steps, step => step.Kind == RunStepKind.Launch && step.Name == "Launch");
+        Assert.Contains("-n com.example.flutter_sample/com.example.flutter_sample.MainActivity", launch.CommandLine, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CreateBuildRequest_FlutterUsesModeArgumentsAndToolchainPath()
+    {
+        var flutter = @"C:\tools\flutter\bin\flutter.bat";
+        var builder = new RunPlanBuilder(toolchain: new FakeToolchain(flutter));
+        var project = FlutterProject();
+
+        var request = builder.CreateBuildRequest(project, project.RunConfigurations[1]);
+
+        Assert.NotNull(request);
+        Assert.Equal(flutter, request.FileName);
+        Assert.Equal(["build", "apk", "--profile"], request.Arguments);
+        Assert.Equal(project.RootPath, request.WorkingDirectory);
+    }
+
+    [Fact]
+    public void CreateBuildRequest_FlutterHonorsJavaHomeWorkingDirectoryAndExtraArguments()
+    {
+        var builder = new RunPlanBuilder(toolchain: new FakeToolchain(@"C:\flutter\flutter.bat"));
+        var project = FlutterProject();
+        var configuration = project.RunConfigurations[0];
+        configuration.Build.JavaHome = @"C:\jdk-21";
+        configuration.Build.WorkingDirectory = "android";
+        configuration.Build.Arguments = ["--dart-define=API=test"];
+
+        var request = builder.CreateBuildRequest(project, configuration);
+
+        Assert.NotNull(request);
+        Assert.Equal(Path.Combine(project.RootPath, "android"), request.WorkingDirectory);
+        Assert.Equal(@"C:\jdk-21", request.Environment["JAVA_HOME"]);
+        Assert.Equal(["build", "apk", "--debug", "--dart-define=API=test"], request.Arguments);
+    }
+
+    [Fact]
+    public void CreateFlutterRunRequest_UsesMachineModeForTheDevice()
+    {
+        var builder = new RunPlanBuilder(toolchain: new FakeToolchain(@"C:\flutter\flutter.bat"));
+        var project = FlutterProject();
+        var configuration = project.RunConfigurations[0];
+
+        var request = builder.CreateFlutterRunRequest(project, configuration, "emulator-5554");
+
+        Assert.NotNull(request);
+        Assert.Equal(@"C:\flutter\flutter.bat", request.FileName);
+        Assert.Equal(
+            ["run", "--machine", "-d", "emulator-5554", "--debug"],
+            request.Arguments);
+        Assert.Null(request.Timeout);
+    }
+
+    private static ProjectModel FlutterProject()
+    {
+        var project = new ProjectModel
+        {
+            Id = "flutter-1",
+            Name = "flutter_sample",
+            RootPath = Path.Combine(Path.GetTempPath(), "droiddeck-flutter-sample"),
+            Kind = ProjectKind.Flutter,
+            ApplicationId = "com.example.flutter_sample",
+            LauncherActivity = ".MainActivity",
+        };
+        project.RunConfigurations = FlutterAdapter.CreateDefaultRunConfigurations(project);
+        return project;
+    }
+
+    private sealed class FakeToolchain : IToolchainService
+    {
+        public FakeToolchain(string flutterPath) =>
+            CachedSnapshot = new ToolchainSnapshot(
+                [new ToolInfo { Kind = ToolKind.Flutter, DisplayName = "Flutter", IsAvailable = true, Path = flutterPath }],
+                DateTimeOffset.UtcNow);
+
+        public ToolchainSnapshot? CachedSnapshot { get; }
+
+        public event EventHandler<ToolchainSnapshot>? SnapshotChanged
+        {
+            add { }
+            remove { }
+        }
+
+        public Task<ToolchainSnapshot?> LoadCachedAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(CachedSnapshot);
+
+        public Task<ToolchainSnapshot> CheckAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(CachedSnapshot!);
     }
 
     private static ProjectModel CustomProject(

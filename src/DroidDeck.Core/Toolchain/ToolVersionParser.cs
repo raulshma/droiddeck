@@ -18,6 +18,9 @@ public static partial class ToolVersionParser
     /// <summary>Parses <c>flutter --version</c> output.</summary>
     public static string? Flutter(string output) => Match(FlutterVersion(), output);
 
+    /// <summary>Parses <c>dart --version</c> output.</summary>
+    public static string? Dart(string output) => Match(DartVersion(), output);
+
     /// <summary>Parses <c>emulator -version</c> output.</summary>
     public static string? Emulator(string output) => Match(EmulatorVersion(), output);
 
@@ -71,6 +74,9 @@ public static partial class ToolVersionParser
 
     [GeneratedRegex(@"(?m)^Flutter\s+(\d+\.\d+\.\d+\S*)")]
     private static partial Regex FlutterVersion();
+
+    [GeneratedRegex(@"Dart SDK version:\s*(\S+)")]
+    private static partial Regex DartVersion();
 
     [GeneratedRegex(@"Android emulator version\s+([^\s(]+)")]
     private static partial Regex EmulatorVersion();

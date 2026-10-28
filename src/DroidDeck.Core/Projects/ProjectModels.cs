@@ -13,6 +13,9 @@ public enum ProjectKind
     /// <summary>A Kotlin Multiplatform project with an Android target.</summary>
     KotlinMultiplatform,
 
+    /// <summary>A Flutter project with an Android host folder.</summary>
+    Flutter,
+
     /// <summary>A prebuilt APK or split APK set.</summary>
     ApkOnly,
 
@@ -229,6 +232,9 @@ public sealed class ProjectModel
     /// <summary>Gets or sets whether Compose Multiplatform is in use.</summary>
     public bool IsComposeMultiplatform { get; set; }
 
+    /// <summary>Gets or sets the Flutter environment constraint declared by pubspec.yaml.</summary>
+    public string? FlutterEnvironment { get; set; }
+
     /// <summary>Gets or sets the application module name.</summary>
     public string? ApplicationModule { get; set; }
 
@@ -283,6 +289,7 @@ public sealed class ProjectModel
     {
         ProjectKind.AndroidGradle => "Android Gradle",
         ProjectKind.KotlinMultiplatform => "Kotlin Multiplatform",
+        ProjectKind.Flutter => "Flutter",
         ProjectKind.ApkOnly => "APK only",
         _ => "Custom",
     };

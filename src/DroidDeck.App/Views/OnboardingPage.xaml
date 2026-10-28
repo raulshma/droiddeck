@@ -92,7 +92,7 @@
             <Border x:Name="ProjectPanel" Style="{StaticResource CardBorderStyle}" Visibility="Collapsed">
                 <StackPanel Spacing="10">
                     <TextBlock
-                        Text="Add the project you are working on. Gradle, APK-only, and custom script projects are detected automatically."
+                        Text="Add the project you are working on. Gradle, Flutter, APK-only, and custom script projects are detected automatically."
                         TextWrapping="Wrap"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     <StackPanel Orientation="Horizontal" Spacing="8">

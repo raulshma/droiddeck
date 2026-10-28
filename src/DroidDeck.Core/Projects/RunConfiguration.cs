@@ -8,6 +8,9 @@ public enum RunConfigurationKind
     /// <summary>A Gradle build followed by install and launch.</summary>
     Gradle,
 
+    /// <summary>A Flutter build followed by install and launch.</summary>
+    Flutter,
+
     /// <summary>An APK is installed directly without a build.</summary>
     Apk,
 
@@ -32,6 +35,9 @@ public enum RunStepKind
 
     /// <summary>Opens the screen mirror.</summary>
     Mirror,
+
+    /// <summary>Attaches a Flutter session or reloads the running Flutter app.</summary>
+    HotReload,
 
     /// <summary>Waits for the device to be ready.</summary>
     WaitForDevice,
@@ -327,6 +333,13 @@ public static class RunConfigurationValidator
                 errors.Add(new("build.task", "A Gradle task is required."));
             }
 
+            if (string.IsNullOrWhiteSpace(configuration.Artifact.Glob))
+            {
+                errors.Add(new("artifact.glob", "An artifact glob is required so the built APK can be found."));
+            }
+        }
+        else if (configuration.Kind == RunConfigurationKind.Flutter)
+        {
             if (string.IsNullOrWhiteSpace(configuration.Artifact.Glob))
             {
                 errors.Add(new("artifact.glob", "An artifact glob is required so the built APK can be found."));

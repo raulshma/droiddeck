@@ -19,7 +19,7 @@
             <StackPanel Spacing="2">
                 <TextBlock Text="Projects" Style="{StaticResource TitleTextBlockStyle}" />
                 <TextBlock
-                    Text="Add a Gradle, Kotlin Multiplatform, or prebuilt APK project. Detection never invokes Gradle."
+                    Text="Add a Gradle, Flutter, Kotlin Multiplatform, or prebuilt APK project. Detection never invokes Gradle or Flutter."
                     FontSize="12"
                     Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
             </StackPanel>

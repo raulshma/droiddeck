@@ -223,6 +223,9 @@ public sealed class ToolsSettings
     /// <summary>Gets or sets the Flutter executable path.</summary>
     public string? FlutterPath { get; set; }
 
+    /// <summary>Gets or sets the Dart executable path.</summary>
+    public string? DartPath { get; set; }
+
     /// <summary>Gets or sets the Node executable path.</summary>
     public string? NodePath { get; set; }
 
@@ -404,6 +407,9 @@ public static class SettingsPaths
 
     /// <summary>Flutter path override.</summary>
     public const string FlutterPath = "tools.flutterPath";
+
+    /// <summary>Dart path override.</summary>
+    public const string DartPath = "tools.dartPath";
 
     /// <summary>Node path override.</summary>
     public const string NodePath = "tools.nodePath";

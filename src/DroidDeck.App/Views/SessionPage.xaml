@@ -155,6 +155,20 @@
                 Spacing="8"
                 VerticalAlignment="Center">
                 <Button
+                    x:Name="HotReloadButton"
+                    Content="Hot reload"
+                    Click="OnHotReloadClick"
+                    Visibility="Collapsed"
+                    ToolTipService.ToolTip="Rebuild the running Flutter app and apply the changes without restarting it"
+                    AutomationProperties.AutomationId="SessionHotReloadButton" />
+                <Button
+                    x:Name="HotRestartButton"
+                    Content="Hot restart"
+                    Click="OnHotRestartClick"
+                    Visibility="Collapsed"
+                    ToolTipService.ToolTip="Restart the running Flutter app and apply code changes to top-level state"
+                    AutomationProperties.AutomationId="SessionHotRestartButton" />
+                <Button
                     x:Name="RestartButton"
                     Content="Restart app"
                     Click="OnRestartClick"

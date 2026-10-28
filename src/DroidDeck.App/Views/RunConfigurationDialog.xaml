@@ -78,7 +78,7 @@
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <StackPanel Spacing="4">
-                            <TextBlock Text="Gradle task or command" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBlock Text="Build task or command (Flutter builds use the variant mode)" Style="{StaticResource FieldLabelStyle}" />
                             <TextBox x:Name="BuildTaskBox" AutomationProperties.AutomationId="RunConfigBuildTaskBox" />
                         </StackPanel>
                         <StackPanel Grid.Column="1" Spacing="4">

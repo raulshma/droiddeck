@@ -67,6 +67,36 @@ public sealed class BuildErrorParserTests
     }
 
     [Fact]
+    public void ParseLine_ParsesDartCompilerError()
+    {
+        var error = BuildErrorParser.ParseLine(
+            "lib/main.dart:10:5: Error: Expected ';' after this.",
+            @"C:\repo");
+
+        Assert.NotNull(error);
+        Assert.Equal(Path.Combine(@"C:\repo", "lib", "main.dart"), error.FilePath);
+        Assert.Equal(10, error.Line);
+        Assert.Equal(5, error.Column);
+        Assert.Equal("Expected ';' after this.", error.Message);
+    }
+
+    [Fact]
+    public void Parse_ParsesFlutterBuildFailureOutput()
+    {
+        const string output = """
+            Building Flutter application...
+            lib/main.dart:10:5: Error: Expected ';' after this.
+            Target kernel_snapshot_program failed: Exception
+            BUILD FAILED in 4s
+            """;
+
+        var error = Assert.Single(BuildErrorParser.Parse(output, @"C:\repo"));
+
+        Assert.EndsWith("main.dart", error.FilePath, StringComparison.Ordinal);
+        Assert.Equal(10, error.Line);
+    }
+
+    [Fact]
     public void Parse_ReturnsEmptyForBlankOutput()
     {
         Assert.Empty(BuildErrorParser.Parse(null));

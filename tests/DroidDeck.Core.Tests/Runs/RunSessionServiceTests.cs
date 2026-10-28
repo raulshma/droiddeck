@@ -5,6 +5,7 @@ using DroidDeck.Core.Processes;
 using DroidDeck.Core.Projects;
 using DroidDeck.Core.Runs;
 using DroidDeck.Core.Sessions;
+using DroidDeck.TestSupport;
 
 namespace DroidDeck.Core.Tests.Runs;
 
@@ -341,15 +342,220 @@ public sealed class RunSessionServiceTests : IDisposable
         Assert.Empty(coordinator.ActiveOperations);
     }
 
+    [Fact]
+    public async Task HotReloadAsync_AttachesAFlutterSessionAndCleansItUpOnStop()
+    {
+        var marker = Path.Combine(_root, "flutter-daemon-exited.txt");
+        var planBuilder = new RunPlanBuilderStub
+        {
+            FlutterRequest = new ProcessRequest
+            {
+                FileName = "dotnet",
+                Arguments = [
+                    TestProcessHelper.AssemblyPath,
+                    "flutter-daemon",
+                    "--exit-file",
+                    marker,
+                ],
+            },
+        };
+        var configuration = new RunConfiguration
+        {
+            Name = "debug",
+            Kind = RunConfigurationKind.Flutter,
+            Artifact = { Glob = "build/app/outputs/flutter-apk/app-debug.apk" },
+            Launch = { PackageName = "com.example.flutter_sample" },
+        };
+        await using var service = CreateService(planBuilder: planBuilder);
+        var request = CreateRequest(
+            configuration,
+            options: new RunOptions
+            {
+                SkipBuild = true,
+                PrebuiltArtifactFiles = ["/tmp/app-debug.apk"],
+                PrebuiltArtifactPath = "/tmp/app-debug.apk",
+                PrebuiltPackageName = "com.example.flutter_sample",
+            });
+
+        var session = await service.RunAsync(request);
+        Assert.True(session.SupportsHotReload);
+        Assert.Equal(RunSessionState.Running, session.State);
+
+        var reload = await service.HotReloadAsync(session.Id);
+
+        Assert.NotNull(reload);
+        Assert.True(reload.Succeeded, reload.Message);
+        var attach = Assert.Single(session.Steps, step => step.Name == "Attach Flutter session");
+        Assert.Equal(RunStepState.Succeeded, attach.State);
+        var reloadStep = Assert.Single(session.Steps, step => step.Name == "Hot reload");
+        Assert.Equal(RunStepState.Succeeded, reloadStep.State);
+        Assert.Contains("Reloaded", session.StatusMessage, StringComparison.OrdinalIgnoreCase);
+
+        await service.StopAsync(session.Id);
+
+        Assert.Equal(RunSessionState.Succeeded, session.State);
+        await Wait.UntilAsync(
+            () => File.Exists(marker),
+            TimeSpan.FromSeconds(10),
+            "The Flutter daemon was not stopped with the session.");
+    }
+
+    [Fact]
+    public async Task HotReloadAsync_RejectsNonFlutterSessions()
+    {
+        var configuration = new RunConfiguration
+        {
+            Name = "steps",
+            Kind = RunConfigurationKind.Custom,
+            Steps =
+            [
+                new RunStepDefinition
+                {
+                    Id = "step",
+                    Command = "cmd",
+                    Arguments = ["/c", "echo", "hello"],
+                },
+            ],
+        };
+        await using var service = CreateService();
+
+        var session = await service.RunAsync(CreateRequest(configuration));
+        var result = await service.HotReloadAsync(session.Id);
+
+        Assert.NotNull(result);
+        Assert.False(result.Succeeded);
+        Assert.Contains("Flutter", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task HotReloadAsync_IsLimitedToDebugFlutterConfigurations()
+    {
+        var planBuilder = new RunPlanBuilderStub
+        {
+            FlutterRequest = new ProcessRequest
+            {
+                FileName = "dotnet",
+                Arguments = [TestProcessHelper.AssemblyPath, "flutter-daemon"],
+            },
+        };
+        var configuration = new RunConfiguration
+        {
+            Name = "profile",
+            Kind = RunConfigurationKind.Flutter,
+            VariantName = "profile",
+            Artifact = { Glob = "build/app/outputs/flutter-apk/app-profile.apk" },
+            Launch = { PackageName = "com.example.flutter_sample" },
+        };
+        await using var service = CreateService(planBuilder: planBuilder);
+
+        var session = await service.RunAsync(CreateRequest(configuration, options: FlutterOptions("app-profile.apk")));
+        var result = await service.HotReloadAsync(session.Id);
+
+        Assert.False(session.SupportsHotReload);
+        Assert.NotNull(result);
+        Assert.False(result.Succeeded);
+        Assert.Contains("debug", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task HotReloadAsync_KeepsTheFlutterSessionWhenCompilationFails()
+    {
+        var planBuilder = new RunPlanBuilderStub
+        {
+            FlutterRequest = new ProcessRequest
+            {
+                FileName = "dotnet",
+                Arguments = [TestProcessHelper.AssemblyPath, "flutter-daemon", "--fail-reload"],
+            },
+        };
+        var configuration = new RunConfiguration
+        {
+            Name = "debug",
+            Kind = RunConfigurationKind.Flutter,
+            Artifact = { Glob = "build/app/outputs/flutter-apk/app-debug.apk" },
+            Launch = { PackageName = "com.example.flutter_sample" },
+        };
+        await using var service = CreateService(planBuilder: planBuilder);
+        var session = await service.RunAsync(CreateRequest(configuration, options: FlutterOptions("app-debug.apk")));
+
+        var first = await service.HotReloadAsync(session.Id);
+
+        Assert.NotNull(first);
+        Assert.False(first.Succeeded);
+        Assert.Equal(RunSessionState.Running, session.State);
+        Assert.Contains("failed", first.Message, StringComparison.OrdinalIgnoreCase);
+
+        var second = await service.HotReloadAsync(session.Id);
+
+        Assert.NotNull(second);
+        Assert.False(second.Succeeded);
+        Assert.Equal(RunSessionState.Running, session.State);
+        Assert.Single(session.Steps, step => step.Name == "Attach Flutter session");
+        Assert.Equal(2, session.Steps.Count(step => step.Name == "Hot reload"));
+    }
+
+    [Fact]
+    public async Task StopAsync_CancelsAnAttachInProgressAndCleansUp()
+    {
+        var planBuilder = new RunPlanBuilderStub
+        {
+            FlutterRequest = new ProcessRequest
+            {
+                FileName = "dotnet",
+                Arguments = [
+                    TestProcessHelper.AssemblyPath,
+                    "flutter-daemon",
+                    "--delay-start",
+                    "30000",
+                ],
+            },
+        };
+        var configuration = new RunConfiguration
+        {
+            Name = "debug",
+            Kind = RunConfigurationKind.Flutter,
+            Artifact = { Glob = "build/app/outputs/flutter-apk/app-debug.apk" },
+            Launch = { PackageName = "com.example.flutter_sample" },
+        };
+        await using var service = CreateService(planBuilder: planBuilder);
+        var session = await service.RunAsync(CreateRequest(configuration, options: FlutterOptions("app-debug.apk")));
+
+        var reloadTask = service.HotReloadAsync(session.Id);
+        await Wait.UntilAsync(
+            () => session.State == RunSessionState.Launching,
+            TimeSpan.FromSeconds(10),
+            "The Flutter session did not start attaching.");
+
+        await service.StopAsync(session.Id);
+
+        var result = await reloadTask.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.NotNull(result);
+        Assert.False(result.Succeeded);
+        Assert.Contains("cancel", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(RunSessionState.Cancelled, session.State);
+        Assert.DoesNotContain(
+            session.Steps,
+            step => step.Name == "Attach Flutter session" && step.State == RunStepState.Succeeded);
+    }
+
+    private static RunOptions FlutterOptions(string artifactName) => new()
+    {
+        SkipBuild = true,
+        PrebuiltArtifactFiles = [$"/tmp/{artifactName}"],
+        PrebuiltArtifactPath = $"/tmp/{artifactName}",
+        PrebuiltPackageName = "com.example.flutter_sample",
+    };
+
     private static RunSessionService CreateService(
         FakeRunner? runner = null,
         FakeArtifactResolver? artifacts = null,
         FakeDeviceCommands? commands = null,
         FakeLogcatService? logcat = null,
-        IDeviceOperationCoordinator? coordinator = null)
+        IDeviceOperationCoordinator? coordinator = null,
+        IRunPlanBuilder? planBuilder = null)
     {
         return new RunSessionService(
-            new RunPlanBuilderStub(),
+            planBuilder ?? new RunPlanBuilderStub(),
             artifacts ?? new FakeArtifactResolver(),
             commands ?? new FakeDeviceCommands(),
             logcat ?? new FakeLogcatService(new FakeLogcatSession()),
@@ -387,10 +593,17 @@ public sealed class RunSessionServiceTests : IDisposable
 
     private sealed class RunPlanBuilderStub : IRunPlanBuilder
     {
+        public ProcessRequest? FlutterRequest { get; init; }
+
         public RunPlanPreview BuildPreview(ProjectModel project, RunConfiguration configuration, string? deviceSerial = null) =>
             new();
 
         public ProcessRequest? CreateBuildRequest(ProjectModel project, RunConfiguration configuration) => null;
+
+        public ProcessRequest? CreateFlutterRunRequest(
+            ProjectModel project,
+            RunConfiguration configuration,
+            string? deviceSerial = null) => FlutterRequest;
     }
 
     private sealed class FakeRunner : IProcessRunner

@@ -32,6 +32,9 @@ public sealed class ToolchainDoctor : IToolchainService, IDisposable
     private const string FlutterGuidance =
         "Install Flutter and add its bin folder to PATH, or set the Flutter path in Settings > Tools.";
 
+    private const string DartGuidance =
+        "Install the Flutter SDK (which bundles Dart) or the Dart SDK and add it to PATH, or set the Dart path in Settings > Tools.";
+
     private const string NodeGuidance =
         "Install Node.js and add it to PATH, or set the Node.js path in Settings > Tools.";
 
@@ -43,6 +46,7 @@ public sealed class ToolchainDoctor : IToolchainService, IDisposable
 
     private static readonly TimeSpan DefaultProbeTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan FlutterProbeTimeout = TimeSpan.FromSeconds(30);
+    private static readonly string[] DartExecutableNames = ["dart.exe", "dart.cmd", "dart.bat"];
 
     private readonly AppPaths _paths;
     private readonly IConfigurationService _configuration;
@@ -126,6 +130,7 @@ public sealed class ToolchainDoctor : IToolchainService, IDisposable
                 ProbeJavaAsync(tools.JavaHome, cancellationToken),
                 ProbeGradleAsync(tools.GradlePath, cancellationToken),
                 ProbeFlutterAsync(tools.FlutterPath, cancellationToken),
+                ProbeDartAsync(tools.DartPath, tools.FlutterPath, cancellationToken),
                 ProbeNodeAsync(tools.NodePath, cancellationToken),
                 ProbeNpmAsync(tools.NodePath, cancellationToken),
                 ProbeNpxAsync(tools.NodePath, cancellationToken),
@@ -336,22 +341,9 @@ public sealed class ToolchainDoctor : IToolchainService, IDisposable
 
     private Task<ToolInfo> ProbeFlutterAsync(string? overridePath, CancellationToken cancellationToken)
     {
-        var extras = new List<string>();
-        var flutterRoot = _environment.GetVariable("FLUTTER_ROOT");
-        if (!string.IsNullOrWhiteSpace(flutterRoot))
-        {
-            extras.Add(Path.Combine(flutterRoot, "bin", "flutter.bat"));
-        }
-
-        if (!string.IsNullOrWhiteSpace(_environment.LocalApplicationData))
-        {
-            extras.Add(Path.Combine(_environment.LocalApplicationData, "flutter", "bin", "flutter.bat"));
-        }
-
-        if (!string.IsNullOrWhiteSpace(_environment.UserProfile))
-        {
-            extras.Add(Path.Combine(_environment.UserProfile, "flutter", "bin", "flutter.bat"));
-        }
+        var extras = FlutterBinDirectories()
+            .Select(directory => Path.Combine(directory, "flutter.bat"))
+            .ToList();
 
         return ProbeExecutableAsync(
             ToolKind.Flutter,
@@ -364,6 +356,69 @@ public sealed class ToolchainDoctor : IToolchainService, IDisposable
             extras,
             FlutterProbeTimeout,
             cancellationToken);
+    }
+
+    private Task<ToolInfo> ProbeDartAsync(
+        string? overridePath,
+        string? flutterPath,
+        CancellationToken cancellationToken)
+    {
+        var extras = new List<string>();
+        if (!string.IsNullOrWhiteSpace(flutterPath))
+        {
+            AddDartCandidates(extras, Path.GetDirectoryName(flutterPath));
+        }
+
+        foreach (var directory in FlutterBinDirectories())
+        {
+            AddDartCandidates(extras, directory);
+        }
+
+        return ProbeExecutableAsync(
+            ToolKind.Dart,
+            "Dart",
+            overridePath,
+            DartExecutableNames,
+            ["--version"],
+            ToolVersionParser.Dart,
+            DartGuidance,
+            extras,
+            DefaultProbeTimeout,
+            cancellationToken);
+    }
+
+    private IEnumerable<string> FlutterBinDirectories()
+    {
+        var flutterRoot = _environment.GetVariable("FLUTTER_ROOT");
+        if (!string.IsNullOrWhiteSpace(flutterRoot))
+        {
+            yield return Path.Combine(flutterRoot, "bin");
+        }
+
+        if (!string.IsNullOrWhiteSpace(_environment.LocalApplicationData))
+        {
+            yield return Path.Combine(_environment.LocalApplicationData, "flutter", "bin");
+        }
+
+        if (!string.IsNullOrWhiteSpace(_environment.UserProfile))
+        {
+            yield return Path.Combine(_environment.UserProfile, "flutter", "bin");
+        }
+    }
+
+    private static void AddDartCandidates(List<string> target, string? binDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(binDirectory))
+        {
+            return;
+        }
+
+        foreach (var name in DartExecutableNames)
+        {
+            target.Add(Path.Combine(binDirectory, name));
+        }
+
+        target.Add(Path.Combine(binDirectory, "cache", "dart-sdk", "bin", "dart.exe"));
     }
 
     private Task<ToolInfo> ProbeNodeAsync(string? overridePath, CancellationToken cancellationToken) => ProbeExecutableAsync(

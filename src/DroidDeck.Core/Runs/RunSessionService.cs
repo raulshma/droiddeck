@@ -157,6 +157,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         }
 
         context.Cancellation.Cancel();
+        await StopFlutterAsync(context).ConfigureAwait(false);
         await DetachLogcatAsync(context).ConfigureAwait(false);
         await FinishCancelledAsync(context).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
@@ -172,6 +173,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         }
 
         var session = context.Session;
+        await StopFlutterAsync(context).ConfigureAwait(false);
         await DetachLogcatAsync(context).ConfigureAwait(false);
         if (session.IsFinished)
         {
@@ -284,6 +286,272 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             {
                 await FinishCancelledAsync(context).ConfigureAwait(false);
             }
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<HotReloadResult?> HotReloadAsync(
+        string sessionId,
+        CancellationToken cancellationToken = default) =>
+        await ReloadFlutterAsync(sessionId, fullRestart: false, cancellationToken).ConfigureAwait(false);
+
+    /// <inheritdoc />
+    public async Task<HotReloadResult?> HotRestartAsync(
+        string sessionId,
+        CancellationToken cancellationToken = default) =>
+        await ReloadFlutterAsync(sessionId, fullRestart: true, cancellationToken).ConfigureAwait(false);
+
+    private async Task<HotReloadResult?> ReloadFlutterAsync(
+        string sessionId,
+        bool fullRestart,
+        CancellationToken cancellationToken)
+    {
+        var context = FindContext(sessionId);
+        var session = context?.Session ?? GetSession(sessionId);
+        if (session is null)
+        {
+            return null;
+        }
+
+        if (!session.SupportsHotReload)
+        {
+            return new HotReloadResult(
+                false,
+                "Hot reload is only available for Flutter debug run configurations.",
+                TimeSpan.Zero);
+        }
+
+        if (context is null || session.IsReadOnly)
+        {
+            return new HotReloadResult(
+                false,
+                "The session is no longer active. Run the app again to attach a Flutter session.",
+                TimeSpan.Zero);
+        }
+
+        if (session.State is RunSessionState.Queued or RunSessionState.Preparing or RunSessionState.Building
+            or RunSessionState.ResolvingArtifact or RunSessionState.Installing or RunSessionState.Launching)
+        {
+            return new HotReloadResult(
+                false,
+                "Wait for the current run to finish before reloading.",
+                TimeSpan.Zero);
+        }
+
+        if (string.IsNullOrWhiteSpace(session.DeviceSerial))
+        {
+            return new HotReloadResult(
+                false,
+                "The device is unknown. Run the app again with a selected device.",
+                TimeSpan.Zero);
+        }
+
+        FlutterRunSession? flutter;
+        try
+        {
+            flutter = context.Flutter;
+            if (flutter is null || !flutter.IsRunning)
+            {
+                flutter = await AttachFlutterAsync(context, cancellationToken).ConfigureAwait(false);
+                if (flutter is null)
+                {
+                    return null;
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            return new HotReloadResult(false, "The request was cancelled.", TimeSpan.Zero);
+        }
+
+        var verb = fullRestart ? "Hot restart" : "Hot reload";
+        var step = AddStep(
+            session,
+            $"hot-{(fullRestart ? "restart" : "reload")}-{Guid.NewGuid():N}",
+            verb,
+            RunStepKind.HotReload);
+        context.FlutterStep = step;
+        context.FlutterTail.Clear();
+        StartStep(session, step);
+        session.State = RunSessionState.Running;
+        session.EndedAt = null;
+        session.Duration = null;
+        session.StatusMessage = $"{verb} in progress on {session.DeviceName ?? session.DeviceSerial}.";
+        RaiseChanged(session);
+
+        HotReloadResult result;
+        try
+        {
+            result = fullRestart
+                ? await flutter.HotRestartAsync(cancellationToken).ConfigureAwait(false)
+                : await flutter.HotReloadAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or IOException or TimeoutException)
+        {
+            result = new HotReloadResult(
+                false,
+                $"The Flutter session stopped: {exception.Message}",
+                TimeSpan.Zero);
+            if (context.Flutter is { } dead)
+            {
+                context.Flutter = null;
+                await dead.DisposeAsync().ConfigureAwait(false);
+            }
+
+            flutter = null;
+        }
+        catch (OperationCanceledException)
+        {
+            CancelStep(step);
+            RaiseChanged(session);
+            return new HotReloadResult(false, "The request was cancelled.", TimeSpan.Zero);
+        }
+
+        step.CommandLine = $"flutter {(fullRestart ? "hot restart" : "hot reload")}";
+        step.OutputTail = JoinTail(context.FlutterTail);
+        if (result.Succeeded)
+        {
+            SucceedStep(session, step, result.Message);
+            session.StatusMessage = result.Message;
+        }
+        else
+        {
+            FailStepOnly(session, step, result.Message);
+            session.StatusMessage = result.Message;
+            if (flutter is null)
+            {
+                lock (session)
+                {
+                    session.State = RunSessionState.Failed;
+                    session.Error = result.Message;
+                    CompleteSession(session);
+                }
+            }
+
+            _notifications.Notify(new AppNotification
+            {
+                Event = NotificationEvent.RunFailed,
+                Title = $"{verb} failed",
+                Message = result.Message,
+                SessionId = session.Id,
+                NavigationTarget = "session",
+            });
+        }
+
+        RaiseChanged(session);
+        await SaveSnapshotAsync(session).ConfigureAwait(false);
+        return result;
+    }
+
+    private async Task<FlutterRunSession?> AttachFlutterAsync(RunContext context, CancellationToken cancellationToken)
+    {
+        var session = context.Session;
+        var request = _planBuilder.CreateFlutterRunRequest(
+            context.Request.Project,
+            context.Request.Configuration,
+            session.DeviceSerial);
+        if (request is null)
+        {
+            session.StatusMessage = "Select a device before attaching a Flutter session.";
+            RaiseChanged(session);
+            return null;
+        }
+
+        var step = AddStep(session, $"flutter-attach-{Guid.NewGuid():N}", "Attach Flutter session", RunStepKind.HotReload);
+        context.FlutterStep = step;
+        context.FlutterTail.Clear();
+        session.State = RunSessionState.Launching;
+        session.StatusMessage =
+            "Starting an attached Flutter session. The app is rebuilt, installed, and launched on the device.";
+        StartStep(session, step);
+
+        if (context.Flutter is { } previous)
+        {
+            context.Flutter = null;
+            await previous.DisposeAsync().ConfigureAwait(false);
+        }
+
+        var flutter = new FlutterRunSession(request, line => OnFlutterOutput(context, line));
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            context.Cancellation.Token);
+        try
+        {
+            await flutter.StartAsync(linked.Token).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or IOException or TimeoutException)
+        {
+            await flutter.DisposeAsync().ConfigureAwait(false);
+            context.FlutterStep = step;
+            step.OutputTail = JoinTail(context.FlutterTail);
+            await FailStepAsync(context, step, exception.Message).ConfigureAwait(false);
+            session.State = RunSessionState.Failed;
+            session.StatusMessage = "The Flutter session could not be attached.";
+            RaiseChanged(session);
+            await SaveSnapshotAsync(session).ConfigureAwait(false);
+            return null;
+        }
+        catch (OperationCanceledException)
+        {
+            await flutter.DisposeAsync().ConfigureAwait(false);
+            CancelStep(step);
+            RaiseChanged(session);
+            throw;
+        }
+
+        if (linked.IsCancellationRequested || session.IsFinished)
+        {
+            await flutter.DisposeAsync().ConfigureAwait(false);
+            CancelStep(step);
+            RaiseChanged(session);
+            throw new OperationCanceledException(linked.Token);
+        }
+
+        step.CommandLine = request.ToCommandLine();
+        step.OutputTail = JoinTail(context.FlutterTail);
+        context.Flutter = flutter;
+        SucceedStep(session, step, $"Flutter session attached to {flutter.AppId ?? "the app"}.");
+        session.State = RunSessionState.Running;
+        session.StatusMessage = "The Flutter session is attached. Hot reload and hot restart are available.";
+        RaiseChanged(session);
+        await SaveSnapshotAsync(session).ConfigureAwait(false);
+        return flutter;
+    }
+
+    private void OnFlutterOutput(RunContext context, ProcessOutputLine line)
+    {
+        var step = context.FlutterStep;
+        OnProcessOutput(
+            context.Session,
+            step?.Id ?? "flutter",
+            line,
+            context.FlutterTail,
+            appendToBuildOutput: false);
+    }
+
+    private async Task StopFlutterAsync(RunContext context)
+    {
+        var flutter = context.Flutter;
+        context.Flutter = null;
+        if (flutter is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await flutter.StopAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or IOException)
+        {
+            _logger.LogWarning(
+                exception,
+                "The Flutter session for run {SessionId} could not be stopped cleanly.",
+                context.Session.Id);
+        }
+        finally
+        {
+            await flutter.DisposeAsync().ConfigureAwait(false);
         }
     }
 
@@ -454,6 +722,15 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             context.Cancellation.Cancel();
             try
             {
+                await StopFlutterAsync(context).ConfigureAwait(false);
+            }
+            catch (ObjectDisposedException)
+            {
+                // The Flutter session already shut down.
+            }
+
+            try
+            {
                 await DetachLogcatAsync(context).ConfigureAwait(false);
             }
             catch (ObjectDisposedException)
@@ -482,10 +759,16 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             DeviceName = request.Device?.Model ?? request.Device?.Serial,
             GroupId = request.GroupId,
             IsDryRun = request.DryRun,
+            SupportsHotReload = request.Configuration.Kind == RunConfigurationKind.Flutter &&
+                                IsDebugFlutterVariant(request.Configuration.VariantName),
             State = RunSessionState.Queued,
             StatusMessage = request.DryRun ? "Dry run queued." : "Queued.",
         };
     }
+
+    private static bool IsDebugFlutterVariant(string? variant) =>
+        string.IsNullOrWhiteSpace(variant) ||
+        string.Equals(variant.Trim(), "debug", StringComparison.OrdinalIgnoreCase);
 
     private void CompleteDryRun(RunSession session, RunRequest request)
     {
@@ -641,7 +924,8 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         var session = context.Session;
         var configuration = context.Request.Configuration;
         var step = AddStep(session, "build", "Build", RunStepKind.Build);
-        if (configuration.Kind != RunConfigurationKind.Gradle ||
+        var isBuildable = configuration.Kind is RunConfigurationKind.Gradle or RunConfigurationKind.Flutter;
+        if (!isBuildable ||
             configuration.Build.Skip ||
             context.Request.Options.SkipBuild ||
             context.Request.Options.PrebuiltArtifactFiles is { Count: > 0 })
@@ -649,8 +933,8 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             SkipStep(
                 session,
                 step,
-                configuration.Kind != RunConfigurationKind.Gradle
-                    ? "Only Gradle projects have a build step."
+                !isBuildable
+                    ? "Only Gradle and Flutter projects have a build step."
                     : context.Request.Options.PrebuiltArtifactFiles is { Count: > 0 }
                         ? "The artifact was already built for this device group."
                         : "The build is disabled for this run.");
@@ -664,7 +948,10 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             return true;
         }
 
-        SetSessionState(session, RunSessionState.Building, $"Building {configuration.Build.Task}.");
+        var buildLabel = configuration.Kind == RunConfigurationKind.Flutter
+            ? $"the Flutter {configuration.VariantName ?? "debug"} app"
+            : configuration.Build.Task;
+        SetSessionState(session, RunSessionState.Building, $"Building {buildLabel}.");
         step.CommandLine = buildRequest.ToCommandLine();
         StartStep(session, step);
         var tail = new Queue<string>();
@@ -1766,6 +2053,12 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         public CancellationTokenSource? Linked { get; set; }
 
         public ILogcatSession? Logcat { get; set; }
+
+        public FlutterRunSession? Flutter { get; set; }
+
+        public RunStep? FlutterStep { get; set; }
+
+        public Queue<string> FlutterTail { get; } = new();
 
         public EventHandler<LogEntriesEventArgs>? EntriesHandler { get; set; }
 

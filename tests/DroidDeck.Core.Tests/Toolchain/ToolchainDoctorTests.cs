@@ -205,6 +205,109 @@ public sealed class ToolchainDoctorTests
         Assert.Null(await doctor.LoadCachedAsync());
     }
 
+    [Fact]
+    public async Task DiscoversDartNextToTheFlutterSdk()
+    {
+        using var temp = new TempDirectory();
+        var flutter = ToolchainTestEnvironment.WriteScript(
+            temp,
+            "flutter/bin/flutter.cmd",
+            "Flutter 3.24.1 • channel stable");
+        ToolchainTestEnvironment.WriteScript(
+            temp,
+            "flutter/bin/dart.cmd",
+            "Dart SDK version: 3.5.4 (stable) (Tue Sep 24 2024) on \"windows_x64\"");
+        using var configuration = await CreateConfigurationAsync(temp);
+        await configuration.SetAsync("tools.flutterPath", flutter);
+        using var doctor = CreateDoctor(temp, configuration);
+
+        var snapshot = await doctor.CheckAsync();
+        var dart = Assert.IsType<ToolInfo>(snapshot.Get(ToolKind.Dart));
+
+        Assert.True(dart.IsAvailable, dart.Error);
+        Assert.Equal("3.5.4", dart.Version);
+        Assert.Equal(ToolDetectionSource.Automatic, dart.Source);
+        Assert.EndsWith("dart.cmd", dart.Path, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task FindsDartInTheStandardFlutterInstallFolder()
+    {
+        using var temp = new TempDirectory();
+        ToolchainTestEnvironment.WriteScript(
+            temp,
+            "localAppData/flutter/bin/flutter.bat",
+            "Flutter 3.24.1 • channel stable");
+        ToolchainTestEnvironment.WriteScript(
+            temp,
+            "localAppData/flutter/bin/dart.bat",
+            "Dart SDK version: 3.8.0 (stable) on \"windows_x64\"");
+        using var configuration = await CreateConfigurationAsync(temp);
+        using var doctor = CreateDoctor(temp, configuration);
+
+        var snapshot = await doctor.CheckAsync();
+        var flutter = Assert.IsType<ToolInfo>(snapshot.Get(ToolKind.Flutter));
+        var dart = Assert.IsType<ToolInfo>(snapshot.Get(ToolKind.Dart));
+
+        Assert.True(flutter.IsAvailable, flutter.Error);
+        Assert.True(dart.IsAvailable, dart.Error);
+        Assert.Equal("3.8.0", dart.Version);
+    }
+
+    [Fact]
+    public async Task FindsDartBeneathFlutterRoot()
+    {
+        using var temp = new TempDirectory();
+        var root = temp.CreateDirectory("flutter-sdk");
+        ToolchainTestEnvironment.WriteScript(
+            temp,
+            "flutter-sdk/bin/flutter.cmd",
+            "Flutter 3.24.1 • channel stable");
+        ToolchainTestEnvironment.WriteScript(
+            temp,
+            "flutter-sdk/bin/dart.cmd",
+            "Dart SDK version: 3.6.0 (stable) on \"windows_x64\"");
+        using var configuration = await CreateConfigurationAsync(temp);
+        var environment = ToolchainTestEnvironment.Create(
+            temp,
+            variables: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["FLUTTER_ROOT"] = root,
+            });
+        using var doctor = new ToolchainDoctor(
+            new AppPaths(temp.Combine("data")),
+            configuration,
+            new ProcessRunner(),
+            environment);
+
+        var snapshot = await doctor.CheckAsync();
+        var dart = Assert.IsType<ToolInfo>(snapshot.Get(ToolKind.Dart));
+
+        Assert.True(dart.IsAvailable, dart.Error);
+        Assert.Equal("3.6.0", dart.Version);
+    }
+
+    [Fact]
+    public async Task HonorsADartOverride()
+    {
+        using var temp = new TempDirectory();
+        var dartPath = ToolchainTestEnvironment.WriteScript(
+            temp,
+            "custom/dart.cmd",
+            "Dart SDK version: 3.7.1 (stable) on \"windows_x64\"");
+        using var configuration = await CreateConfigurationAsync(temp);
+        await configuration.SetAsync("tools.dartPath", dartPath);
+        using var doctor = CreateDoctor(temp, configuration);
+
+        var snapshot = await doctor.CheckAsync();
+        var dart = Assert.IsType<ToolInfo>(snapshot.Get(ToolKind.Dart));
+
+        Assert.True(dart.IsAvailable);
+        Assert.Equal(ToolDetectionSource.Override, dart.Source);
+        Assert.Equal("3.7.1", dart.Version);
+        Assert.Equal(dartPath, dart.Path, ignoreCase: true);
+    }
+
     private static async Task<ConfigurationService> CreateConfigurationAsync(TempDirectory temp)
     {
         var configuration = new ConfigurationService(new AppPaths(temp.Combine("data")));

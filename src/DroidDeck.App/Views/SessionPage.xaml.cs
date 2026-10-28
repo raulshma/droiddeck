@@ -51,6 +51,7 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
     private int _maxLogLines = 20_000;
     private int _logRebuildGeneration;
     private bool _initializingFilters;
+    private bool _reloading;
     private bool _disposed;
 
     /// <summary>Creates the session page.</summary>
@@ -333,6 +334,11 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         CancelButton.IsEnabled = active;
         RestartButton.IsEnabled = _session is { IsReadOnly: false } &&
                                   !string.IsNullOrWhiteSpace(_session.PackageName);
+        var hotReload = _session is { IsReadOnly: false, SupportsHotReload: true };
+        HotReloadButton.Visibility = hotReload ? Visibility.Visible : Visibility.Collapsed;
+        HotRestartButton.Visibility = hotReload ? Visibility.Visible : Visibility.Collapsed;
+        HotReloadButton.IsEnabled = active && !_reloading;
+        HotRestartButton.IsEnabled = active && !_reloading;
         CopyStackButton.IsEnabled = _latestCrash is not null || _session?.Crashes.Count > 0;
         PauseLogsButton.IsEnabled = _session is { IsReadOnly: false } && _logcatSession is not null;
         PauseLogsButton.Content = _logcatSession?.IsPaused == true ? "Resume logs" : "Pause logs";
@@ -1057,6 +1063,45 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         {
             _logger.LogWarning(exception, "The session could not be cancelled.");
             ShowAction($"The session could not be cancelled: {exception.Message}", isError: true);
+        }
+    }
+
+    private async void OnHotReloadClick(object sender, RoutedEventArgs e) =>
+        await ReloadFlutterAsync(fullRestart: false);
+
+    private async void OnHotRestartClick(object sender, RoutedEventArgs e) =>
+        await ReloadFlutterAsync(fullRestart: true);
+
+    private async Task ReloadFlutterAsync(bool fullRestart)
+    {
+        if (_session is null || _session.IsReadOnly || _reloading)
+        {
+            return;
+        }
+
+        var verb = fullRestart ? "Hot restart" : "Hot reload";
+        _reloading = true;
+        UpdateButtons();
+        try
+        {
+            var result = fullRestart
+                ? await _runs.HotRestartAsync(_session.Id)
+                : await _runs.HotReloadAsync(_session.Id);
+            if (result is not null)
+            {
+                ShowAction(result.Message, isError: !result.Succeeded);
+            }
+        }
+        catch (Exception exception) when (
+            exception is IOException or InvalidOperationException or TimeoutException)
+        {
+            _logger.LogWarning(exception, "{Verb} failed.", verb);
+            ShowAction($"{verb} failed: {exception.Message}", isError: true);
+        }
+        finally
+        {
+            _reloading = false;
+            UpdateButtons();
         }
     }
 
