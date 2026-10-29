@@ -40,10 +40,22 @@ public sealed class OpenDataDirectoryCommand(AppPaths paths) : ICommand
 public static class BuiltInExtensions
 {
     /// <summary>Registers all built-in extensions.</summary>
-    public static void Register(IPluginRegistry registry, AppPaths paths)
+    /// <param name="registry">The shared registry.</param>
+    /// <param name="paths">The application data paths.</param>
+    /// <param name="runSteps">Built-in run steps composed from host services.</param>
+    public static void Register(
+        IPluginRegistry registry,
+        AppPaths paths,
+        IEnumerable<IRunStep>? runSteps = null)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(paths);
         registry.AddCommand(new OpenDataDirectoryCommand(paths));
+        registry.AddLogParser(new AndroidCrashLogParser());
+        registry.AddHighlightRuleProvider(new BuiltInHighlightRuleProvider());
+        foreach (var step in runSteps ?? [])
+        {
+            registry.AddRunStep(step);
+        }
     }
 }

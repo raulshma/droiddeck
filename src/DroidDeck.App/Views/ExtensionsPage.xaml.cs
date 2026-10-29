@@ -99,7 +99,9 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         var registry = _plugins.Registry;
         BuiltInSummaryText.Text =
             $"{registry.Commands.Count} commands · {registry.ProjectDetectors.Count} project detectors · " +
-            $"{registry.DeviceActions.Count} device actions · {registry.RunSteps.Count} run steps available.";
+            $"{registry.DeviceActions.Count} device actions · {registry.RunSteps.Count} run steps · " +
+            $"{registry.LogParsers.Count} log parsers · {registry.HighlightRuleProviders.Count} highlight rule providers · " +
+            $"{registry.TestRunners.Count} test runners available.";
     }
 
     private void UpdateRows()

@@ -1,5 +1,6 @@
 using System.Text;
 using DroidDeck.Core;
+using DroidDeck.Plugin.Abstractions;
 using DroidDeck.Plugins;
 using DroidDeck.Plugins.BuiltIns;
 using Microsoft.Extensions.Logging;
@@ -21,6 +22,7 @@ public sealed class PluginHost : IAsyncDisposable
     private readonly PluginExtensionCatalog _catalog;
     private readonly PluginHealthTracker _health;
     private readonly PluginActionInvoker _invoker;
+    private readonly IReadOnlyList<IRunStep> _builtInRunSteps;
     private bool _initialized;
     private bool _disposed;
 
@@ -30,11 +32,13 @@ public sealed class PluginHost : IAsyncDisposable
         PluginLoader loader,
         AppPaths paths,
         ILogger<PluginHost> logger,
-        ILoggerFactory? loggerFactory = null)
+        ILoggerFactory? loggerFactory = null,
+        IEnumerable<IRunStep>? builtInRunSteps = null)
     {
         _registry = registry ?? throw new ArgumentNullException(nameof(registry));
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _builtInRunSteps = builtInRunSteps?.ToArray() ?? [];
         _health = new PluginHealthTracker();
         _invoker = new PluginActionInvoker(_health);
         _catalog = new PluginExtensionCatalog(registry);
@@ -86,7 +90,7 @@ public sealed class PluginHost : IAsyncDisposable
     public async Task InitializeAsync(bool disabled, string? disabledReason, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        BuiltInExtensions.Register(_registry, _paths);
+        BuiltInExtensions.Register(_registry, _paths, _builtInRunSteps);
         PluginsDisabled = disabled;
         DisabledReason = disabledReason;
         if (disabled)

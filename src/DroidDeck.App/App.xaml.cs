@@ -31,6 +31,7 @@ using DroidDeck.Core.Testing;
 using DroidDeck.Core.Toolchain;
 using DroidDeck.Core.Wireless;
 using DroidDeck.Plugins;
+using DroidDeck.Plugins.BuiltIns;
 using DroidDeck.Projects;
 using DroidDeck.Projects.Artifacts;
 using DroidDeck.Projects.Detection;
@@ -41,6 +42,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Windows.ApplicationModel.DataTransfer;
+using IPluginRegistry = DroidDeck.Plugin.Abstractions.IPluginRegistry;
 
 namespace DroidDeck.App;
 
@@ -270,6 +272,7 @@ public partial class App : Application, IDisposable
         services.AddSingleton<IAdbSocketClient>(_ => new AdbSocketClient());
         services.AddSingleton<IToolchainService, ToolchainDoctor>();
         services.AddSingleton<PluginRegistry>();
+        services.AddSingleton<IPluginRegistry>(provider => provider.GetRequiredService<PluginRegistry>());
 
         services.AddSingleton(provider =>
         {
@@ -280,7 +283,10 @@ public partial class App : Application, IDisposable
                 loader,
                 _paths,
                 loggerFactory.CreateLogger<PluginHost>(),
-                loggerFactory);
+                loggerFactory,
+                [new WaitForDeviceRunStep(
+                    provider.GetRequiredService<IProcessRunner>(),
+                    () => GetAdbPath(provider))]);
         });
 
         services.AddSingleton<IDeviceService>(provider =>
@@ -355,7 +361,8 @@ public partial class App : Application, IDisposable
         services.AddSingleton<ITestRunService>(provider => new TestRunService(
             provider.GetRequiredService<ITestPlanBuilder>(),
             provider.GetRequiredService<IProcessRunner>(),
-            provider.GetRequiredService<IDeviceOperationCoordinator>()));
+            provider.GetRequiredService<IDeviceOperationCoordinator>(),
+            provider.GetRequiredService<IPluginRegistry>()));
 
         string GetAdbPath(IServiceProvider provider) =>
             ToolPathLocator.ResolveAdb(configuration, provider.GetRequiredService<IToolchainService>());
@@ -364,11 +371,15 @@ public partial class App : Application, IDisposable
             provider.GetRequiredService<IProcessRunner>(),
             () => GetAdbPath(provider),
             loggerFactory.CreateLogger<AdbDeviceCommandService>()));
+        services.AddSingleton<ILogEnricher>(provider => new PluginLogEnricher(
+            provider.GetRequiredService<IPluginRegistry>(),
+            loggerFactory.CreateLogger<PluginLogEnricher>()));
         services.AddSingleton<ILogcatService>(provider => new AdbLogcatService(
             provider.GetRequiredService<IProcessRunner>(),
             provider.GetRequiredService<IDeviceCommandService>(),
             () => GetAdbPath(provider),
-            loggerFactory.CreateLogger<AdbLogcatService>()));
+            loggerFactory.CreateLogger<AdbLogcatService>(),
+            provider.GetRequiredService<ILogEnricher>()));
         services.AddSingleton<IDeviceToolboxService>(provider => new AdbToolboxService(
             provider.GetRequiredService<IProcessRunner>(),
             () => GetAdbPath(provider),
