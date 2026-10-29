@@ -45,10 +45,24 @@ public sealed class HighlightEngine
     /// <summary>Gets the rules that were compiled, in evaluation order.</summary>
     public IReadOnlyList<HighlightRule> Rules => _compiled.Select(entry => entry.Rule).ToArray();
 
-    /// <summary>Returns the first rule matching the line, or <see langword="null"/>.</summary>
+    /// <summary>
+    /// Returns the rule for the line: a parser-assigned rule id wins, then the
+    /// first enabled rule whose pattern matches.
+    /// </summary>
     public HighlightRule? Match(LogEntry entry)
     {
         ArgumentNullException.ThrowIfNull(entry);
+        if (!string.IsNullOrEmpty(entry.HighlightRuleId))
+        {
+            foreach (var (rule, _) in _compiled)
+            {
+                if (string.Equals(rule.Id, entry.HighlightRuleId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return rule;
+                }
+            }
+        }
+
         foreach (var (rule, regex) in _compiled)
         {
             if (regex.IsMatch(entry.Raw))

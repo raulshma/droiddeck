@@ -61,6 +61,9 @@ public sealed class LogEntry
     /// <summary>Gets or sets the package this line belongs to, when known.</summary>
     public string? PackageName { get; set; }
 
+    /// <summary>Gets or sets the highlight rule a plugin parser assigned to this line.</summary>
+    public string? HighlightRuleId { get; set; }
+
     /// <summary>Gets a display label for the level.</summary>
     public string LevelLabel => Level switch
     {

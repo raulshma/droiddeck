@@ -15,6 +15,7 @@ public sealed class AdbLogcatSession : ILogcatSession
     private readonly Func<string> _adbPathProvider;
     private readonly ILogger _logger;
     private readonly LogcatRequest _request;
+    private readonly ILogEnricher? _enricher;
     private readonly BoundedLogBufferStore _buffer;
     private readonly CrashDetector _crashDetector = new();
     private readonly ConcurrentDictionary<int, byte> _activePids = new();
@@ -33,12 +34,14 @@ public sealed class AdbLogcatSession : ILogcatSession
         IProcessRunner runner,
         Func<string> adbPathProvider,
         LogcatRequest request,
-        ILogger logger)
+        ILogger logger,
+        ILogEnricher? enricher = null)
     {
         _runner = runner;
         _adbPathProvider = adbPathProvider;
         _request = request;
         _logger = logger;
+        _enricher = enricher;
         Id = Guid.NewGuid().ToString("N");
         DeviceSerial = request.DeviceSerial;
         PackageName = request.PackageName;
@@ -260,6 +263,7 @@ public sealed class AdbLogcatSession : ILogcatSession
         }
 
         entry.Source = LogSource.Logcat;
+        _enricher?.Enrich(entry, DeviceSerial);
         TrackProcess(entry);
         var crash = _crashDetector.Process(entry);
         if (crash is not null)

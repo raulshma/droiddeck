@@ -380,7 +380,12 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         }
     }
 
-    private void OnPluginRegistryChanged(object? sender, EventArgs e) => Dispatch(RebuildPluginToolbar);
+    private void OnPluginRegistryChanged(object? sender, EventArgs e) => Dispatch(() =>
+    {
+        RebuildPluginToolbar();
+        ResetHighlightRules();
+        RebuildLogRows();
+    });
 
     private void OnMirrorClick(object sender, RoutedEventArgs e)
     {
@@ -705,9 +710,35 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
     private void ResetHighlightRules()
     {
         _highlightRules.Clear();
-        foreach (var rule in HighlightRule.BuiltIn)
+        foreach (var provider in _plugins.Registry.HighlightRuleProviders)
         {
-            _highlightRules.Add(new HighlightRuleRow(rule));
+            var isBuiltIn = string.Equals(
+                provider.PluginId,
+                PluginConstants.BuiltInPluginId,
+                StringComparison.Ordinal);
+            foreach (var rule in provider.Value.Rules)
+            {
+                _highlightRules.Add(new HighlightRuleRow(new HighlightRule
+                {
+                    Id = rule.Id,
+                    Name = rule.Name,
+                    Pattern = rule.Pattern,
+                    IsRegex = rule.IsRegex,
+                    Foreground = rule.Foreground,
+                    Background = rule.Background,
+                    Bold = rule.Bold,
+                    IsEnabled = rule.IsEnabled,
+                    IsBuiltIn = isBuiltIn,
+                }));
+            }
+        }
+
+        if (_highlightRules.Count == 0)
+        {
+            foreach (var rule in HighlightRule.BuiltIn)
+            {
+                _highlightRules.Add(new HighlightRuleRow(rule));
+            }
         }
 
         RebuildHighlightEngine();
