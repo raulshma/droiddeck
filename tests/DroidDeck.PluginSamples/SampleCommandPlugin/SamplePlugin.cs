@@ -8,12 +8,15 @@ namespace SampleCommandPlugin;
 public sealed class SamplePlugin : IPlugin
 {
     private string _dataDirectory = string.Empty;
+    private string _pluginId = string.Empty;
 
     /// <inheritdoc />
     public async Task InitializeAsync(IPluginContext context, CancellationToken cancellationToken)
     {
         _dataDirectory = context.DataDirectory;
+        _pluginId = context.Info.Id;
         await context.Settings.SetAsync("initialized", "true", cancellationToken).ConfigureAwait(false);
+        await AppendLifecycleMarkerAsync("init", cancellationToken).ConfigureAwait(false);
         context.Extensions.AddCommand(new SampleCommand(context.DataDirectory));
         context.Extensions.AddDeviceAction(new SampleDeviceAction(context.DataDirectory));
         context.Extensions.AddToolbarAction(new SampleToolbarAction(context.DataDirectory));
@@ -30,6 +33,24 @@ public sealed class SamplePlugin : IPlugin
                 "ok",
                 cancellationToken).ConfigureAwait(false);
         }
+
+        if (_pluginId.Length > 0)
+        {
+            await AppendLifecycleMarkerAsync("shutdown", cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Appends a marker to a shared log next to the plugin directories so tests
+    /// can observe the order in which the host initializes and shuts plugins down.
+    /// </summary>
+    private async Task AppendLifecycleMarkerAsync(string phase, CancellationToken cancellationToken)
+    {
+        var logPath = Path.GetFullPath(Path.Combine(_dataDirectory, "..", "..", "lifecycle-order.log"));
+        await File.AppendAllTextAsync(
+            logPath,
+            $"{_pluginId}:{phase}{Environment.NewLine}",
+            cancellationToken).ConfigureAwait(false);
     }
 }
 
@@ -163,6 +184,24 @@ public sealed class ThrowingPlugin : IPlugin
         context.Extensions.AddCommand(new ThrowingCommand());
         throw new InvalidOperationException("This plugin always fails to initialize.");
     }
+
+    /// <inheritdoc />
+    public Task ShutdownAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+}
+
+/// <summary>
+/// A plugin that throws while constructing, used to test constructor fault isolation.
+/// </summary>
+public sealed class ConstructorThrowingPlugin : IPlugin
+{
+    public ConstructorThrowingPlugin()
+    {
+        throw new InvalidOperationException("This plugin always fails to construct.");
+    }
+
+    /// <inheritdoc />
+    public Task InitializeAsync(IPluginContext context, CancellationToken cancellationToken) =>
+        Task.FromException(new NotSupportedException("This plugin never initializes."));
 
     /// <inheritdoc />
     public Task ShutdownAsync(CancellationToken cancellationToken) => Task.CompletedTask;

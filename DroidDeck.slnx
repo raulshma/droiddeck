@@ -21,5 +21,10 @@
     <Project Path="tests/DroidDeck.Testing.ProcessHelper/DroidDeck.Testing.ProcessHelper.csproj" />
     <Project Path="tests/DroidDeck.Testing.FakeAdb/DroidDeck.Testing.FakeAdb.csproj" />
     <Project Path="tests/DroidDeck.PluginSamples/SampleCommandPlugin/SampleCommandPlugin.csproj" />
+    <Project Path="tests/DroidDeck.PluginSamples/SamplePerfPlugin1/SamplePerfPlugin1.csproj" />
+    <Project Path="tests/DroidDeck.PluginSamples/SamplePerfPlugin2/SamplePerfPlugin2.csproj" />
+    <Project Path="tests/DroidDeck.PluginSamples/SamplePerfPlugin3/SamplePerfPlugin3.csproj" />
+    <Project Path="tests/DroidDeck.PluginSamples/SamplePerfPlugin4/SamplePerfPlugin4.csproj" />
+    <Project Path="tests/DroidDeck.PluginSamples/SamplePerfPlugin5/SamplePerfPlugin5.csproj" />
   </Folder>
 </Solution>

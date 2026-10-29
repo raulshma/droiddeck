@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Reflection;
 using DroidDeck.Core.Infrastructure;
 using DroidDeck.Plugin.Abstractions;
 using Microsoft.Extensions.Logging;
@@ -13,6 +15,12 @@ public sealed record PluginLoadResult(LoadedPlugin? Plugin, PluginValidationResu
 {
     /// <summary>Gets a value indicating whether the plugin loaded.</summary>
     public bool Succeeded => Plugin is not null;
+
+    /// <summary>Gets the manifest the result belongs to, when it could be read.</summary>
+    public PluginManifest? Manifest { get; init; }
+
+    /// <summary>Gets how long loading took; zero when the plugin did not load.</summary>
+    public TimeSpan LoadDuration { get; init; }
 }
 
 /// <summary>
@@ -55,9 +63,16 @@ public sealed class PluginLoader : IAsyncDisposable
 
     /// <summary>
     /// Loads every plugin directory under <paramref name="pluginsRoot"/> that contains a manifest.
+    /// Dependencies are resolved before dependents regardless of directory order;
+    /// plugins whose dependencies are missing or cyclic are rejected with a clear
+    /// reason instead of loading.
     /// </summary>
+    /// <param name="pluginsRoot">The directory that contains one subdirectory per plugin.</param>
+    /// <param name="disabledPluginIds">Plugin identifiers to skip this launch.</param>
+    /// <param name="cancellationToken">Cancels the scan.</param>
     public async Task<IReadOnlyList<PluginLoadResult>> LoadInstalledAsync(
         string pluginsRoot,
+        IReadOnlySet<string>? disabledPluginIds = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pluginsRoot);
@@ -74,13 +89,88 @@ public sealed class PluginLoader : IAsyncDisposable
             .Where(directory => File.Exists(PluginManifestReader.GetManifestPath(directory)))
             .Order(StringComparer.OrdinalIgnoreCase);
 
+        var plan = new List<(string Directory, PluginManifestReadResult Read)>();
         foreach (var directory in directories)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            plan.Add(
+                (directory,
+                await PluginManifestReader.ReadAsync(directory, cancellationToken).ConfigureAwait(false)));
+        }
+
+        var (order, cycles) = PlanLoadOrder(plan, disabledPluginIds);
+        foreach (var (directory, _) in order)
         {
             cancellationToken.ThrowIfCancellationRequested();
             results.Add(await LoadAsync(directory, cancellationToken).ConfigureAwait(false));
         }
 
+        foreach (var (directory, read) in cycles)
+        {
+            var validation = new PluginValidationResult();
+            var members = cycles
+                .Select(cycle => cycle.Read.Manifest!.Id)
+                .Order(StringComparer.OrdinalIgnoreCase);
+            validation.Error(
+                "plugin.dependencies.cycle",
+                $"The plugin takes part in a dependency cycle with: {string.Join(", ", members)}.");
+            LogIssues(validation, directory);
+            results.Add(new PluginLoadResult(null, validation) { Manifest = read.Manifest });
+        }
+
         return results;
+    }
+
+    /// <summary>
+    /// Orders readable manifests so dependencies load before dependents, skipping
+    /// disabled plugins. Returns the ordered entries plus the entries caught in a
+    /// dependency cycle, which are rejected without loading their assemblies.
+    /// Unreadable manifests keep their position and fail when loaded.
+    /// </summary>
+    private static (List<(string Directory, PluginManifestReadResult Read)> Order, List<(string Directory, PluginManifestReadResult Read)> Cycles)
+        PlanLoadOrder(List<(string Directory, PluginManifestReadResult Read)> plan, IReadOnlySet<string>? disabledPluginIds)
+    {
+        var order = new List<(string, PluginManifestReadResult)>();
+        var cycles = new List<(string, PluginManifestReadResult)>();
+        var pending = new List<(string Directory, PluginManifestReadResult Read)>();
+        var byId = new Dictionary<string, (string Directory, PluginManifest Manifest)>(StringComparer.OrdinalIgnoreCase);
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (directory, read) in plan)
+        {
+            if (read.Manifest is null)
+            {
+                order.Add((directory, read));
+                continue;
+            }
+
+            if (disabledPluginIds is not null && disabledPluginIds.Contains(read.Manifest.Id))
+            {
+                continue;
+            }
+
+            pending.Add((directory, read));
+            byId.TryAdd(read.Manifest.Id, (directory, read.Manifest));
+        }
+
+        while (pending.Count > 0)
+        {
+            var index = pending.FindIndex(
+                entry => entry.Read.Manifest!.Dependencies.All(
+                    dependency => !byId.ContainsKey(dependency.Id) || visited.Contains(dependency.Id)));
+            if (index < 0)
+            {
+                cycles.AddRange(pending);
+                break;
+            }
+
+            var entry = pending[index];
+            pending.RemoveAt(index);
+            visited.Add(entry.Read.Manifest!.Id);
+            order.Add(entry);
+        }
+
+        return (order, cycles);
     }
 
     /// <summary>
@@ -176,16 +266,24 @@ public sealed class PluginLoader : IAsyncDisposable
         if (!validation.IsValid)
         {
             LogIssues(validation, pluginDirectory);
-            return new PluginLoadResult(null, validation);
+            return new PluginLoadResult(null, validation) { Manifest = manifest };
         }
 
         if (IsLoaded(manifest.Id))
         {
             validation.Error("plugin.id.duplicate", $"A plugin with id '{manifest.Id}' is already loaded.");
             LogIssues(validation, pluginDirectory);
-            return new PluginLoadResult(null, validation);
+            return new PluginLoadResult(null, validation) { Manifest = manifest };
         }
 
+        ValidateDependencies(manifest, validation);
+        if (!validation.IsValid)
+        {
+            LogIssues(validation, pluginDirectory);
+            return new PluginLoadResult(null, validation) { Manifest = manifest };
+        }
+
+        var startedAt = Stopwatch.GetTimestamp();
         PluginLoadContext? loadContext = null;
         JsonPluginSettings? settings = null;
         IPlugin? instance = null;
@@ -203,7 +301,7 @@ public sealed class PluginLoader : IAsyncDisposable
                     $"The entry type '{manifest.EntryType}' was not found in '{manifest.EntryAssembly}'.");
                 LogIssues(validation, pluginDirectory);
                 await CleanupFailedLoadAsync(manifest.Id, instance, loadContext, settings).ConfigureAwait(false);
-                return new PluginLoadResult(null, validation);
+                return new PluginLoadResult(null, validation) { Manifest = manifest };
             }
 
             if (!typeof(IPlugin).IsAssignableFrom(entryType))
@@ -213,7 +311,7 @@ public sealed class PluginLoader : IAsyncDisposable
                     $"The entry type '{manifest.EntryType}' does not implement {nameof(IPlugin)}.");
                 LogIssues(validation, pluginDirectory);
                 await CleanupFailedLoadAsync(manifest.Id, instance, loadContext, settings).ConfigureAwait(false);
-                return new PluginLoadResult(null, validation);
+                return new PluginLoadResult(null, validation) { Manifest = manifest };
             }
 
             if (Activator.CreateInstance(entryType) is not IPlugin created)
@@ -223,7 +321,7 @@ public sealed class PluginLoader : IAsyncDisposable
                     $"The entry type '{manifest.EntryType}' could not be instantiated.");
                 LogIssues(validation, pluginDirectory);
                 await CleanupFailedLoadAsync(manifest.Id, instance, loadContext, settings).ConfigureAwait(false);
-                return new PluginLoadResult(null, validation);
+                return new PluginLoadResult(null, validation) { Manifest = manifest };
             }
 
             instance = created;
@@ -251,13 +349,18 @@ public sealed class PluginLoader : IAsyncDisposable
             if (_logger.IsEnabled(LogLevel.Information))
             {
                 _logger.LogInformation(
-                    "Loaded plugin {PluginId} {Version} from '{Path}'.",
+                    "Loaded plugin {PluginId} {Version} from '{Path}' in {DurationMs:F1} ms.",
                     manifest.Id,
                     manifest.Version,
-                    pluginDirectory);
+                    pluginDirectory,
+                    Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds);
             }
 
-            return new PluginLoadResult(loaded, validation);
+            return new PluginLoadResult(loaded, validation)
+            {
+                Manifest = manifest,
+                LoadDuration = Stopwatch.GetElapsedTime(startedAt),
+            };
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -271,9 +374,44 @@ public sealed class PluginLoader : IAsyncDisposable
                 "Plugin '{PluginId}' failed to load from '{Path}'.",
                 manifest.Id,
                 pluginDirectory);
-            validation.Error("plugin.load.failed", $"The plugin could not be loaded: {exception.Message}");
+            // Construction failures arrive wrapped; the manager shows the
+            // plugin's own error message.
+            var reason = exception is TargetInvocationException
+                ? exception.InnerException?.Message ?? exception.Message
+                : exception.Message;
+            validation.Error("plugin.load.failed", $"The plugin could not be loaded: {reason}");
             await CleanupFailedLoadAsync(manifest.Id, instance, loadContext, settings).ConfigureAwait(false);
-            return new PluginLoadResult(null, validation);
+            return new PluginLoadResult(null, validation) { Manifest = manifest };
+        }
+    }
+
+    /// <summary>
+    /// Resolves manifest dependencies against the plugins that are already
+    /// loaded. Failures carry a reason naming the missing dependency and the
+    /// required version so the plugin manager can show it.
+    /// </summary>
+    private void ValidateDependencies(PluginManifest manifest, PluginValidationResult validation)
+    {
+        foreach (var dependency in manifest.Dependencies)
+        {
+            var loaded = FindLoaded(dependency.Id);
+            if (loaded is null)
+            {
+                validation.Error(
+                    "plugin.dependencies.unresolved",
+                    $"Missing dependency {dependency.Id} {dependency.MinVersion}+. Install it and restart DroidDeck.");
+                continue;
+            }
+
+            if (SemanticVersion.TryParse(dependency.MinVersion, out var minimum) &&
+                SemanticVersion.TryParse(loaded.Version, out var actual) &&
+                actual < minimum)
+            {
+                validation.Error(
+                    "plugin.dependencies.incompatible",
+                    $"The dependency {dependency.Id} must be version {dependency.MinVersion} or newer, " +
+                    $"but the installed version is {actual}.");
+            }
         }
     }
 
@@ -305,6 +443,15 @@ public sealed class PluginLoader : IAsyncDisposable
         lock (_sync)
         {
             return _plugins.Exists(
+                candidate => string.Equals(candidate.Id, pluginId, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    private LoadedPlugin? FindLoaded(string pluginId)
+    {
+        lock (_sync)
+        {
+            return _plugins.FirstOrDefault(
                 candidate => string.Equals(candidate.Id, pluginId, StringComparison.OrdinalIgnoreCase));
         }
     }

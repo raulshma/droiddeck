@@ -8,6 +8,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -47,7 +48,17 @@
             IsClosable="True"
             AutomationProperties.AutomationId="ExtensionsActionBar" />
 
-        <ScrollViewer Grid.Row="2">
+        <InfoBar
+            x:Name="RestartNotice"
+            Grid.Row="2"
+            Severity="Warning"
+            Title="Restart required"
+            Message="Enable and disable take full effect after DroidDeck restarts. Unloading a disabled plugin requires a restart."
+            IsOpen="False"
+            IsClosable="False"
+            AutomationProperties.AutomationId="PluginRestartNotice" />
+
+        <ScrollViewer Grid.Row="3">
             <StackPanel Spacing="12">
                 <Border Style="{StaticResource CardBorderStyle}">
                     <StackPanel Spacing="8">
@@ -144,11 +155,11 @@
                                                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                                 TextWrapping="Wrap" />
                                             <TextBlock
-                                                Text="{Binding Issues}"
+                                                Text="{Binding Reason}"
                                                 FontSize="12"
                                                 Foreground="{ThemeResource SystemFillColorCautionBrush}"
                                                 TextWrapping="Wrap"
-                                                Visibility="{Binding HasIssues, Converter={StaticResource BoolToVisibility}}" />
+                                                Visibility="{Binding HasReason, Converter={StaticResource BoolToVisibility}}" />
                                             <TextBlock
                                                 Text="{Binding Health}"
                                                 FontSize="12"
@@ -162,14 +173,31 @@
                                             FontSize="12"
                                             Foreground="{Binding StatusBrush}"
                                             VerticalAlignment="Top" />
-                                        <Button
+                                        <StackPanel
                                             Grid.Column="2"
-                                            Content="Disable"
-                                            VerticalAlignment="Top"
-                                            IsEnabled="{Binding CanDisable}"
-                                            Visibility="{Binding CanDisable, Converter={StaticResource BoolToVisibility}}"
-                                            Click="OnDisablePluginClick"
-                                            AutomationProperties.AutomationId="{Binding DisableId}" />
+                                            Orientation="Horizontal"
+                                            Spacing="8"
+                                            VerticalAlignment="Top">
+                                            <Button
+                                                Content="Enable"
+                                                IsEnabled="{Binding CanEnable}"
+                                                Visibility="{Binding CanEnable, Converter={StaticResource BoolToVisibility}}"
+                                                Click="OnEnablePluginClick"
+                                                AutomationProperties.AutomationId="{Binding EnableId}" />
+                                            <Button
+                                                Content="Disable"
+                                                Visibility="{Binding CanDisable, Converter={StaticResource BoolToVisibility}}"
+                                                Click="OnDisablePluginClick"
+                                                AutomationProperties.AutomationId="{Binding DisableId}" />
+                                            <Button
+                                                Content="Folder"
+                                                Click="OnOpenPluginFolderClick"
+                                                AutomationProperties.AutomationId="{Binding FolderId}" />
+                                            <Button
+                                                Content="Logs"
+                                                Click="OnViewPluginLogsClick"
+                                                AutomationProperties.AutomationId="{Binding LogsId}" />
+                                        </StackPanel>
                                     </Grid>
                                 </DataTemplate>
                             </ListView.ItemTemplate>
