@@ -32,6 +32,15 @@ public interface IPluginRegistry
     /// <summary>Registers a run step.</summary>
     void AddRunStep(IRunStep step);
 
+    /// <summary>Registers a log parser.</summary>
+    void AddLogParser(ILogParser parser);
+
+    /// <summary>Registers a highlight rule provider.</summary>
+    void AddHighlightRuleProvider(IHighlightRuleProvider provider);
+
+    /// <summary>Registers a test runner.</summary>
+    void AddTestRunner(ITestRunner runner);
+
     /// <summary>Gets all registered commands.</summary>
     IReadOnlyList<PluginExtension<ICommand>> Commands { get; }
 
@@ -49,6 +58,15 @@ public interface IPluginRegistry
 
     /// <summary>Gets all registered run steps.</summary>
     IReadOnlyList<PluginExtension<IRunStep>> RunSteps { get; }
+
+    /// <summary>Gets all registered log parsers.</summary>
+    IReadOnlyList<PluginExtension<ILogParser>> LogParsers { get; }
+
+    /// <summary>Gets all registered highlight rule providers.</summary>
+    IReadOnlyList<PluginExtension<IHighlightRuleProvider>> HighlightRuleProviders { get; }
+
+    /// <summary>Gets all registered test runners.</summary>
+    IReadOnlyList<PluginExtension<ITestRunner>> TestRunners { get; }
 
     /// <summary>Gets the plugin identifier that owns an extension type.</summary>
     string? GetOwner(Type extensionType);

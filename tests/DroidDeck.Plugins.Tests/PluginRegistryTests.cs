@@ -48,20 +48,32 @@ public sealed class PluginRegistryTests
         var detector = new TestDetector();
         var action = new TestDeviceAction();
         var step = new TestRunStep();
+        var parser = new TestLogParser();
+        var provider = new TestHighlightRuleProvider();
+        var testRunner = new TestRunner();
 
         scope.AddCommand(command);
         scope.AddProjectDetector(detector);
         scope.AddDeviceAction(action);
         scope.AddRunStep(step);
+        scope.AddLogParser(parser);
+        scope.AddHighlightRuleProvider(provider);
+        scope.AddTestRunner(testRunner);
 
         Assert.Equal("com.example.plugin", Assert.Single(registry.Commands).PluginId);
         Assert.Equal("com.example.plugin", Assert.Single(registry.ProjectDetectors).PluginId);
         Assert.Equal("com.example.plugin", Assert.Single(registry.DeviceActions).PluginId);
         Assert.Equal("com.example.plugin", Assert.Single(registry.RunSteps).PluginId);
+        Assert.Equal("com.example.plugin", Assert.Single(registry.LogParsers).PluginId);
+        Assert.Equal("com.example.plugin", Assert.Single(registry.HighlightRuleProviders).PluginId);
+        Assert.Equal("com.example.plugin", Assert.Single(registry.TestRunners).PluginId);
         Assert.Equal("com.example.plugin", registry.GetOwner(command.GetType()));
         Assert.Equal("com.example.plugin", registry.GetOwner(detector.GetType()));
         Assert.Equal("com.example.plugin", registry.GetOwner(action.GetType()));
         Assert.Equal("com.example.plugin", registry.GetOwner(step.GetType()));
+        Assert.Equal("com.example.plugin", registry.GetOwner(parser.GetType()));
+        Assert.Equal("com.example.plugin", registry.GetOwner(provider.GetType()));
+        Assert.Equal("com.example.plugin", registry.GetOwner(testRunner.GetType()));
     }
 
     [Fact]
@@ -194,5 +206,42 @@ public sealed class PluginRegistryTests
 
         public Task<RunStepResult> ExecuteAsync(RunStepContext context, CancellationToken cancellationToken)
             => Task.FromResult(new RunStepResult(true, "ok"));
+    }
+
+    private sealed class TestLogParser : ILogParser
+    {
+        public string Id => "test.parser";
+
+        public string Name => "Test parser";
+
+        public int Priority => 0;
+
+        public LogParserResult? Parse(LogParserContext context) => null;
+    }
+
+    private sealed class TestHighlightRuleProvider : IHighlightRuleProvider
+    {
+        public string Id => "test.highlights";
+
+        public IReadOnlyList<PluginHighlightRule> Rules =>
+        [
+            new("test.rule", "Test rule", "needle"),
+        ];
+    }
+
+    private sealed class TestRunner : ITestRunner
+    {
+        public string Id => "test.runner";
+
+        public string Name => "Test runner";
+
+        public string? Description => null;
+
+        public bool RequiresDevice => false;
+
+        public bool SupportsRerun => false;
+
+        public Task<PluginTestRunResult> RunAsync(TestRunnerContext context, CancellationToken cancellationToken)
+            => Task.FromResult(new PluginTestRunResult(true));
     }
 }

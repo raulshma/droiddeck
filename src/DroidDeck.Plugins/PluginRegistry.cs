@@ -14,6 +14,9 @@ public sealed class PluginRegistry : IPluginRegistry
     private readonly List<PluginExtension<IDeviceTabProvider>> _deviceTabs = [];
     private readonly List<PluginExtension<IDeviceToolbarAction>> _toolbarActions = [];
     private readonly List<PluginExtension<IRunStep>> _runSteps = [];
+    private readonly List<PluginExtension<ILogParser>> _logParsers = [];
+    private readonly List<PluginExtension<IHighlightRuleProvider>> _highlightRuleProviders = [];
+    private readonly List<PluginExtension<ITestRunner>> _testRunners = [];
     private readonly Dictionary<Type, string> _owners = [];
     private readonly object _sync = new();
 
@@ -37,6 +40,16 @@ public sealed class PluginRegistry : IPluginRegistry
 
     /// <inheritdoc />
     public IReadOnlyList<PluginExtension<IRunStep>> RunSteps => Snapshot(_runSteps);
+
+    /// <inheritdoc />
+    public IReadOnlyList<PluginExtension<ILogParser>> LogParsers => Snapshot(_logParsers);
+
+    /// <inheritdoc />
+    public IReadOnlyList<PluginExtension<IHighlightRuleProvider>> HighlightRuleProviders =>
+        Snapshot(_highlightRuleProviders);
+
+    /// <inheritdoc />
+    public IReadOnlyList<PluginExtension<ITestRunner>> TestRunners => Snapshot(_testRunners);
 
     /// <summary>Creates a registry view that attributes additions to a plugin.</summary>
     public IPluginRegistry CreateScope(string pluginId)
@@ -68,6 +81,16 @@ public sealed class PluginRegistry : IPluginRegistry
     public void AddRunStep(IRunStep step) => AddRunStep(PluginConstants.BuiltInPluginId, step);
 
     /// <inheritdoc />
+    public void AddLogParser(ILogParser parser) => AddLogParser(PluginConstants.BuiltInPluginId, parser);
+
+    /// <inheritdoc />
+    public void AddHighlightRuleProvider(IHighlightRuleProvider provider) =>
+        AddHighlightRuleProvider(PluginConstants.BuiltInPluginId, provider);
+
+    /// <inheritdoc />
+    public void AddTestRunner(ITestRunner runner) => AddTestRunner(PluginConstants.BuiltInPluginId, runner);
+
+    /// <inheritdoc />
     public string? GetOwner(Type extensionType)
     {
         ArgumentNullException.ThrowIfNull(extensionType);
@@ -91,6 +114,9 @@ public sealed class PluginRegistry : IPluginRegistry
             removed += _deviceTabs.RemoveAll(extension => extension.PluginId == pluginId);
             removed += _toolbarActions.RemoveAll(extension => extension.PluginId == pluginId);
             removed += _runSteps.RemoveAll(extension => extension.PluginId == pluginId);
+            removed += _logParsers.RemoveAll(extension => extension.PluginId == pluginId);
+            removed += _highlightRuleProviders.RemoveAll(extension => extension.PluginId == pluginId);
+            removed += _testRunners.RemoveAll(extension => extension.PluginId == pluginId);
             RebuildOwners();
         }
 
@@ -138,6 +164,24 @@ public sealed class PluginRegistry : IPluginRegistry
         Add(pluginId, step, _runSteps);
     }
 
+    internal void AddLogParser(string pluginId, ILogParser parser)
+    {
+        ArgumentNullException.ThrowIfNull(parser);
+        Add(pluginId, parser, _logParsers);
+    }
+
+    internal void AddHighlightRuleProvider(string pluginId, IHighlightRuleProvider provider)
+    {
+        ArgumentNullException.ThrowIfNull(provider);
+        Add(pluginId, provider, _highlightRuleProviders);
+    }
+
+    internal void AddTestRunner(string pluginId, ITestRunner runner)
+    {
+        ArgumentNullException.ThrowIfNull(runner);
+        Add(pluginId, runner, _testRunners);
+    }
+
     private void Add<T>(string pluginId, T value, List<PluginExtension<T>> target)
         where T : class
     {
@@ -183,6 +227,21 @@ public sealed class PluginRegistry : IPluginRegistry
         {
             _owners[extension.Value.GetType()] = extension.PluginId;
         }
+
+        foreach (var extension in _logParsers)
+        {
+            _owners[extension.Value.GetType()] = extension.PluginId;
+        }
+
+        foreach (var extension in _highlightRuleProviders)
+        {
+            _owners[extension.Value.GetType()] = extension.PluginId;
+        }
+
+        foreach (var extension in _testRunners)
+        {
+            _owners[extension.Value.GetType()] = extension.PluginId;
+        }
     }
 
     private PluginExtension<T>[] Snapshot<T>(List<PluginExtension<T>> source)
@@ -213,6 +272,13 @@ public sealed class PluginRegistry : IPluginRegistry
 
         public IReadOnlyList<PluginExtension<IRunStep>> RunSteps => root.RunSteps;
 
+        public IReadOnlyList<PluginExtension<ILogParser>> LogParsers => root.LogParsers;
+
+        public IReadOnlyList<PluginExtension<IHighlightRuleProvider>> HighlightRuleProviders =>
+            root.HighlightRuleProviders;
+
+        public IReadOnlyList<PluginExtension<ITestRunner>> TestRunners => root.TestRunners;
+
         public event EventHandler? Changed
         {
             add => root.Changed += value;
@@ -230,6 +296,13 @@ public sealed class PluginRegistry : IPluginRegistry
         public void AddToolbarAction(IDeviceToolbarAction action) => root.AddToolbarAction(pluginId, action);
 
         public void AddRunStep(IRunStep step) => root.AddRunStep(pluginId, step);
+
+        public void AddLogParser(ILogParser parser) => root.AddLogParser(pluginId, parser);
+
+        public void AddHighlightRuleProvider(IHighlightRuleProvider provider) =>
+            root.AddHighlightRuleProvider(pluginId, provider);
+
+        public void AddTestRunner(ITestRunner runner) => root.AddTestRunner(pluginId, runner);
 
         public string? GetOwner(Type extensionType) => root.GetOwner(extensionType);
 
