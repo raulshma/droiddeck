@@ -1,7 +1,10 @@
 using System.Runtime.InteropServices;
+using DroidDeck.App.Commands;
+using DroidDeck.App.Controls;
 using DroidDeck.App.Services;
 using DroidDeck.App.Views;
 using DroidDeck.Core;
+using DroidDeck.Core.Commands;
 using DroidDeck.Core.Configuration;
 using DroidDeck.Core.Devices;
 using DroidDeck.Core.Diagnostics;
@@ -16,11 +19,13 @@ using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Graphics;
 using Windows.Storage;
 using Windows.Storage.Pickers;
+using Windows.System;
 using WinRT.Interop;
 
 namespace DroidDeck.App;
@@ -63,10 +68,15 @@ public sealed partial class MainWindow : Window
     private readonly SessionWorkspace _workspace;
     private readonly INotificationService _notifications;
     private readonly IResourceGuard _resourceGuard;
+    private readonly ICommandRegistry _commands;
+    private readonly KeybindingMap _keybindings;
+    private readonly ShellCommandCatalog _commandCatalog;
     private readonly ILogger<MainWindow> _logger;
     private readonly Dictionary<string, Page> _pages = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<KeyboardAccelerator> _accelerators = [];
     private readonly DispatcherTimer _statusTimer;
     private readonly DispatcherTimer _messageTimer;
+    private CommandPaletteOverlay? _palette;
     private bool _suppressSelectionChanged;
     private bool _placementRestored;
     private bool _allowClose;
@@ -84,6 +94,8 @@ public sealed partial class MainWindow : Window
         SessionWorkspace workspace,
         INotificationService notifications,
         IResourceGuard resourceGuard,
+        ICommandRegistry commands,
+        KeybindingMap keybindings,
         ILogger<MainWindow> logger)
     {
         _services = services ?? throw new ArgumentNullException(nameof(services));
@@ -95,6 +107,8 @@ public sealed partial class MainWindow : Window
         _workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
         _notifications = notifications ?? throw new ArgumentNullException(nameof(notifications));
         _resourceGuard = resourceGuard ?? throw new ArgumentNullException(nameof(resourceGuard));
+        _commands = commands ?? throw new ArgumentNullException(nameof(commands));
+        _keybindings = keybindings ?? throw new ArgumentNullException(nameof(keybindings));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
         InitializeComponent();
@@ -110,6 +124,15 @@ public sealed partial class MainWindow : Window
         _resourceGuard.WarningRaised += OnResourceWarningRaised;
         AppWindow.Closing += OnAppWindowClosing;
         Closed += OnClosed;
+
+        // Keybindings load synchronously because the accelerators below need them
+        // before the shell becomes interactive; the file is a few kilobytes at most.
+        _keybindings.EnsureLoaded();
+        _commandCatalog = new ShellCommandCatalog(_commands, _pluginHost, this);
+        _commandCatalog.RegisterShellCommands();
+        RegisterAccelerators();
+        _commands.Changed += OnCommandSetChanged;
+        _keybindings.Changed += OnCommandSetChanged;
 
         _statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         _statusTimer.Tick += (_, _) => UpdateStatus();
@@ -157,6 +180,167 @@ public sealed partial class MainWindow : Window
 
     /// <summary>Allows the window to close after application services are disposed.</summary>
     public void AllowClose() => _allowClose = true;
+
+    /// <summary>Gets whether a page key is registered for navigation.</summary>
+    internal static bool IsKnownPageKey(string key) => PageTypes.ContainsKey(key);
+
+    /// <summary>Gets the cached page for a key, when it has been created.</summary>
+    internal Page? TryGetPage(string key) => _pages.TryGetValue(key, out var page) ? page : null;
+
+    /// <summary>Collapses or expands the navigation pane.</summary>
+    public void ToggleNavigationPane() => Navigation.IsPaneOpen = !Navigation.IsPaneOpen;
+
+    /// <summary>Shows the command palette overlay, creating it on first use.</summary>
+    public void OpenCommandPalette()
+    {
+        if (_palette is null)
+        {
+            _palette = new CommandPaletteOverlay(_commands, _keybindings);
+            _palette.Opened += (_, _) => SetAcceleratorsEnabled(false);
+            _palette.Closed += (_, _) => SetAcceleratorsEnabled(true);
+            _palette.ExecuteRequested += OnPaletteExecuteRequested;
+            Grid.SetRowSpan(_palette, 3);
+            RootGrid.Children.Add(_palette);
+        }
+
+        _palette.Open();
+    }
+
+    /// <summary>Runs the APK picker and install flow; used by the command palette.</summary>
+    public Task InstallApkAsync() => PickAndInstallApkAsync();
+
+    private async void OnInstallApkClick(object sender, RoutedEventArgs e) => await PickAndInstallApkAsync();
+
+    private async Task PickAndInstallApkAsync()
+    {
+        if (_apkInstallBusy)
+        {
+            ShowStatusMessage("An APK install is already in progress.");
+            return;
+        }
+
+        try
+        {
+            var picker = new FileOpenPicker
+            {
+                SuggestedStartLocation = PickerLocationId.Downloads,
+                ViewMode = PickerViewMode.List,
+            };
+            picker.FileTypeFilter.Add(".apk");
+            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
+            var files = await picker.PickMultipleFilesAsync();
+            if (files.Count > 0)
+            {
+                await ShowApkInstallAsync(files.Select(file => file.Path).ToArray());
+            }
+        }
+        catch (Exception exception) when (
+            exception is COMException or InvalidOperationException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(exception, "The APK picker could not be opened.");
+            ShowStatusMessage("The APK picker could not be opened.");
+        }
+    }
+
+    private void OnPaletteExecuteRequested(object? sender, CommandDefinition command)
+    {
+        _palette?.Close();
+        _ = ExecuteCommandAsync(command);
+    }
+
+    private async Task ExecuteCommandAsync(CommandDefinition command)
+    {
+        if (!command.IsEnabled)
+        {
+            ShowStatusMessage($"'{command.Title}' is not available right now.");
+            return;
+        }
+
+        try
+        {
+            await command.Execute(CancellationToken.None);
+        }
+        catch (OperationCanceledException)
+        {
+            // Cancellation is a normal outcome for cancellable commands.
+        }
+        catch (Exception exception)
+        {
+            // Commands may come from plugins, so any failure is contained here.
+            _logger.LogWarning(exception, "The command {CommandId} failed.", command.Id);
+            ShowStatusMessage($"'{command.Title}' failed: {exception.Message}");
+        }
+    }
+
+    private void OnCommandSetChanged(object? sender, EventArgs e) =>
+        DispatcherQueue.TryEnqueue(RegisterAccelerators);
+
+    private void RegisterAccelerators()
+    {
+        foreach (var accelerator in _accelerators)
+        {
+            RootGrid.KeyboardAccelerators.Remove(accelerator);
+        }
+
+        _accelerators.Clear();
+        foreach (var command in _commands.Commands)
+        {
+            var gesture = _keybindings.GetEffectiveShortcut(command);
+            if (gesture is null || !ShortcutKeys.TryGetVirtualKey(gesture.Key, out var key))
+            {
+                continue;
+            }
+
+            var accelerator = new KeyboardAccelerator
+            {
+                Modifiers = ToVirtualKeyModifiers(gesture.Modifiers),
+                Key = key,
+            };
+            accelerator.Invoked += (sender, args) =>
+            {
+                args.Handled = true;
+                _ = ExecuteCommandAsync(command);
+            };
+            RootGrid.KeyboardAccelerators.Add(accelerator);
+            _accelerators.Add(accelerator);
+        }
+
+        SetAcceleratorsEnabled(_palette is null || !_palette.IsOpen);
+    }
+
+    private void SetAcceleratorsEnabled(bool enabled)
+    {
+        foreach (var accelerator in _accelerators)
+        {
+            accelerator.IsEnabled = enabled;
+        }
+    }
+
+    private static VirtualKeyModifiers ToVirtualKeyModifiers(KeyModifiers modifiers)
+    {
+        VirtualKeyModifiers result = VirtualKeyModifiers.None;
+        if (modifiers.HasFlag(KeyModifiers.Control))
+        {
+            result |= VirtualKeyModifiers.Control;
+        }
+
+        if (modifiers.HasFlag(KeyModifiers.Shift))
+        {
+            result |= VirtualKeyModifiers.Shift;
+        }
+
+        if (modifiers.HasFlag(KeyModifiers.Alt))
+        {
+            result |= VirtualKeyModifiers.Menu;
+        }
+
+        if (modifiers.HasFlag(KeyModifiers.Windows))
+        {
+            result |= VirtualKeyModifiers.Windows;
+        }
+
+        return result;
+    }
 
     /// <summary>Shows the window and brings it to the foreground.</summary>
     public void BringToFront()
@@ -313,37 +497,6 @@ public sealed partial class MainWindow : Window
     }
 
     private void OnFinishSetupClick(object sender, RoutedEventArgs e) => Navigate("onboarding");
-
-    private async void OnInstallApkClick(object sender, RoutedEventArgs e)
-    {
-        if (_apkInstallBusy)
-        {
-            ShowStatusMessage("An APK install is already in progress.");
-            return;
-        }
-
-        try
-        {
-            var picker = new FileOpenPicker
-            {
-                SuggestedStartLocation = PickerLocationId.Downloads,
-                ViewMode = PickerViewMode.List,
-            };
-            picker.FileTypeFilter.Add(".apk");
-            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
-            var files = await picker.PickMultipleFilesAsync();
-            if (files.Count > 0)
-            {
-                await ShowApkInstallAsync(files.Select(file => file.Path).ToArray());
-            }
-        }
-        catch (Exception exception) when (
-            exception is COMException or InvalidOperationException or UnauthorizedAccessException)
-        {
-            _logger.LogWarning(exception, "The APK picker could not be opened.");
-            ShowStatusMessage("The APK picker could not be opened.");
-        }
-    }
 
     private void OnRootDragOver(object sender, DragEventArgs e)
     {
@@ -695,6 +848,9 @@ public sealed partial class MainWindow : Window
         _devices.DevicesChanged -= OnDevicesChanged;
         _notifications.NotificationRaised -= OnNotificationRaised;
         _resourceGuard.WarningRaised -= OnResourceWarningRaised;
+        _commands.Changed -= OnCommandSetChanged;
+        _keybindings.Changed -= OnCommandSetChanged;
+        _commandCatalog.Detach();
         AppWindow.Closing -= OnAppWindowClosing;
         foreach (var page in _pages.Values.OfType<IDisposable>())
         {

@@ -11,6 +11,7 @@ using DroidDeck.Adb.Wireless;
 using DroidDeck.App.Services;
 using DroidDeck.App.Views;
 using DroidDeck.Core;
+using DroidDeck.Core.Commands;
 using DroidDeck.Core.Configuration;
 using DroidDeck.Core.Devices;
 using DroidDeck.Core.Diagnostics;
@@ -284,6 +285,10 @@ public partial class App : Application, IDisposable
                 logger: loggerFactory.CreateLogger<DeviceService>());
         });
         services.AddSingleton<IDiagnosticsService, DiagnosticsService>();
+        services.AddSingleton<ICommandRegistry, CommandRegistry>();
+        services.AddSingleton(provider => new KeybindingMap(
+            provider.GetRequiredService<ICommandRegistry>(),
+            Path.Combine(_paths.DataDirectory, "keybindings.json")));
 
         services.AddSingleton<SessionWorkspace>();
         services.AddSingleton<IProjectStore>(provider => new JsonProjectStore(

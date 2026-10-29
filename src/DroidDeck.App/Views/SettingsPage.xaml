@@ -385,6 +385,63 @@
             </Border>
 
             <Border Style="{StaticResource CardBorderStyle}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="Keyboard shortcuts" Style="{StaticResource SectionHeaderStyle}" />
+                    <TextBlock
+                        Text="Commands are also available from the command palette (Ctrl+K by default). Click Change and press a key combination to remap a shortcut. A shortcut that is already used by another command is rejected; reset that command first."
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                    <InfoBar
+                        x:Name="ShortcutConflictBar"
+                        Severity="Warning"
+                        Title="Shortcut conflict"
+                        IsOpen="False"
+                        IsClosable="True"
+                        AutomationProperties.AutomationId="ShortcutConflictBar" />
+                    <ItemsControl x:Name="ShortcutList" AutomationProperties.AutomationId="ShortcutList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="viewModels:ShortcutRow">
+                                <Grid Padding="0,4" ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Spacing="0" VerticalAlignment="Center">
+                                        <TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock
+                                            Text="{x:Bind Category}"
+                                            FontSize="12"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </StackPanel>
+                                    <TextBlock
+                                        Grid.Column="1"
+                                        Text="{x:Bind Shortcut}"
+                                        FontFamily="Consolas"
+                                        FontSize="12"
+                                        VerticalAlignment="Center"
+                                        AutomationProperties.AutomationId="{x:Bind ShortcutId}" />
+                                    <Button
+                                        Grid.Column="2"
+                                        Content="Change"
+                                        Click="OnChangeShortcutClick"
+                                        AutomationProperties.AutomationId="{x:Bind ChangeId}" />
+                                    <Button
+                                        Grid.Column="3"
+                                        Content="Reset"
+                                        Click="OnResetShortcutClick"
+                                        Visibility="{x:Bind ResetVisibility}"
+                                        AutomationProperties.AutomationId="{x:Bind ResetId}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorderStyle}">
                 <StackPanel Spacing="6">
                     <TextBlock Text="About" Style="{StaticResource SectionHeaderStyle}" />
                     <TextBlock x:Name="VersionText" Style="{StaticResource FieldValueStyle}" />
