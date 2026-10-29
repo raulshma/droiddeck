@@ -1,4 +1,5 @@
 using System.Text;
+using DroidDeck.App.Services;
 using DroidDeck.Core.Devices;
 using DroidDeck.Core.Projects;
 using DroidDeck.Core.Testing;
@@ -21,6 +22,7 @@ public sealed partial class TestsPage : Page, IRefreshablePage, IDisposable
     private readonly IProjectService _projects;
     private readonly IDeviceService _devices;
     private readonly ITestRunService _testRuns;
+    private readonly PluginHost _plugins;
     private readonly DispatcherQueue? _dispatcher;
     private CancellationTokenSource? _cts;
     private TestRunSummary? _lastSummary;
@@ -31,15 +33,18 @@ public sealed partial class TestsPage : Page, IRefreshablePage, IDisposable
     public TestsPage(
         IProjectService projects,
         IDeviceService devices,
-        ITestRunService testRuns)
+        ITestRunService testRuns,
+        PluginHost plugins)
     {
         _projects = projects ?? throw new ArgumentNullException(nameof(projects));
         _devices = devices ?? throw new ArgumentNullException(nameof(devices));
         _testRuns = testRuns ?? throw new ArgumentNullException(nameof(testRuns));
+        _plugins = plugins ?? throw new ArgumentNullException(nameof(plugins));
         _dispatcher = DispatcherQueue.GetForCurrentThread();
 
         InitializeComponent();
         _devices.DevicesChanged += OnDevicesChanged;
+        _plugins.Registry.Changed += OnPluginRegistryChanged;
         RefreshDevices();
         _ = LoadProjectsAsync();
         ShowGuidance("Choose a project and runner, then run tests. Select devices for connected or multi-device runs.");
@@ -69,6 +74,7 @@ public sealed partial class TestsPage : Page, IRefreshablePage, IDisposable
 
         _disposed = true;
         _devices.DevicesChanged -= OnDevicesChanged;
+        _plugins.Registry.Changed -= OnPluginRegistryChanged;
         _cts?.Cancel();
         _cts?.Dispose();
     }
@@ -88,6 +94,8 @@ public sealed partial class TestsPage : Page, IRefreshablePage, IDisposable
     }
 
     private void OnDevicesChanged(object? sender, DeviceListChangedEventArgs e) => Dispatch(RefreshDevices);
+
+    private void OnPluginRegistryChanged(object? sender, EventArgs e) => Dispatch(PopulateRunners);
 
     private void RefreshDevices()
     {
@@ -150,10 +158,15 @@ public sealed partial class TestsPage : Page, IRefreshablePage, IDisposable
     private void PopulateRunners()
     {
         var project = ProjectCombo.SelectedItem as ProjectModel;
-        var choices = project is null ? [] : GetRunnerChoices(project);
-        var previous = (RunnerCombo.SelectedItem as RunnerChoice)?.Kind;
+        var choices = project is null
+            ? []
+            : TestRunnerCatalog
+                .GetChoices(project.Kind, _plugins.Registry.TestRunners)
+                .Select(choice => new RunnerChoice(choice))
+                .ToList();
+        var previous = RunnerCombo.SelectedItem as RunnerChoice;
         RunnerCombo.ItemsSource = choices;
-        RunnerCombo.SelectedItem = choices.FirstOrDefault(choice => choice.Kind == previous)
+        RunnerCombo.SelectedItem = choices.FirstOrDefault(choice => choice.Matches(previous))
             ?? choices.FirstOrDefault();
         UpdateCustomPanel();
     }
@@ -173,6 +186,20 @@ public sealed partial class TestsPage : Page, IRefreshablePage, IDisposable
         {
             ShowGuidance("Point the command at the test tool and at a JUnit XML result glob.");
         }
+        else if (runner?.Kind == TestRunnerKind.Plugin)
+        {
+            var description = _plugins.Registry.TestRunners
+                .FirstOrDefault(extension => string.Equals(
+                    extension.Value.Id,
+                    runner.PluginRunnerId,
+                    StringComparison.OrdinalIgnoreCase))
+                ?.Value.Description;
+            ShowGuidance(string.IsNullOrWhiteSpace(description)
+                ? runner.RequiresDevice
+                    ? "Select at least one device; this runner needs a connected device."
+                    : "This runner is provided by a plugin."
+                : description);
+        }
     }
 
     private async void OnRefreshClick(object sender, RoutedEventArgs e)
@@ -189,6 +216,16 @@ public sealed partial class TestsPage : Page, IRefreshablePage, IDisposable
         if (failed.Count == 0)
         {
             ShowGuidance("There are no failing tests to rerun.");
+            return;
+        }
+
+        if (_lastSummary?.PluginRunnerId is { } pluginRunnerId &&
+            _plugins.Registry.TestRunners.FirstOrDefault(extension => string.Equals(
+                extension.Value.Id,
+                pluginRunnerId,
+                StringComparison.OrdinalIgnoreCase))?.Value.SupportsRerun == false)
+        {
+            ShowGuidance("This runner does not support rerunning only the failing tests.");
             return;
         }
 
@@ -229,6 +266,7 @@ public sealed partial class TestsPage : Page, IRefreshablePage, IDisposable
             Project = project,
             Configuration = configuration,
             Runner = runner.Kind,
+            PluginRunnerId = runner.PluginRunnerId,
             DeviceSerials = DeviceList.SelectedItems
                 .OfType<DeviceChoice>()
                 .Select(choice => choice.Device.Serial)
@@ -623,32 +661,6 @@ public sealed partial class TestsPage : Page, IRefreshablePage, IDisposable
         ];
     }
 
-    private static List<RunnerChoice> GetRunnerChoices(ProjectModel project) => project.Kind switch
-    {
-        ProjectKind.AndroidGradle or ProjectKind.KotlinMultiplatform or ProjectKind.Capacitor or ProjectKind.Cordova =>
-        [
-            new(TestRunnerKind.GradleUnit, "Gradle unit tests"),
-            new(TestRunnerKind.GradleConnected, "Gradle connected tests"),
-            new(TestRunnerKind.Custom, "Custom command"),
-        ],
-        ProjectKind.Flutter =>
-        [
-            new(TestRunnerKind.Flutter, "Flutter tests"),
-            new(TestRunnerKind.Custom, "Custom command"),
-        ],
-        ProjectKind.ReactNative =>
-        [
-            new(TestRunnerKind.Jest, "Jest tests"),
-            new(TestRunnerKind.Custom, "Custom command"),
-        ],
-        ProjectKind.Maui =>
-        [
-            new(TestRunnerKind.DotNet, ".NET tests"),
-            new(TestRunnerKind.Custom, "Custom command"),
-        ],
-        _ => [new(TestRunnerKind.Custom, "Custom command")],
-    };
-
     private static string Describe(TestStatus status) => status switch
     {
         TestStatus.Passed => "Passed",
@@ -687,11 +699,14 @@ public sealed partial class TestsPage : Page, IRefreshablePage, IDisposable
     /// <summary>A runner shaped for the picker.</summary>
     public sealed class RunnerChoice
     {
-        /// <summary>Creates a runner choice.</summary>
-        public RunnerChoice(TestRunnerKind kind, string label)
+        /// <summary>Creates a runner choice from a catalog entry.</summary>
+        public RunnerChoice(TestRunnerChoice choice)
         {
-            Kind = kind;
-            Label = label;
+            ArgumentNullException.ThrowIfNull(choice);
+            Kind = choice.Kind;
+            Label = choice.Label;
+            PluginRunnerId = choice.PluginRunnerId;
+            RequiresDevice = choice.RequiresDevice;
         }
 
         /// <summary>Gets the runner kind.</summary>
@@ -699,6 +714,18 @@ public sealed partial class TestsPage : Page, IRefreshablePage, IDisposable
 
         /// <summary>Gets the picker label.</summary>
         public string Label { get; }
+
+        /// <summary>Gets the registered runner identifier for plugin runners.</summary>
+        public string? PluginRunnerId { get; }
+
+        /// <summary>Gets whether the runner needs a connected device.</summary>
+        public bool RequiresDevice { get; }
+
+        /// <summary>Returns whether another choice selects the same runner.</summary>
+        public bool Matches(RunnerChoice? other) =>
+            other is not null &&
+            other.Kind == Kind &&
+            string.Equals(other.PluginRunnerId, PluginRunnerId, StringComparison.OrdinalIgnoreCase);
     }
 
     private sealed class DeviceNode

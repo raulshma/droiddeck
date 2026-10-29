@@ -24,6 +24,9 @@ public enum TestRunnerKind
 
     /// <summary>A user-supplied command that writes JUnit XML.</summary>
     Custom,
+
+    /// <summary>A test runner registered by a plugin or built in.</summary>
+    Plugin,
 }
 
 /// <summary>One failing test selected for a rerun.</summary>

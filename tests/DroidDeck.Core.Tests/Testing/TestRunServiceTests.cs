@@ -1,6 +1,8 @@
 using DroidDeck.Core.Processes;
 using DroidDeck.Core.Projects;
 using DroidDeck.Core.Testing;
+using DroidDeck.Plugin.Abstractions;
+using TestPluginRegistry = DroidDeck.TestSupport.TestPluginRegistry;
 
 namespace DroidDeck.Core.Tests.Testing;
 
@@ -287,6 +289,206 @@ public sealed class TestRunServiceTests
         Assert.Contains("No test result files", Assert.Single(device.Errors), StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task RunAsync_PluginRunnerKindWithoutAnIdFailsWithGuidance()
+    {
+        var service = new TestRunService(new FakePlanBuilder(), new FakeProcessRunner());
+
+        var summary = await service.RunAsync(new TestRunRequest
+        {
+            Project = CreateProject(Path.GetTempPath()),
+            Configuration = CreateConfiguration(),
+            Runner = TestRunnerKind.Plugin,
+        });
+
+        var device = Assert.Single(summary.Devices);
+        Assert.Equal(TestRunOutcome.Failed, device.Outcome);
+        Assert.Contains(
+            "registered test runner",
+            Assert.Single(device.Errors),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RunAsync_ExecutesRegisteredPluginRunnerAndMapsResults()
+    {
+        using var directory = new TempDirectory();
+        var registry = new TestPluginRegistry();
+        var runner = new StubTestRunner("plugin.runner")
+        {
+            Result = new PluginTestRunResult(
+                true,
+                [
+                    new PluginTestSuite("Login", [
+                        new PluginTestCase("logsIn", PluginTestStatus.Passed),
+                        new PluginTestCase(
+                            "logsOut",
+                            PluginTestStatus.Failed,
+                            ClassName: "LoginTests",
+                            Message: "assertion failed"),
+                    ]),
+                ],
+                Output: "plugin output"),
+        };
+        registry.AddTestRunner(runner);
+        var planBuilder = new FakePlanBuilder();
+        var service = new TestRunService(planBuilder, new FakeProcessRunner(), plugins: registry);
+        var target = new TestTarget { ClassName = "LoginTests", Name = "logsIn" };
+
+        var summary = await service.RunAsync(new TestRunRequest
+        {
+            Project = CreateProject(directory.Path),
+            Configuration = CreateConfiguration(),
+            Runner = TestRunnerKind.Plugin,
+            PluginRunnerId = "plugin.runner",
+            FailedTests = [target],
+        });
+
+        Assert.True(summary.IsSuccess);
+        Assert.Equal("plugin.runner", summary.PluginRunnerId);
+        var device = Assert.Single(summary.Devices);
+        Assert.Null(device.DeviceSerial);
+        Assert.Equal(TestRunOutcome.Passed, device.Outcome);
+        Assert.Equal(2, device.TotalCount);
+        Assert.Equal(1, device.FailedCount);
+        Assert.Contains("plugin output", device.Output, StringComparison.Ordinal);
+        Assert.Empty(planBuilder.Requests);
+
+        var context = Assert.Single(runner.Contexts);
+        Assert.Equal(directory.Path, context.ProjectRoot);
+        Assert.Equal("Sample", context.ProjectName);
+        Assert.Equal("debug", context.VariantName);
+        Assert.Null(context.DeviceSerial);
+        var failed = Assert.Single(context.FailedTests);
+        Assert.Equal("LoginTests", failed.ClassName);
+        Assert.Equal("logsIn", failed.Name);
+    }
+
+    [Fact]
+    public async Task RunAsync_UnregisteredPluginRunnerFailsWithGuidance()
+    {
+        using var directory = new TempDirectory();
+        var service = new TestRunService(
+            new FakePlanBuilder(),
+            new FakeProcessRunner(),
+            plugins: new TestPluginRegistry());
+
+        var summary = await service.RunAsync(new TestRunRequest
+        {
+            Project = CreateProject(directory.Path),
+            Configuration = CreateConfiguration(),
+            Runner = TestRunnerKind.Plugin,
+            PluginRunnerId = "plugin.missing",
+        });
+
+        var device = Assert.Single(summary.Devices);
+        Assert.Equal(TestRunOutcome.Failed, device.Outcome);
+        var error = Assert.Single(device.Errors);
+        Assert.Contains("plugin.missing", error, StringComparison.Ordinal);
+        Assert.Contains("not registered", error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunAsync_PluginRunnerThatNeedsADeviceRequiresOne()
+    {
+        using var directory = new TempDirectory();
+        var registry = new TestPluginRegistry();
+        var runner = new StubTestRunner("plugin.device") { RequiresDevice = true };
+        registry.AddTestRunner(runner);
+        var service = new TestRunService(new FakePlanBuilder(), new FakeProcessRunner(), plugins: registry);
+
+        var summary = await service.RunAsync(new TestRunRequest
+        {
+            Project = CreateProject(directory.Path),
+            Configuration = CreateConfiguration(),
+            Runner = TestRunnerKind.Plugin,
+            PluginRunnerId = "plugin.device",
+        });
+
+        var device = Assert.Single(summary.Devices);
+        Assert.Equal(TestRunOutcome.Failed, device.Outcome);
+        Assert.Contains("device", Assert.Single(device.Errors), StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(runner.Contexts);
+    }
+
+    [Fact]
+    public async Task RunAsync_RunsPluginRunnerOncePerDevice()
+    {
+        using var directory = new TempDirectory();
+        var registry = new TestPluginRegistry();
+        var runner = new StubTestRunner("plugin.device")
+        {
+            RequiresDevice = true,
+            Result = new PluginTestRunResult(true, [new PluginTestSuite("Suite", [new PluginTestCase("t", PluginTestStatus.Passed)])]),
+        };
+        registry.AddTestRunner(runner);
+        var service = new TestRunService(new FakePlanBuilder(), new FakeProcessRunner(), plugins: registry);
+
+        var summary = await service.RunAsync(new TestRunRequest
+        {
+            Project = CreateProject(directory.Path),
+            Configuration = CreateConfiguration(),
+            Runner = TestRunnerKind.Plugin,
+            PluginRunnerId = "plugin.device",
+            DeviceSerials = ["emulator-5554", "emulator-5556"],
+        });
+
+        Assert.True(summary.IsSuccess);
+        Assert.Equal(2, summary.Devices.Count);
+        string?[] expectedSerials = ["emulator-5554", "emulator-5556"];
+        Assert.Equal(
+            expectedSerials,
+            runner.Contexts.Select(context => context.DeviceSerial).OrderBy(serial => serial).ToArray());
+    }
+
+    [Fact]
+    public async Task RunAsync_PluginRunnerFailureIsReported()
+    {
+        using var directory = new TempDirectory();
+        var registry = new TestPluginRegistry();
+        registry.AddTestRunner(new StubTestRunner("plugin.runner")
+        {
+            Result = new PluginTestRunResult(false, Error: "the toolchain is missing"),
+        });
+        var service = new TestRunService(new FakePlanBuilder(), new FakeProcessRunner(), plugins: registry);
+
+        var summary = await service.RunAsync(new TestRunRequest
+        {
+            Project = CreateProject(directory.Path),
+            Configuration = CreateConfiguration(),
+            Runner = TestRunnerKind.Plugin,
+            PluginRunnerId = "plugin.runner",
+        });
+
+        var device = Assert.Single(summary.Devices);
+        Assert.Equal(TestRunOutcome.Failed, device.Outcome);
+        Assert.Contains("the toolchain is missing", Assert.Single(device.Errors), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunAsync_PluginRunnerExceptionIsIsolated()
+    {
+        using var directory = new TempDirectory();
+        var registry = new TestPluginRegistry();
+        registry.AddTestRunner(new StubTestRunner("plugin.runner")
+        {
+            Throw = new InvalidOperationException("kaboom"),
+        });
+        var service = new TestRunService(new FakePlanBuilder(), new FakeProcessRunner(), plugins: registry);
+
+        var summary = await service.RunAsync(new TestRunRequest
+        {
+            Project = CreateProject(directory.Path),
+            Configuration = CreateConfiguration(),
+            Runner = TestRunnerKind.Plugin,
+            PluginRunnerId = "plugin.runner",
+        });
+
+        var device = Assert.Single(summary.Devices);
+        Assert.Equal(TestRunOutcome.Failed, device.Outcome);
+        Assert.Contains("kaboom", Assert.Single(device.Errors), StringComparison.Ordinal);
+    }
+
     private static ProjectModel CreateProject(string root) => new()
     {
         Id = "sample",
@@ -330,6 +532,41 @@ public sealed class TestRunServiceTests
         {
             Requests.Add(request);
             return Task.FromResult(Handler(request));
+        }
+    }
+
+    private sealed class StubTestRunner(string id) : ITestRunner
+    {
+        public string Id => id;
+
+        public string Name => id;
+
+        public string? Description => null;
+
+        public bool RequiresDevice { get; init; }
+
+        public bool SupportsRerun { get; init; }
+
+        public PluginTestRunResult Result { get; init; } = new(true);
+
+        public Exception? Throw { get; init; }
+
+        public List<TestRunnerContext> Contexts { get; } = [];
+
+        public Task<PluginTestRunResult> RunAsync(TestRunnerContext context, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (Contexts)
+            {
+                Contexts.Add(context);
+            }
+
+            if (Throw is not null)
+            {
+                throw Throw;
+            }
+
+            return Task.FromResult(Result);
         }
     }
 

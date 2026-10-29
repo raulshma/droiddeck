@@ -51,6 +51,9 @@ public sealed class TestPlanBuilder : ITestPlanBuilder
             case TestRunnerKind.Custom:
                 BuildCustom(request, plan);
                 break;
+            case TestRunnerKind.Plugin:
+                plan.Errors.Add("Select a registered test runner before running tests.");
+                break;
             default:
                 plan.Errors.Add($"The {request.Runner} runner is not supported yet.");
                 break;

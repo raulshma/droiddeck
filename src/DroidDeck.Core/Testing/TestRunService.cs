@@ -1,25 +1,29 @@
 using System.Text;
 using DroidDeck.Core.Devices;
 using DroidDeck.Core.Processes;
+using DroidDeck.Plugin.Abstractions;
 
 namespace DroidDeck.Core.Testing;
 
-/// <summary>Runs test plans on the host or on several devices in parallel.</summary>
+/// <summary>Runs test plans and registered plugin runners on the host or several devices in parallel.</summary>
 public sealed class TestRunService : ITestRunService
 {
     private readonly ITestPlanBuilder _plans;
     private readonly IProcessRunner _processes;
     private readonly IDeviceOperationCoordinator? _coordinator;
+    private readonly IPluginRegistry? _plugins;
 
     /// <summary>Creates a runner that uses the supplied plan builder and process runner.</summary>
     public TestRunService(
         ITestPlanBuilder plans,
         IProcessRunner processes,
-        IDeviceOperationCoordinator? coordinator = null)
+        IDeviceOperationCoordinator? coordinator = null,
+        IPluginRegistry? plugins = null)
     {
         _plans = plans ?? throw new ArgumentNullException(nameof(plans));
         _processes = processes ?? throw new ArgumentNullException(nameof(processes));
         _coordinator = coordinator;
+        _plugins = plugins;
     }
 
     /// <inheritdoc />
@@ -29,7 +33,11 @@ public sealed class TestRunService : ITestRunService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var summary = new TestRunSummary { Runner = request.Runner };
+        var summary = new TestRunSummary
+        {
+            Runner = request.Runner,
+            PluginRunnerId = request.PluginRunnerId,
+        };
         var serials = request.DeviceSerials
             .Where(serial => !string.IsNullOrWhiteSpace(serial))
             .Distinct(StringComparer.Ordinal)
@@ -38,6 +46,64 @@ public sealed class TestRunService : ITestRunService
             Path.GetTempPath(),
             "droiddeck-tests",
             Guid.NewGuid().ToString("N"));
+        if (request.Runner == TestRunnerKind.Plugin &&
+            string.IsNullOrWhiteSpace(request.PluginRunnerId))
+        {
+            summary.Devices.Add(new TestRunDeviceResult
+            {
+                Errors = { "Select a registered test runner before running tests." },
+            });
+            return summary;
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.PluginRunnerId))
+        {
+            var pluginRunner = ResolvePluginRunner(request.PluginRunnerId);
+            if (pluginRunner is null)
+            {
+                summary.Devices.Add(new TestRunDeviceResult
+                {
+                    Errors =
+                    {
+                        $"The test runner '{request.PluginRunnerId}' is not registered. " +
+                        "Install the plugin that provides it and restart DroidDeck.",
+                    },
+                });
+                return summary;
+            }
+
+            if (pluginRunner.RequiresDevice && serials.Length == 0)
+            {
+                summary.Devices.Add(new TestRunDeviceResult
+                {
+                    Errors =
+                    {
+                        $"The test runner '{pluginRunner.Name}' requires a connected device. " +
+                        "Select at least one device.",
+                    },
+                });
+                return summary;
+            }
+
+            string?[] pluginTargets = serials.Length == 0
+                ? [null]
+                : Array.ConvertAll(serials, serial => (string?)serial);
+            var pluginTasks = pluginTargets
+                .Select(serial => RunPluginDeviceAsync(
+                    pluginRunner,
+                    request,
+                    serial,
+                    Path.Combine(runDirectory, serial is null ? "host" : Sanitize(serial)),
+                    progress,
+                    cancellationToken))
+                .ToArray();
+            var pluginResults = await Task.WhenAll(pluginTasks).ConfigureAwait(false);
+            summary.Devices.AddRange(pluginResults);
+            summary.IsCanceled = cancellationToken.IsCancellationRequested ||
+                                 pluginResults.Any(result => result.Outcome == TestRunOutcome.Cancelled);
+            return summary;
+        }
+
         if (serials.Length == 0)
         {
             var result = await RunDeviceAsync(
@@ -65,6 +131,153 @@ public sealed class TestRunService : ITestRunService
                              results.Any(result => result.Outcome == TestRunOutcome.Cancelled);
         return summary;
     }
+
+    private ITestRunner? ResolvePluginRunner(string pluginRunnerId)
+    {
+        if (_plugins is null)
+        {
+            return null;
+        }
+
+        return _plugins.TestRunners.FirstOrDefault(extension =>
+            string.Equals(extension.Value.Id, pluginRunnerId, StringComparison.OrdinalIgnoreCase))?.Value;
+    }
+
+    private async Task<TestRunDeviceResult> RunPluginDeviceAsync(
+        ITestRunner runner,
+        TestRunRequest request,
+        string? serial,
+        string resultDirectory,
+        IProgress<TestRunProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        var result = new TestRunDeviceResult { DeviceSerial = serial };
+        Directory.CreateDirectory(resultDirectory);
+        progress?.Report(new TestRunProgress
+        {
+            DeviceSerial = serial,
+            Message = $"Running {runner.Name}",
+            Kind = TestRunProgressKind.Started,
+        });
+
+        PluginTestRunResult runResult;
+        IAsyncDisposable? lease = null;
+        try
+        {
+            if (runner.RequiresDevice && serial is not null && _coordinator is not null)
+            {
+                lease = await _coordinator
+                    .AcquireAsync(serial, $"tests: {runner.Name}", cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            runResult = await runner.RunAsync(
+                BuildPluginContext(request, serial, resultDirectory),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            result.Outcome = TestRunOutcome.Cancelled;
+            return result;
+        }
+        catch (Exception exception)
+        {
+            result.Errors.Add($"The test runner '{runner.Name}' failed: {exception.Message}");
+            return result;
+        }
+        finally
+        {
+            if (lease is not null)
+            {
+                await lease.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+
+        result.Output = runResult.Output ?? string.Empty;
+        if (runResult.Suites is not null)
+        {
+            foreach (var suite in runResult.Suites)
+            {
+                result.Suites.Add(MapSuite(suite));
+            }
+        }
+
+        if (!runResult.Succeeded)
+        {
+            result.Errors.Add(string.IsNullOrWhiteSpace(runResult.Error)
+                ? $"The test runner '{runner.Name}' did not produce results."
+                : runResult.Error);
+        }
+        else if (result.Suites.Count == 0)
+        {
+            result.Errors.Add($"The test runner '{runner.Name}' did not report any test cases.");
+        }
+
+        result.Outcome = result.Errors.Count == 0 && result.Suites.Count > 0
+            ? TestRunOutcome.Passed
+            : TestRunOutcome.Failed;
+        progress?.Report(new TestRunProgress
+        {
+            DeviceSerial = serial,
+            Message = $"Finished {runner.Name}",
+            Kind = TestRunProgressKind.Completed,
+        });
+        return result;
+    }
+
+    private static TestRunnerContext BuildPluginContext(
+        TestRunRequest request,
+        string? serial,
+        string resultDirectory) => new()
+    {
+        ProjectRoot = request.Project.RootPath,
+        ProjectName = request.Project.Name,
+        DeviceSerial = serial,
+        VariantName = request.Configuration.VariantName,
+        ModuleName = request.Configuration.ModuleName,
+        PackageName = request.Configuration.Launch.PackageName ?? request.Configuration.Artifact.PackageName,
+        FailedTests = request.FailedTests
+            .Select(target => new TestRunnerTarget(target.ClassName, target.Name, target.FilePath))
+            .ToArray(),
+        ResultDirectory = resultDirectory,
+    };
+
+    private static TestSuiteResult MapSuite(PluginTestSuite suite) => new()
+    {
+        Name = suite.Name,
+        Cases = suite.Cases
+            .Select(test => new TestCaseResult
+            {
+                Name = test.Name,
+                ClassName = test.ClassName,
+                SuiteName = suite.Name,
+                Status = MapStatus(test.Status),
+                Duration = test.DurationSeconds is { } seconds ? TimeSpan.FromSeconds(seconds) : null,
+                Message = test.Message,
+                StackTrace = test.StackTrace,
+                FilePath = test.FilePath,
+                Line = test.Line,
+                Attachments = test.Attachments is null
+                    ? []
+                    : test.Attachments
+                        .Select(attachment => new TestAttachment
+                        {
+                            Name = attachment.Name,
+                            Path = attachment.Path,
+                            Content = attachment.Content,
+                        })
+                        .ToList(),
+            })
+            .ToList(),
+    };
+
+    private static TestStatus MapStatus(PluginTestStatus status) => status switch
+    {
+        PluginTestStatus.Passed => TestStatus.Passed,
+        PluginTestStatus.Failed => TestStatus.Failed,
+        PluginTestStatus.Errored => TestStatus.Errored,
+        _ => TestStatus.Skipped,
+    };
 
     private async Task<TestRunDeviceResult> RunDeviceAsync(
         TestRunRequest request,

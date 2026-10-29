@@ -50,6 +50,9 @@ public sealed class TestRunRequest
     /// <summary>Gets or sets the runner.</summary>
     public TestRunnerKind Runner { get; init; }
 
+    /// <summary>Gets or sets the registered test runner identifier when <see cref="Runner"/> is Plugin.</summary>
+    public string? PluginRunnerId { get; init; }
+
     /// <summary>Gets or sets the devices to run on. Empty runs on the host for host-only runners.</summary>
     public IReadOnlyList<string> DeviceSerials { get; init; } = [];
 
@@ -108,6 +111,9 @@ public sealed class TestRunSummary
 {
     /// <summary>Gets or sets the runner that executed.</summary>
     public TestRunnerKind Runner { get; set; }
+
+    /// <summary>Gets or sets the registered test runner identifier when a plugin runner executed.</summary>
+    public string? PluginRunnerId { get; set; }
 
     /// <summary>Gets or sets the per-device results.</summary>
     public List<TestRunDeviceResult> Devices { get; set; } = [];
