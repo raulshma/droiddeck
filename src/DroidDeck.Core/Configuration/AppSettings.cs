@@ -68,6 +68,9 @@ public sealed class AppSettings
     /// <summary>Gets or sets performance sampling settings.</summary>
     public PerformanceSettings Performance { get; set; } = new();
 
+    /// <summary>Gets or sets UI hierarchy inspector settings.</summary>
+    public InspectorSettings Inspector { get; set; } = new();
+
     /// <summary>Gets or sets unknown keys preserved for forward compatibility.</summary>
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? AdditionalSettings { get; set; }
@@ -190,6 +193,33 @@ public sealed class PerformanceSettings
     /// <summary>Clamps a retention count to the supported range.</summary>
     public static int ClampSampleCount(int samples) =>
         Math.Clamp(samples, MinimumSampleCount, MaximumSampleCount);
+
+    /// <summary>Gets unknown keys preserved for forward compatibility.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalSettings { get; set; }
+}
+
+/// <summary>Settings for the UI hierarchy inspector.</summary>
+public sealed class InspectorSettings
+{
+    /// <summary>The smallest supported hierarchy depth.</summary>
+    public const int MinimumDepth = 1;
+
+    /// <summary>The largest supported hierarchy depth.</summary>
+    public const int MaximumDepth = 100;
+
+    /// <summary>Gets or sets the maximum node depth shown in the tree.</summary>
+    public int MaxDepth { get; set; } = 12;
+
+    /// <summary>Gets or sets whether invisible nodes are shown.</summary>
+    public bool IncludeInvisible { get; set; }
+
+    /// <summary>Gets the depth clamped to the range the inspector supports.</summary>
+    [JsonIgnore]
+    public int EffectiveMaxDepth => ClampDepth(MaxDepth);
+
+    /// <summary>Clamps a hierarchy depth to the supported range.</summary>
+    public static int ClampDepth(int depth) => Math.Clamp(depth, MinimumDepth, MaximumDepth);
 
     /// <summary>Gets unknown keys preserved for forward compatibility.</summary>
     [JsonExtensionData]
@@ -608,4 +638,10 @@ public static class SettingsPaths
 
     /// <summary>Performance sample retention path.</summary>
     public const string PerformanceMaxSamples = "performance.maxSamples";
+
+    /// <summary>Inspector depth limit path.</summary>
+    public const string InspectorMaxDepth = "inspector.maxDepth";
+
+    /// <summary>Inspector invisible-node filter path.</summary>
+    public const string InspectorIncludeInvisible = "inspector.includeInvisible";
 }

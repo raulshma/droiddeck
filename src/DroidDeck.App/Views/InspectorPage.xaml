@@ -20,7 +20,7 @@
             <StackPanel Spacing="2">
                 <TextBlock Text="UI inspector" Style="{StaticResource TitleTextBlockStyle}" />
                 <TextBlock
-                    Text="Dump the current UI hierarchy with uiautomator, inspect node bounds and resources, and filter large trees. The exact commands are shown before execution."
+                    Text="Dump the current UI hierarchy with uiautomator, inspect node bounds on a screenshot, tap elements, and copy selectors. The exact commands are shown before execution."
                     FontSize="12"
                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                     TextWrapping="Wrap" />
@@ -94,10 +94,31 @@
                     PlaceholderText="text, resource id, class, or package"
                     TextChanged="OnSearchChanged"
                     AutomationProperties.AutomationId="InspectorSearchBox" />
+                <NumberBox
+                    x:Name="DepthBox"
+                    Grid.Row="1"
+                    Header="Maximum depth"
+                    Minimum="1"
+                    Maximum="100"
+                    SmallChange="1"
+                    SpinButtonPlacementMode="Compact"
+                    ValueChanged="OnDepthChanged"
+                    AutomationProperties.AutomationId="InspectorDepthBox" />
+                <ToggleSwitch
+                    x:Name="IncludeInvisibleToggle"
+                    Grid.Row="1"
+                    Grid.Column="1"
+                    Header="Invisible nodes"
+                    OnContent="Shown"
+                    OffContent="Hidden"
+                    Margin="4,18,0,0"
+                    Toggled="OnInvisibleToggled"
+                    AutomationProperties.AutomationId="InspectorInvisibleToggle" />
                 <TextBlock
                     x:Name="NodeCountText"
                     Grid.Row="1"
-                    Grid.ColumnSpan="3"
+                    Grid.Column="2"
+                    VerticalAlignment="Bottom"
                     FontSize="12"
                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                     Text="No hierarchy loaded."
@@ -116,7 +137,7 @@
 
         <Grid Grid.Row="3" ColumnSpacing="16">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="460" />
+                <ColumnDefinition Width="420" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
@@ -177,22 +198,67 @@
             </Border>
 
             <Border Grid.Column="1" Style="{StaticResource CardBorderStyle}">
-                <Grid RowSpacing="12">
+                <Grid RowSpacing="10">
                     <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
-                    <TextBlock Text="Selected node" Style="{StaticResource SectionHeaderStyle}" />
-                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+
+                    <Grid
+                        x:Name="ScreenshotHost"
+                        MinHeight="220"
+                        Background="{ThemeResource LayerFillColorDefaultBrush}"
+                        SizeChanged="OnScreenshotHostSizeChanged">
+                        <Image
+                            x:Name="ScreenshotImage"
+                            Stretch="Uniform"
+                            ImageOpened="OnScreenshotOpened" />
+                        <Canvas x:Name="OverlayCanvas" IsHitTestVisible="False" />
+                        <TextBlock
+                            x:Name="ScreenshotEmptyText"
+                            Text="Dump the hierarchy to capture the screen."
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            TextAlignment="Center"
+                            TextWrapping="Wrap"
+                            MaxWidth="280" />
+                    </Grid>
+
+                    <StackPanel Grid.Row="1" Spacing="6">
+                        <TextBlock Text="Selected node" Style="{StaticResource SectionHeaderStyle}" />
                         <TextBlock
                             x:Name="NodeDetailsText"
-                            Text="Select a node to see its bounds, resource id, and state."
-                            FontSize="13"
+                            MaxHeight="150"
+                            FontSize="12"
                             TextWrapping="Wrap"
                             IsTextSelectionEnabled="True"
+                            Text="Select a node to see its bounds, selector, and state."
                             AutomationProperties.AutomationId="InspectorNodeDetails" />
-                    </ScrollViewer>
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <Button
+                                x:Name="TapButton"
+                                Content="Tap"
+                                Click="OnTapClick"
+                                IsEnabled="False"
+                                AutomationProperties.AutomationId="InspectorTapButton" />
+                            <Button
+                                x:Name="CopySelectorButton"
+                                Content="Copy selector"
+                                Click="OnCopySelectorClick"
+                                IsEnabled="False"
+                                AutomationProperties.AutomationId="InspectorCopySelectorButton" />
+                            <Button
+                                x:Name="CopyCoordinatesButton"
+                                Content="Copy coordinates"
+                                Click="OnCopyCoordinatesClick"
+                                IsEnabled="False"
+                                AutomationProperties.AutomationId="InspectorCopyCoordinatesButton" />
+                        </StackPanel>
+                    </StackPanel>
+
                     <Expander Grid.Row="2" Header="Raw hierarchy XML" HorizontalAlignment="Stretch">
                         <TextBox
                             x:Name="RawXmlBox"
@@ -201,7 +267,7 @@
                             TextWrapping="NoWrap"
                             FontFamily="Consolas"
                             FontSize="11"
-                            Height="220"
+                            Height="180"
                             ScrollViewer.HorizontalScrollBarVisibility="Auto"
                             ScrollViewer.VerticalScrollBarVisibility="Auto"
                             AutomationProperties.AutomationId="InspectorRawXml" />

@@ -24,6 +24,9 @@ public sealed record UiHierarchyNode
     /// <summary>Gets the raw bounds attribute.</summary>
     public string? Bounds { get; init; }
 
+    /// <summary>Gets the parsed pixel bounds, when the attribute is valid.</summary>
+    public UiBounds? BoundsRect { get; init; }
+
     /// <summary>Gets how deeply the node is nested below the hierarchy root.</summary>
     public int Depth { get; init; }
 
@@ -38,6 +41,15 @@ public sealed record UiHierarchyNode
 
     /// <summary>Gets whether the view can receive focus.</summary>
     public bool Focusable { get; init; }
+
+    /// <summary>Gets whether the view currently has focus.</summary>
+    public bool Focused { get; init; }
+
+    /// <summary>Gets whether the view is visible to the user.</summary>
+    public bool VisibleToUser { get; init; } = true;
+
+    /// <summary>Gets whether the view supports a long press.</summary>
+    public bool LongClickable { get; init; }
 
     /// <summary>Gets whether the view is scrollable.</summary>
     public bool Scrollable { get; init; }
@@ -75,9 +87,24 @@ public sealed record UiHierarchyNode
                 parts.Add("disabled");
             }
 
+            if (!VisibleToUser)
+            {
+                parts.Add("invisible");
+            }
+
             if (Clickable)
             {
                 parts.Add("clickable");
+            }
+
+            if (LongClickable)
+            {
+                parts.Add("long-clickable");
+            }
+
+            if (Focused)
+            {
+                parts.Add("focused");
             }
 
             if (Focusable)
@@ -183,19 +210,31 @@ public sealed class UiHierarchy
 
     /// <summary>
     /// Returns nodes matching a query, keeping matched ancestors so the
-    /// indentation still describes the tree.
+    /// indentation still describes the tree. Invisible nodes and nodes deeper than
+    /// <paramref name="maxDepth"/> are excluded when requested.
     /// </summary>
-    public IReadOnlyList<UiHierarchyNode> Search(string? query)
+    public IReadOnlyList<UiHierarchyNode> Search(
+        string? query,
+        bool includeInvisible = true,
+        int? maxDepth = null)
     {
+        var allowed = BuildFilter(includeInvisible, maxDepth);
         if (string.IsNullOrWhiteSpace(query))
         {
-            return _nodes;
+            return allowed is null
+                ? _nodes
+                : Filtered(_nodes, allowed);
         }
 
         var term = query.Trim();
         var included = new HashSet<int>();
         for (var index = 0; index < _nodes.Count; index++)
         {
+            if (allowed is { } filter && !filter[index])
+            {
+                continue;
+            }
+
             if (!Matches(_nodes[index], term))
             {
                 continue;
@@ -205,7 +244,8 @@ public sealed class UiHierarchy
             var depth = _nodes[index].Depth;
             for (var ancestor = index - 1; ancestor >= 0 && depth > 0; ancestor--)
             {
-                if (_nodes[ancestor].Depth >= depth)
+                if (_nodes[ancestor].Depth >= depth ||
+                    (allowed is { } ancestors && !ancestors[ancestor]))
                 {
                     continue;
                 }
@@ -227,6 +267,41 @@ public sealed class UiHierarchy
         return result;
     }
 
+    private bool[]? BuildFilter(bool includeInvisible, int? maxDepth)
+    {
+        if (includeInvisible && maxDepth is null)
+        {
+            return null;
+        }
+
+        var depthLimit = maxDepth is { } limit ? Math.Max(0, limit) : int.MaxValue;
+        var allowed = new bool[_nodes.Count];
+        for (var index = 0; index < _nodes.Count; index++)
+        {
+            allowed[index] =
+                (includeInvisible || _nodes[index].VisibleToUser) &&
+                _nodes[index].Depth <= depthLimit;
+        }
+
+        return allowed;
+    }
+
+    private static List<UiHierarchyNode> Filtered(
+        IReadOnlyList<UiHierarchyNode> nodes,
+        bool[] allowed)
+    {
+        var result = new List<UiHierarchyNode>();
+        for (var index = 0; index < nodes.Count; index++)
+        {
+            if (allowed[index])
+            {
+                result.Add(nodes[index]);
+            }
+        }
+
+        return result;
+    }
+
     private static bool Matches(UiHierarchyNode node, string term) =>
         Contains(node.Text, term) ||
         Contains(node.ContentDescription, term) ||
@@ -239,6 +314,7 @@ public sealed class UiHierarchy
 
     private static void AddNode(XElement element, int depth, List<UiHierarchyNode> nodes)
     {
+        var bounds = Attribute(element, "bounds");
         nodes.Add(new UiHierarchyNode
         {
             ClassName = Attribute(element, "class") ?? "node",
@@ -246,12 +322,16 @@ public sealed class UiHierarchy
             Text = Attribute(element, "text"),
             ContentDescription = Attribute(element, "content-desc"),
             PackageName = Attribute(element, "package"),
-            Bounds = Attribute(element, "bounds"),
+            Bounds = bounds,
+            BoundsRect = UiBounds.TryParse(bounds, out var parsed) ? parsed : null,
             Index = IntegerAttribute(element, "index"),
             Depth = depth,
             Clickable = BooleanAttribute(element, "clickable"),
             Enabled = BooleanAttribute(element, "enabled", defaultValue: true),
             Focusable = BooleanAttribute(element, "focusable"),
+            Focused = BooleanAttribute(element, "focused"),
+            VisibleToUser = BooleanAttribute(element, "visible-to-user", defaultValue: true),
+            LongClickable = BooleanAttribute(element, "long-clickable"),
             Scrollable = BooleanAttribute(element, "scrollable"),
             Checked = BooleanAttribute(element, "checked"),
             Selected = BooleanAttribute(element, "selected"),

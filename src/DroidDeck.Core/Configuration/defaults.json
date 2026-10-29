@@ -104,5 +104,9 @@
   "performance": {
     "sampleIntervalMs": 1000,
     "maxSamples": 60
+  },
+  "inspector": {
+    "maxDepth": 12,
+    "includeInvisible": false
   }
 }

@@ -295,6 +295,33 @@
 
             <Border Style="{StaticResource CardBorderStyle}">
                 <StackPanel Spacing="10">
+                    <TextBlock Text="UI inspector" Style="{StaticResource SectionHeaderStyle}" />
+                    <TextBlock
+                        Text="The hierarchy tree hides invisible nodes and stops at the configured depth so large screens remain responsive. You can override both from the inspector."
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                    <NumberBox
+                        x:Name="InspectorDepthBox"
+                        Header="Maximum node depth"
+                        Minimum="1"
+                        Maximum="100"
+                        SmallChange="1"
+                        SpinButtonPlacementMode="Compact"
+                        ValueChanged="OnInspectorDepthChanged"
+                        AutomationProperties.AutomationId="SettingsInspectorDepthBox" />
+                    <ToggleSwitch
+                        x:Name="InspectorInvisibleToggle"
+                        Header="Invisible nodes"
+                        OnContent="Shown"
+                        OffContent="Hidden"
+                        Toggled="OnInspectorInvisibleChanged"
+                        AutomationProperties.AutomationId="SettingsInspectorInvisibleToggle" />
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorderStyle}">
+                <StackPanel Spacing="10">
                     <TextBlock Text="Session retention" Style="{StaticResource SectionHeaderStyle}" />
                     <TextBlock
                         Text="Old sessions are removed at launch and when retention is applied. Keep at least one session if you want to review recent history."

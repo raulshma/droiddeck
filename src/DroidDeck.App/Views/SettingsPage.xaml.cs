@@ -93,6 +93,8 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
             RunConcurrencyBox.Value = settings.Run.MaxConcurrentDevices;
             PerformanceIntervalBox.Value = settings.Performance.SampleIntervalMs;
             PerformanceSamplesBox.Value = settings.Performance.MaxSamples;
+            InspectorDepthBox.Value = settings.Inspector.EffectiveMaxDepth;
+            InspectorInvisibleToggle.IsOn = settings.Inspector.IncludeInvisible;
             UpdateRetentionSummary();
             UpdateSourceHints();
         }
@@ -317,6 +319,54 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         catch (Exception exception)
         {
             ReportFailure("Saving the performance sample retention", exception);
+        }
+    }
+
+    private async void OnInspectorDepthChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+    {
+        if (_initializing || double.IsNaN(args.NewValue))
+        {
+            return;
+        }
+
+        var depth = InspectorSettings.ClampDepth((int)Math.Round(args.NewValue));
+        if (depth == _configuration.Current.Settings.Inspector.MaxDepth)
+        {
+            return;
+        }
+
+        try
+        {
+            await _configuration.SetAsync(SettingsPaths.InspectorMaxDepth, depth);
+            ShowAction($"The UI inspector shows nodes up to depth {depth}.");
+        }
+        catch (Exception exception)
+        {
+            ReportFailure("Saving the inspector depth", exception);
+        }
+    }
+
+    private async void OnInspectorInvisibleChanged(object sender, RoutedEventArgs e)
+    {
+        if (_initializing)
+        {
+            return;
+        }
+
+        var include = InspectorInvisibleToggle.IsOn;
+        if (include == _configuration.Current.Settings.Inspector.IncludeInvisible)
+        {
+            return;
+        }
+
+        try
+        {
+            await _configuration.SetAsync(SettingsPaths.InspectorIncludeInvisible, include);
+            ShowAction(include ? "Invisible nodes are shown." : "Invisible nodes are hidden.");
+        }
+        catch (Exception exception)
+        {
+            ReportFailure("Saving the invisible-node filter", exception);
         }
     }
 

@@ -1,3 +1,5 @@
+using System.Xml.Linq;
+using System.Xml.XPath;
 using DroidDeck.Core.Toolbox;
 
 namespace DroidDeck.Core.Tests.Toolbox;
@@ -31,10 +33,116 @@ public sealed class UiHierarchyTests
         Assert.True(hierarchy.Nodes[1].Clickable);
         Assert.False(hierarchy.Nodes[2].Enabled);
         Assert.Equal("[100,200][500,300]", hierarchy.Nodes[1].Bounds);
+        Assert.Equal(new UiBounds(100, 200, 500, 300), hierarchy.Nodes[1].BoundsRect);
+        Assert.Equal(300, hierarchy.Nodes[1].BoundsRect?.CenterX);
+        Assert.Equal(250, hierarchy.Nodes[1].BoundsRect?.CenterY);
         Assert.Equal("Sign in", hierarchy.Nodes[1].Display);
         Assert.Contains("clickable", hierarchy.Nodes[1].Detail, StringComparison.Ordinal);
         Assert.Contains("disabled", hierarchy.Nodes[2].Detail, StringComparison.Ordinal);
         Assert.Same(Sample, hierarchy.RawXml);
+    }
+
+    [Fact]
+    public void Parse_ReadsVisibilityFocusAndLongClickAttributes()
+    {
+        var hierarchy = UiHierarchy.Parse("""
+            <hierarchy>
+              <node
+                class="android.widget.Button"
+                text="Hidden"
+                visible-to-user="false"
+                focused="true"
+                long-clickable="true"
+                bounds="[10,20][110,220]" />
+            </hierarchy>
+            """);
+
+        var node = Assert.Single(hierarchy.Nodes);
+        Assert.False(node.VisibleToUser);
+        Assert.True(node.Focused);
+        Assert.True(node.LongClickable);
+        Assert.Contains("invisible", node.Detail, StringComparison.Ordinal);
+        Assert.Contains("long-clickable", node.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Search_FiltersInvisibleNodesAndLimitsDepth()
+    {
+        var hierarchy = UiHierarchy.Parse("""
+            <hierarchy>
+              <node class="android.widget.FrameLayout" visible-to-user="true">
+                <node class="android.widget.LinearLayout" visible-to-user="false">
+                  <node class="android.widget.TextView" text="Deep" visible-to-user="true" />
+                </node>
+              </node>
+            </hierarchy>
+            """);
+
+        Assert.Equal(3, hierarchy.Search(null).Count);
+        Assert.Equal(2, hierarchy.Search(null, includeInvisible: false).Count);
+        Assert.Equal(2, hierarchy.Search(null, maxDepth: 1).Count);
+        Assert.Single(hierarchy.Search(null, maxDepth: -1));
+        Assert.Equal(2, hierarchy.Search("Deep", includeInvisible: false).Count);
+    }
+
+    [Fact]
+    public void Selector_PrefersResourceIdThenContentDescriptionThenText()
+    {
+        var byId = new UiHierarchyNode
+        {
+            ClassName = "android.widget.Button",
+            ResourceId = "com.example.app:id/sign_in",
+            Text = "Sign in",
+        };
+        var byDescription = new UiHierarchyNode
+        {
+            ClassName = "android.widget.ImageView",
+            ContentDescription = "Avatar",
+        };
+        var byText = new UiHierarchyNode
+        {
+            ClassName = "android.widget.TextView",
+            Text = "Settings",
+        };
+        var byClass = new UiHierarchyNode
+        {
+            ClassName = "android.widget.TextView",
+            Index = 2,
+        };
+
+        Assert.Equal("//*[@resource-id=\"com.example.app:id/sign_in\"]", UiSelector.ForNode(byId));
+        Assert.Equal("//*[@content-desc=\"Avatar\"]", UiSelector.ForNode(byDescription));
+        Assert.Equal("//*[@text=\"Settings\"]", UiSelector.ForNode(byText));
+        Assert.Equal(
+            "//*[@class=\"android.widget.TextView\" and @index=\"2\"]",
+            UiSelector.ForNode(byClass));
+    }
+
+    [Fact]
+    public void Selector_EscapesQuotesAsValidXPathLiterals()
+    {
+        var document = XDocument.Parse("""
+            <hierarchy>
+              <node text="Say &quot;hi&quot;" />
+              <node text="It's here" />
+              <node text="It's a &quot;test&quot;" />
+            </hierarchy>
+            """);
+        var values = document.Root!.Elements().Select(element => (string)element.Attribute("text")!).ToArray();
+
+        for (var index = 0; index < values.Length; index++)
+        {
+            var selector = UiSelector.ForNode(new UiHierarchyNode
+            {
+                ClassName = "android.widget.TextView",
+                Text = values[index],
+            });
+
+            Assert.DoesNotContain("&quot;", selector, StringComparison.Ordinal);
+            var matches = document.XPathSelectElements(selector).ToArray();
+            var match = Assert.Single(matches);
+            Assert.Equal(values[index], (string?)match.Attribute("text"));
+        }
     }
 
     [Fact]
