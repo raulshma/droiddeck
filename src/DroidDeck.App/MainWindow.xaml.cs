@@ -18,6 +18,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
@@ -58,6 +59,9 @@ public sealed partial class MainWindow : Window
             ["settings"] = typeof(SettingsPage),
             ["diagnostics"] = typeof(DiagnosticsPage),
         };
+
+    private static readonly string[] MenuCategoryOrder =
+        ["App", "Navigate", "Device", "Run", "Screen", "Plugins", "Built-in"];
 
     private readonly IServiceProvider _services;
     private readonly IDeviceService _devices;
@@ -130,6 +134,7 @@ public sealed partial class MainWindow : Window
         _keybindings.EnsureLoaded();
         _commandCatalog = new ShellCommandCatalog(_commands, _pluginHost, this, _logger);
         _commandCatalog.RegisterShellCommands();
+        RebuildMenu();
         RegisterAccelerators();
         _commands.Changed += OnCommandSetChanged;
         _keybindings.Changed += OnCommandSetChanged;
@@ -199,7 +204,7 @@ public sealed partial class MainWindow : Window
             _palette.Opened += (_, _) => SetAcceleratorsEnabled(false);
             _palette.Closed += (_, _) => SetAcceleratorsEnabled(true);
             _palette.ExecuteRequested += OnPaletteExecuteRequested;
-            Grid.SetRowSpan(_palette, 3);
+            Grid.SetRowSpan(_palette, 4);
             RootGrid.Children.Add(_palette);
         }
 
@@ -273,7 +278,55 @@ public sealed partial class MainWindow : Window
     }
 
     private void OnCommandSetChanged(object? sender, EventArgs e) =>
-        DispatcherQueue.TryEnqueue(RegisterAccelerators);
+        DispatcherQueue.TryEnqueue(RebuildCommandSurfaces);
+
+    private void RebuildCommandSurfaces()
+    {
+        RebuildMenu();
+        RegisterAccelerators();
+    }
+
+    private void RebuildMenu()
+    {
+        ShellMenuBar.Items.Clear();
+        var groups = _commands.Commands
+            .GroupBy(command => command.Category, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(group => MenuCategoryRank(group.Key))
+            .ThenBy(group => group.Key, StringComparer.OrdinalIgnoreCase);
+        foreach (var group in groups)
+        {
+            var menu = new MenuBarItem { Title = group.Key };
+            AutomationProperties.SetAutomationId(menu, $"Menu_{group.Key}");
+            foreach (var command in group.OrderBy(
+                command => command.Title, StringComparer.OrdinalIgnoreCase))
+            {
+                var item = new MenuFlyoutItem
+                {
+                    Text = command.Title,
+                    IsEnabled = command.IsEnabled,
+                };
+                AutomationProperties.SetAutomationId(item, $"MenuCommand_{command.Id}");
+                var shortcut = _keybindings.GetEffectiveShortcut(command);
+                if (shortcut is not null)
+                {
+                    item.KeyboardAcceleratorTextOverride = shortcut.ToString();
+                }
+
+                item.Click += (_, _) => _ = ExecuteCommandAsync(command);
+                menu.Items.Add(item);
+            }
+
+            ShellMenuBar.Items.Add(menu);
+        }
+    }
+
+    private static int MenuCategoryRank(string category)
+    {
+        var index = Array.FindIndex(
+            MenuCategoryOrder,
+            candidate => string.Equals(candidate, category, StringComparison.OrdinalIgnoreCase));
+        return index < 0 ? MenuCategoryOrder.Length : index;
+    }
 
     private void RegisterAccelerators()
     {

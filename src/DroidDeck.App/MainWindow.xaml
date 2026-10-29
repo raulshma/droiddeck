@@ -17,6 +17,7 @@
         Drop="OnRootDrop">
         <Grid.RowDefinitions>
             <RowDefinition Height="48" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="34" />
         </Grid.RowDefinitions>
@@ -43,9 +44,14 @@
             </StackPanel>
         </Grid>
 
+        <MenuBar
+            x:Name="ShellMenuBar"
+            Grid.Row="1"
+            AutomationProperties.AutomationId="MainMenu" />
+
         <NavigationView
             x:Name="Navigation"
-            Grid.Row="1"
+            Grid.Row="2"
             IsBackButtonVisible="Collapsed"
             IsSettingsVisible="False"
             PaneDisplayMode="Left"
@@ -128,7 +134,7 @@
 
         <InfoBar
             x:Name="NotificationBar"
-            Grid.Row="1"
+            Grid.Row="2"
             Width="380"
             Margin="16"
             HorizontalAlignment="Right"
@@ -147,7 +153,7 @@
         </InfoBar>
 
         <Grid
-            Grid.Row="2"
+            Grid.Row="3"
             Padding="12,0"
             Background="{ThemeResource LayerFillColorDefaultBrush}"
             BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
@@ -221,7 +227,7 @@
 
         <Border
             x:Name="DropOverlay"
-            Grid.RowSpan="3"
+            Grid.RowSpan="4"
             Background="{ThemeResource SystemFillColorAttentionBackgroundBrush}"
             IsHitTestVisible="False"
             Visibility="Collapsed">
