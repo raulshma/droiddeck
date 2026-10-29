@@ -75,12 +75,41 @@ public sealed class KeybindingMap
 
             lock (_sync)
             {
+                var notices = new List<string>();
                 foreach (var (commandId, gestureText) in document.Overrides)
                 {
-                    if (KeyGesture.TryParse(gestureText, out var gesture) && _registry.Find(commandId) is not null)
+                    if (!KeyGesture.TryParse(gestureText, out var gesture))
                     {
-                        _overrides[commandId] = gesture;
+                        continue;
                     }
+
+                    var command = _registry.Find(commandId);
+                    if (command is null)
+                    {
+                        continue;
+                    }
+
+                    // Saved overrides follow the same conflict rule as live
+                    // rebinding: an override whose gesture collides with
+                    // another command's effective shortcut is discarded, so a
+                    // default changed between versions cannot produce two
+                    // commands sharing one shortcut.
+                    var conflicting = _registry.Commands.FirstOrDefault(other =>
+                        !string.Equals(other.Id, command.Id, StringComparison.OrdinalIgnoreCase) &&
+                        (_overrides.TryGetValue(other.Id, out var existing) ? existing : other.DefaultShortcut) == gesture);
+                    if (conflicting is not null)
+                    {
+                        notices.Add(
+                            $"The {command.Title} shortcut {gestureText} was ignored because {conflicting.Title} already uses it.");
+                        continue;
+                    }
+
+                    _overrides[command.Id] = gesture;
+                }
+
+                if (notices.Count > 0)
+                {
+                    LastLoadNotice = string.Join(" ", notices);
                 }
             }
         }

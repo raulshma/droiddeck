@@ -25,7 +25,12 @@ public sealed class PluginHost : IAsyncDisposable
     private bool _disposed;
 
     /// <summary>Creates a plugin host.</summary>
-    public PluginHost(PluginRegistry registry, PluginLoader loader, AppPaths paths, ILogger<PluginHost> logger)
+    public PluginHost(
+        PluginRegistry registry,
+        PluginLoader loader,
+        AppPaths paths,
+        ILogger<PluginHost> logger,
+        ILoggerFactory? loggerFactory = null)
     {
         _registry = registry ?? throw new ArgumentNullException(nameof(registry));
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
@@ -33,7 +38,7 @@ public sealed class PluginHost : IAsyncDisposable
         _health = new PluginHealthTracker();
         _invoker = new PluginActionInvoker(_health);
         _catalog = new PluginExtensionCatalog(registry);
-        _manager = new PluginManager(loader, _health);
+        _manager = new PluginManager(loader, _health, loggerFactory?.CreateLogger<PluginManager>());
         _manager.Changed += OnManagerChanged;
     }
 

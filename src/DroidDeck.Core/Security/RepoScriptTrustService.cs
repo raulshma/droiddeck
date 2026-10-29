@@ -230,18 +230,7 @@ public sealed class RepoScriptTrustService : IRepoScriptTrustService, IDisposabl
         await AtomicFile.WriteAllTextAsync(TrustFile, json, keepBackup: true, cancellationToken).ConfigureAwait(false);
     }
 
-    private ScriptTrustEntry? FindEntry(ScriptContext context)
-    {
-        foreach (var entry in _document.Entries)
-        {
-            if (SameLocation(entry, context))
-            {
-                return entry;
-            }
-        }
-
-        return null;
-    }
+    private ScriptTrustEntry? FindEntry(ScriptContext context) => FindEntryIn(_document, context);
 
     private static ScriptTrustEntry? FindEntryIn(TrustDocument document, ScriptContext context)
     {
@@ -268,12 +257,13 @@ public sealed class RepoScriptTrustService : IRepoScriptTrustService, IDisposabl
         var script = Path.IsPathRooted(scriptPath)
             ? Path.GetFullPath(scriptPath)
             : Path.GetFullPath(Path.Combine(repository, scriptPath));
-        if (!script.StartsWith(repository, StringComparison.OrdinalIgnoreCase))
+        var relativePath = Path.GetRelativePath(repository, script).Replace('\\', '/');
+        if (relativePath.StartsWith("../", StringComparison.Ordinal) ||
+            relativePath == ".." ||
+            Path.IsPathRooted(relativePath))
         {
             throw new ArgumentException("The script must live inside the repository.", nameof(scriptPath));
         }
-
-        var relativePath = Path.GetRelativePath(repository, script).Replace('\\', '/');
         var sha256 = await ComputeSha256Async(script, cancellationToken).ConfigureAwait(false);
         return new ScriptContext(repository, script, relativePath, sha256);
     }

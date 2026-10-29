@@ -171,6 +171,33 @@ public sealed class KeybindingMapTests : IDisposable
     }
 
     [Fact]
+    public async Task LoadDropsSavedOverridesThatCollideWithAnotherCommand()
+    {
+        // Simulates a default changed between versions: the saved override was
+        // valid when written but now collides with another command's binding.
+        _temp.WriteFile(
+            "keybindings.json",
+            """
+            {
+              "schemaVersion": 1,
+              "overrides": {
+                "shell.stop": "F5",
+                "shell.run": "Ctrl+Alt+R"
+              }
+            }
+            """);
+
+        var restarted = CreateMap();
+        restarted.EnsureLoaded();
+
+        Assert.Null(restarted.GetOverride("shell.stop"));
+        Assert.Equal(StopDefault, restarted.GetEffectiveShortcut("shell.stop"));
+        Assert.Equal(KeyGesture.Parse("Ctrl+Alt+R"), restarted.GetOverride("shell.run"));
+        Assert.Contains("Stop", restarted.LastLoadNotice);
+        Assert.Contains("Run", restarted.LastLoadNotice);
+    }
+
+    [Fact]
     public void ChangesRaiseTheChangedEvent()
     {
         var map = CreateMap();

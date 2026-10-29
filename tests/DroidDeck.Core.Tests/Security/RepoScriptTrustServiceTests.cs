@@ -161,6 +161,29 @@ public sealed class RepoScriptTrustServiceTests
         Assert.Equal(ScriptTrustState.PendingApproval, await service.GetStateAsync(repo, moved));
     }
 
+    [Fact]
+    public async Task ScriptsOutsideTheRepositoryAreRejected()
+    {
+        using var temp = new TempDirectory();
+        var (repo, _) = WriteScript(temp, "repo/scripts/build.ps1", "Write-Host hi");
+        var outside = temp.WriteFile("other/evil.ps1", "Write-Host evil");
+        using var service = CreateService(temp);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => service.AuthorizeAsync(repo, outside));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.AuthorizeAsync(repo, "../other/evil.ps1"));
+    }
+
+    [Fact]
+    public async Task PathsThatOnlyShareAPrefixAreNotTreatedAsInsideTheRepository()
+    {
+        using var temp = new TempDirectory();
+        var (repo, _) = WriteScript(temp, "repo/scripts/build.ps1", "Write-Host hi");
+        var neighbour = temp.WriteFile("repo-evil/scripts/build.ps1", "Write-Host evil");
+        using var service = CreateService(temp);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => service.AuthorizeAsync(repo, neighbour));
+    }
+
     private static RepoScriptTrustService CreateService(TempDirectory temp) => new(Paths(temp));
 
     private static AppPaths Paths(TempDirectory temp) => new(temp.Combine("data"));

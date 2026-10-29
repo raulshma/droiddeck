@@ -177,6 +177,8 @@ public partial class App : Application, IDisposable
                 logger.LogWarning("Settings notice: {Message}", notice.Message);
             }
 
+            await ApplyLaunchOverridesAsync(_configuration, logger);
+
             _services = BuildServices(loggerFactory, _configuration);
             _configuration.Changed += OnConfigurationChanged;
             _window = _services.GetRequiredService<MainWindow>();
@@ -196,6 +198,33 @@ public partial class App : Application, IDisposable
             var logger = _loggerFactory?.CreateLogger<App>();
             logger?.LogCritical(exception, "DroidDeck failed to start.");
             ShowStartupFailure(exception);
+        }
+    }
+
+    private async Task ApplyLaunchOverridesAsync(ConfigurationService configuration, ILogger logger)
+    {
+        var overrides = new List<KeyValuePair<string, string>>(_options.Overrides.Settings);
+        var environment = new List<KeyValuePair<string, string?>>();
+        foreach (System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())
+        {
+            environment.Add(new(entry.Key?.ToString() ?? string.Empty, entry.Value?.ToString()));
+        }
+
+        overrides.AddRange(CliOverrides.ParseEnvironment(environment));
+        if (overrides.Count == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            await configuration.SetSessionOverridesAsync(overrides);
+        }
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
+        {
+            logger.LogWarning(
+                exception,
+                "A --set, --profile, or DROIDDECK__ override was rejected; it is ignored for this session.");
         }
     }
 
@@ -250,7 +279,8 @@ public partial class App : Application, IDisposable
                 registry,
                 loader,
                 _paths,
-                loggerFactory.CreateLogger<PluginHost>());
+                loggerFactory.CreateLogger<PluginHost>(),
+                loggerFactory);
         });
 
         services.AddSingleton<IDeviceService>(provider =>

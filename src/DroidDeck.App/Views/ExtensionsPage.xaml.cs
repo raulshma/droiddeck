@@ -233,12 +233,7 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
             var dataDirectory = Path.Combine(row.InstallPath, "data");
             var target = Directory.Exists(dataDirectory) ? dataDirectory : row.InstallPath;
             Directory.CreateDirectory(target);
-            using var process = Process.Start(new ProcessStartInfo
-            {
-                FileName = "explorer.exe",
-                Arguments = $"\"{target}\"",
-                UseShellExecute = true,
-            });
+            OpenFolderInExplorer(target);
             ShowAction($"Opened the data folder for {row.Title}.");
         }
         catch (Exception exception) when (exception is Win32Exception or InvalidOperationException or IOException)
@@ -258,12 +253,7 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         try
         {
             _paths.EnsureCreated();
-            using var process = Process.Start(new ProcessStartInfo
-            {
-                FileName = "explorer.exe",
-                Arguments = $"\"{_paths.LogsDirectory}\"",
-                UseShellExecute = true,
-            });
+            OpenFolderInExplorer(_paths.LogsDirectory);
             ShowAction(
                 $"Opened the log folder. Entries for {row.Title} use the category \"DroidDeck.Plugins.{row.PluginId}\".");
         }
@@ -280,18 +270,23 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         {
             _paths.EnsureCreated();
             Directory.CreateDirectory(_paths.PluginsDirectory);
-            using var process = Process.Start(new ProcessStartInfo
-            {
-                FileName = "explorer.exe",
-                Arguments = $"\"{_paths.PluginsDirectory}\"",
-                UseShellExecute = true,
-            });
+            OpenFolderInExplorer(_paths.PluginsDirectory);
         }
         catch (Exception exception) when (exception is Win32Exception or InvalidOperationException or IOException)
         {
             _logger.LogWarning(exception, "The plugins folder could not be opened.");
             ShowAction("The plugins folder could not be opened.", isError: true);
         }
+    }
+
+    private static void OpenFolderInExplorer(string path)
+    {
+        using var process = Process.Start(new ProcessStartInfo
+        {
+            FileName = "explorer.exe",
+            Arguments = $"\"{path}\"",
+            UseShellExecute = true,
+        });
     }
 
     private void OnCopyDiagnosticsClick(object sender, RoutedEventArgs e)

@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+
 namespace DroidDeck.Plugins;
 
 /// <summary>
@@ -51,8 +53,8 @@ public sealed record PluginStatus
     /// <summary>Gets how long loading took; zero for plugins that did not load.</summary>
     public TimeSpan LoadDuration { get; init; }
 
-    /// <summary>Gets whether the manager offers an enable action.</summary>
-    public bool CanEnable => State is PluginState.Disabled or PluginState.DisabledByError or PluginState.Incompatible;
+    /// <summary>Gets whether the manager offers an enable action. Incompatible plugins cannot be enabled.</summary>
+    public bool CanEnable => State is PluginState.Disabled or PluginState.DisabledByError;
 
     /// <summary>Gets whether the manager offers a disable action.</summary>
     public bool CanDisable => State is PluginState.Loaded or PluginState.EnabledPendingRestart;
@@ -79,6 +81,7 @@ public sealed class PluginManager : IAsyncDisposable
 {
     private readonly PluginLoader _loader;
     private readonly PluginHealthTracker _health;
+    private readonly ILogger<PluginManager>? _logger;
     private readonly object _sync = new();
     private List<PluginStatus> _statuses = [];
     private IReadOnlyList<PluginLoadResult> _results = [];
@@ -88,10 +91,11 @@ public sealed class PluginManager : IAsyncDisposable
     private bool _disposed;
 
     /// <summary>Creates a manager over a loader and the shared health tracker.</summary>
-    public PluginManager(PluginLoader loader, PluginHealthTracker health)
+    public PluginManager(PluginLoader loader, PluginHealthTracker health, ILogger<PluginManager>? logger = null)
     {
         _loader = loader ?? throw new ArgumentNullException(nameof(loader));
         _health = health ?? throw new ArgumentNullException(nameof(health));
+        _logger = logger;
     }
 
     /// <summary>Raised after statuses or state changes.</summary>
@@ -213,8 +217,12 @@ public sealed class PluginManager : IAsyncDisposable
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            // The in-memory change below still applies this session; the next
-            // state change retries persisting it.
+            // The store already updated its in-memory state, and its next
+            // successful write persists the full set, so only the log is needed.
+            _logger?.LogWarning(
+                exception,
+                "The plugin state for {PluginId} could not be persisted; the change applies to this session until the next successful save.",
+                pluginId);
         }
 
         ReplaceStatus(status with
@@ -253,8 +261,12 @@ public sealed class PluginManager : IAsyncDisposable
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            // The in-memory change below still applies this session; the next
-            // state change retries persisting it.
+            // The store already updated its in-memory state, and its next
+            // successful write persists the full set, so only the log is needed.
+            _logger?.LogWarning(
+                exception,
+                "The plugin state for {PluginId} could not be persisted; the change applies to this session until the next successful save.",
+                pluginId);
         }
 
         loaded?.Disable();

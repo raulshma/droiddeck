@@ -2,6 +2,8 @@ using DroidDeck.App.Services;
 using DroidDeck.App.Views;
 using DroidDeck.Core.Commands;
 using DroidDeck.Plugin.Abstractions;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.UI.Dispatching;
 
 namespace DroidDeck.App.Commands;
@@ -40,16 +42,22 @@ public sealed class ShellCommandCatalog
     private readonly ICommandRegistry _commands;
     private readonly PluginHost _pluginHost;
     private readonly MainWindow _window;
+    private readonly ILogger _logger;
     private readonly DispatcherQueue _dispatcher;
     private readonly List<string> _pluginCommandIds = [];
     private bool _detached;
 
     /// <summary>Creates the catalog; call from the UI thread.</summary>
-    public ShellCommandCatalog(ICommandRegistry commands, PluginHost pluginHost, MainWindow window)
+    public ShellCommandCatalog(
+        ICommandRegistry commands,
+        PluginHost pluginHost,
+        MainWindow window,
+        ILogger? logger = null)
     {
         _commands = commands ?? throw new ArgumentNullException(nameof(commands));
         _pluginHost = pluginHost ?? throw new ArgumentNullException(nameof(pluginHost));
         _window = window ?? throw new ArgumentNullException(nameof(window));
+        _logger = logger ?? NullLogger.Instance;
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         _pluginHost.Registry.Changed += OnPluginRegistryChanged;
     }
@@ -264,7 +272,12 @@ public sealed class ShellCommandCatalog
             }
             catch (ArgumentException)
             {
-                // A command with this id is already registered; skip the duplicate.
+                // A shell or earlier plugin command already owns this id; the
+                // plugin command is skipped and the collision is logged.
+                _logger.LogWarning(
+                    "The plugin command {CommandId} from {PluginId} was not added to the palette because a command with that id already exists.",
+                    pluginCommand.Id,
+                    extension.PluginId);
             }
         }
     }

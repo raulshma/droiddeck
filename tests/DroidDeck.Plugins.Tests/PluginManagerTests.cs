@@ -54,7 +54,10 @@ public sealed class PluginManagerTests
         Assert.Contains("99.0", status.Reason, StringComparison.Ordinal);
         Assert.Contains("1.0", status.Reason, StringComparison.Ordinal);
         Assert.False(status.CanDisable);
+        Assert.False(status.CanEnable);
         Assert.Empty(registry.Commands);
+
+        Assert.False(await manager.EnableAsync(status.Id));
     }
 
     [Fact]
@@ -245,7 +248,7 @@ public sealed class PluginManagerTests
     }
 
     [Fact]
-    public async Task EnablingAPluginThatFailedThisSessionKeepsTheErrorVisible()
+    public async Task AnIncompatiblePluginStaysRejectedAndKeepsTheErrorVisible()
     {
         using var temp = new TempDirectory();
         var root = temp.Combine("plugins");
@@ -255,12 +258,12 @@ public sealed class PluginManagerTests
         var manager = CreateManager(temp, out _);
         await manager.InitializeAsync(root);
 
-        Assert.True(await manager.EnableAsync(FaultyPluginId));
+        Assert.False(await manager.EnableAsync(FaultyPluginId));
 
         var status = Assert.Single(manager.Statuses);
-        Assert.Equal(PluginState.EnabledPendingRestart, status.State);
+        Assert.Equal(PluginState.Incompatible, status.State);
         Assert.Contains("99.0", status.Reason, StringComparison.Ordinal);
-        Assert.True(manager.RestartRequired);
+        Assert.False(manager.RestartRequired);
     }
 
     [Fact]

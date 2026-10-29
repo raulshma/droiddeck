@@ -1,4 +1,5 @@
 using DroidDeck.Core;
+using DroidDeck.Core.Configuration;
 
 namespace DroidDeck.App;
 
@@ -7,6 +8,9 @@ public sealed class AppOptions
 {
     /// <summary>Gets the data directory override.</summary>
     public string? DataDirectory { get; private set; }
+
+    /// <summary>Gets the session-layer overrides from --set, --profile, and DROIDDECK__* variables.</summary>
+    public CliOverrideSet Overrides { get; private set; } = CliOverrideSet.Empty;
 
     /// <summary>Gets whether the diagnostics page should open on launch.</summary>
     public bool OpenDiagnostics { get; private set; }
@@ -74,6 +78,17 @@ public sealed class AppOptions
             options.UsesTemporaryDataDirectory = true;
         }
 
+        var overrides = CliOverrides.ParseArguments(args);
+        if (overrides.ProfileId is { } profileId)
+        {
+            // The profile rides the session layer so a CLI profile request
+            // stays ephemeral instead of rewriting the saved active profile.
+            overrides = new CliOverrideSet(
+                [.. overrides.Settings, new KeyValuePair<string, string>("profile.activeId", profileId)],
+                ProfileId: null);
+        }
+
+        options.Overrides = overrides;
         return options;
     }
 
@@ -90,9 +105,13 @@ public sealed class AppOptions
           --safe-mode         Disable plugins and experimental features
           --no-plugins        Disable plugins without changing saved settings
           --diagnostics       Open the diagnostics page
+          --set <path>=<value>  Override one setting for this session only
+          --profile <id>      Activate a profile for this session only
           --version           Print the version
           --help              Print this help
 
-        A second launch focuses the running instance and forwards these options.
+        DROIDDECK__SECTION__KEY environment variables also override settings
+        for this session. A second launch focuses the running instance and
+        forwards these options.
         """;
 }

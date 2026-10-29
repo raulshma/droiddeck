@@ -128,7 +128,7 @@ public sealed partial class MainWindow : Window
         // Keybindings load synchronously because the accelerators below need them
         // before the shell becomes interactive; the file is a few kilobytes at most.
         _keybindings.EnsureLoaded();
-        _commandCatalog = new ShellCommandCatalog(_commands, _pluginHost, this);
+        _commandCatalog = new ShellCommandCatalog(_commands, _pluginHost, this, _logger);
         _commandCatalog.RegisterShellCommands();
         RegisterAccelerators();
         _commands.Changed += OnCommandSetChanged;
