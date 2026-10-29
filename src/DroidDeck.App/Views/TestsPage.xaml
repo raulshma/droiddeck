@@ -1,0 +1,317 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="DroidDeck.App.Views.TestsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid Padding="24" RowSpacing="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Spacing="2">
+                <TextBlock Text="Tests" Style="{StaticResource TitleTextBlockStyle}" />
+                <TextBlock
+                    Text="Run Gradle, Flutter, Jest, .NET, and custom tests. Results show suites, cases, stack traces, and attachments, and failing tests can be rerun per device."
+                    FontSize="12"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    TextWrapping="Wrap" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <Button
+                    Content="Refresh"
+                    Click="OnRefreshClick"
+                    AutomationProperties.AutomationId="RefreshTestsButton" />
+                <Button
+                    x:Name="CancelButton"
+                    Content="Cancel"
+                    Click="OnCancelClick"
+                    IsEnabled="False"
+                    AutomationProperties.AutomationId="CancelTestsButton" />
+            </StackPanel>
+        </Grid>
+
+        <StackPanel Grid.Row="1" Spacing="8">
+            <InfoBar
+                x:Name="ActionBar"
+                Severity="Success"
+                IsOpen="False"
+                IsClosable="True"
+                AutomationProperties.AutomationId="TestsActionBar" />
+            <InfoBar
+                x:Name="GuidanceBar"
+                Severity="Informational"
+                Title="Next step"
+                IsOpen="False"
+                IsClosable="False"
+                AutomationProperties.AutomationId="TestsGuidanceBar" />
+            <StackPanel Orientation="Horizontal" Spacing="12">
+                <ProgressBar
+                    x:Name="BusyProgress"
+                    Width="220"
+                    IsIndeterminate="True"
+                    Visibility="Collapsed"
+                    VerticalAlignment="Center"
+                    AutomationProperties.AutomationId="TestsProgress" />
+                <TextBlock
+                    x:Name="ProgressText"
+                    FontSize="12"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    VerticalAlignment="Center" />
+            </StackPanel>
+        </StackPanel>
+
+        <Border Grid.Row="2" Style="{StaticResource CardBorderStyle}">
+            <Grid ColumnSpacing="12" RowSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="260" />
+                    <ColumnDefinition Width="260" />
+                    <ColumnDefinition Width="200" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <ComboBox
+                    x:Name="ProjectCombo"
+                    Header="Project"
+                    DisplayMemberPath="Name"
+                    HorizontalAlignment="Stretch"
+                    SelectionChanged="OnProjectSelectionChanged"
+                    AutomationProperties.AutomationId="TestProjectCombo" />
+                <ComboBox
+                    x:Name="ConfigCombo"
+                    Grid.Column="1"
+                    Header="Run configuration"
+                    DisplayMemberPath="Name"
+                    HorizontalAlignment="Stretch"
+                    AutomationProperties.AutomationId="TestConfigCombo" />
+                <ComboBox
+                    x:Name="RunnerCombo"
+                    Grid.Column="2"
+                    Header="Runner"
+                    DisplayMemberPath="Label"
+                    HorizontalAlignment="Stretch"
+                    SelectionChanged="OnRunnerSelectionChanged"
+                    AutomationProperties.AutomationId="TestRunnerCombo" />
+                <StackPanel
+                    Grid.Column="3"
+                    Orientation="Horizontal"
+                    Spacing="8"
+                    VerticalAlignment="Bottom">
+                    <Button
+                        x:Name="RunButton"
+                        Content="Run tests"
+                        Style="{StaticResource AccentButtonStyle}"
+                        Click="OnRunClick"
+                        AutomationProperties.AutomationId="RunTestsButton" />
+                    <Button
+                        x:Name="RerunButton"
+                        Content="Rerun failed"
+                        Click="OnRerunClick"
+                        IsEnabled="False"
+                        AutomationProperties.AutomationId="RerunFailedTestsButton" />
+                </StackPanel>
+
+                <TextBlock
+                    Grid.Row="1"
+                    Grid.ColumnSpan="4"
+                    Text="Devices — select one or more to run per device, or none to run on the host"
+                    Style="{StaticResource FieldLabelStyle}" />
+                <ListView
+                    x:Name="DeviceList"
+                    Grid.Row="2"
+                    Grid.ColumnSpan="4"
+                    Height="92"
+                    SelectionMode="Multiple"
+                    DisplayMemberPath="Display"
+                    BorderThickness="0"
+                    AutomationProperties.AutomationId="TestDeviceList" />
+
+                <Grid
+                    x:Name="CustomPanel"
+                    Grid.Row="3"
+                    Grid.ColumnSpan="4"
+                    ColumnSpacing="12"
+                    RowSpacing="8"
+                    Visibility="Collapsed">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="240" />
+                        <ColumnDefinition Width="240" />
+                        <ColumnDefinition Width="240" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBox
+                        x:Name="CustomCommandBox"
+                        Header="Command"
+                        PlaceholderText="npm"
+                        AutomationProperties.AutomationId="CustomTestCommand" />
+                    <TextBox
+                        x:Name="CustomWorkingDirectoryBox"
+                        Grid.Column="1"
+                        Header="Working directory"
+                        PlaceholderText="Relative to the project root"
+                        AutomationProperties.AutomationId="CustomTestWorkingDirectory" />
+                    <TextBox
+                        x:Name="CustomResultGlobBox"
+                        Grid.Column="2"
+                        Header="Result glob"
+                        PlaceholderText="reports/**/*.xml"
+                        AutomationProperties.AutomationId="CustomTestResultGlob" />
+                    <CheckBox
+                        x:Name="CustomRequiresDeviceCheck"
+                        Grid.Column="3"
+                        Content="Requires a device"
+                        VerticalAlignment="Bottom"
+                        AutomationProperties.AutomationId="CustomTestRequiresDevice" />
+                    <TextBox
+                        x:Name="CustomArgumentsBox"
+                        Grid.Row="1"
+                        Grid.ColumnSpan="4"
+                        Header="Arguments — one per line; ${failedTests}, ${failedFiles}, and ${failedClasses} expand on a rerun"
+                        AcceptsReturn="True"
+                        Height="68"
+                        FontFamily="Consolas"
+                        FontSize="12"
+                        AutomationProperties.AutomationId="CustomTestArguments" />
+                </Grid>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="3" ColumnSpacing="16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="400" />
+            </Grid.ColumnDefinitions>
+
+            <Border Style="{StaticResource CardBorderStyle}" Padding="0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <StackPanel Margin="16,14,16,6" Spacing="2">
+                        <TextBlock Text="Results" Style="{StaticResource SectionHeaderStyle}" />
+                        <TextBlock
+                            x:Name="TestSummaryText"
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextWrapping="Wrap"
+                            AutomationProperties.AutomationId="TestRunSummary" />
+                    </StackPanel>
+                    <TreeView
+                        x:Name="ResultsTree"
+                        Grid.Row="1"
+                        Margin="8,0,8,8"
+                        SelectionChanged="OnResultSelectionChanged"
+                        AutomationProperties.AutomationId="TestResultsTree" />
+                </Grid>
+            </Border>
+
+            <Grid Grid.Column="1" RowSpacing="12">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="190" />
+                </Grid.RowDefinitions>
+
+                <Border Style="{StaticResource CardBorderStyle}">
+                    <ScrollViewer>
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Selected test" Style="{StaticResource SectionHeaderStyle}" />
+                            <TextBlock
+                                x:Name="DetailTitle"
+                                Text="Nothing selected"
+                                FontWeight="SemiBold"
+                                TextWrapping="Wrap" />
+                            <TextBlock
+                                x:Name="DetailStatus"
+                                FontSize="12"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                TextWrapping="Wrap"
+                                IsTextSelectionEnabled="True" />
+                            <TextBox
+                                x:Name="DetailMessageBox"
+                                Header="Message"
+                                IsReadOnly="True"
+                                AcceptsReturn="True"
+                                TextWrapping="Wrap"
+                                Visibility="Collapsed"
+                                AutomationProperties.AutomationId="TestMessageBox" />
+                            <TextBox
+                                x:Name="DetailStackBox"
+                                Header="Stack trace"
+                                IsReadOnly="True"
+                                AcceptsReturn="True"
+                                TextWrapping="NoWrap"
+                                FontFamily="Consolas"
+                                FontSize="12"
+                                Height="120"
+                                Visibility="Collapsed"
+                                AutomationProperties.AutomationId="TestStackBox" />
+                            <TextBlock
+                                x:Name="AttachmentLabel"
+                                Text="Attachments"
+                                Style="{StaticResource FieldLabelStyle}"
+                                Visibility="Collapsed" />
+                            <ListView
+                                x:Name="AttachmentsList"
+                                DisplayMemberPath="Name"
+                                MaxHeight="96"
+                                SelectionChanged="OnAttachmentSelectionChanged"
+                                Visibility="Collapsed"
+                                AutomationProperties.AutomationId="TestAttachmentsList" />
+                            <Button
+                                x:Name="OpenAttachmentButton"
+                                Content="Open attachment"
+                                Click="OnOpenAttachmentClick"
+                                IsEnabled="False"
+                                Visibility="Collapsed"
+                                AutomationProperties.AutomationId="OpenTestAttachmentButton" />
+                        </StackPanel>
+                    </ScrollViewer>
+                </Border>
+
+                <Border Grid.Row="1" Style="{StaticResource CardBorderStyle}" Padding="0">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <TextBlock
+                            Text="Command output"
+                            Style="{StaticResource SectionHeaderStyle}"
+                            Margin="16,14,16,6" />
+                        <TextBox
+                            x:Name="OutputBox"
+                            Grid.Row="1"
+                            IsReadOnly="True"
+                            AcceptsReturn="True"
+                            TextWrapping="NoWrap"
+                            FontFamily="Consolas"
+                            FontSize="12"
+                            Margin="12,0,12,12"
+                            ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                            ScrollViewer.VerticalScrollBarVisibility="Auto"
+                            AutomationProperties.AutomationId="TestCommandOutput" />
+                    </Grid>
+                </Border>
+            </Grid>
+        </Grid>
+    </Grid>
+</Page>

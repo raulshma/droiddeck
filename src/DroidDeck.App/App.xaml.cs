@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using DroidDeck.Adb;
 using DroidDeck.Adb.Commands;
 using DroidDeck.Adb.Devices;
@@ -26,6 +26,7 @@ using DroidDeck.Core.Screen;
 using DroidDeck.Core.Security;
 using DroidDeck.Core.Sessions;
 using DroidDeck.Core.Toolbox;
+using DroidDeck.Core.Testing;
 using DroidDeck.Core.Toolchain;
 using DroidDeck.Core.Wireless;
 using DroidDeck.Plugins;
@@ -312,6 +313,14 @@ public partial class App : Application, IDisposable
         services.AddSingleton<IRunPlanBuilder>(provider => new RunPlanBuilder(
             configuration,
             provider.GetRequiredService<IToolchainService>()));
+        services.AddSingleton<ITestPlanBuilder>(provider => new TestPlanBuilder(
+            provider.GetRequiredService<IRunPlanBuilder>(),
+            configuration,
+            provider.GetRequiredService<IToolchainService>()));
+        services.AddSingleton<ITestRunService>(provider => new TestRunService(
+            provider.GetRequiredService<ITestPlanBuilder>(),
+            provider.GetRequiredService<IProcessRunner>(),
+            provider.GetRequiredService<IDeviceOperationCoordinator>()));
 
         string GetAdbPath(IServiceProvider provider) =>
             ToolPathLocator.ResolveAdb(configuration, provider.GetRequiredService<IToolchainService>());
@@ -413,6 +422,7 @@ public partial class App : Application, IDisposable
         services.AddTransient<MultiDevicePage>();
         services.AddTransient<PerformancePage>();
         services.AddTransient<InspectorPage>();
+        services.AddTransient<TestsPage>();
 
         return services.BuildServiceProvider(new ServiceProviderOptions
         {

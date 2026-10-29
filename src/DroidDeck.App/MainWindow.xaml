@@ -77,6 +77,11 @@
                         <SymbolIcon Symbol="Library" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
+                <NavigationViewItem Content="Tests" Tag="tests" AutomationProperties.AutomationId="NavTests">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Document" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
                 <NavigationViewItem Content="History" Tag="history" AutomationProperties.AutomationId="NavHistory">
                     <NavigationViewItem.Icon>
                         <SymbolIcon Symbol="Clock" />

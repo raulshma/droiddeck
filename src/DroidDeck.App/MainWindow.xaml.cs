@@ -42,6 +42,7 @@ public sealed partial class MainWindow : Window
             ["devices/performance"] = typeof(PerformancePage),
             ["devices/inspector"] = typeof(InspectorPage),
             ["projects"] = typeof(ProjectsPage),
+            ["tests"] = typeof(TestsPage),
             ["session"] = typeof(SessionPage),
             ["history"] = typeof(HistoryPage),
             ["activity"] = typeof(ActivityPage),
