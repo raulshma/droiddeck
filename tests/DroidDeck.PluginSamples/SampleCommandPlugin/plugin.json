@@ -3,7 +3,7 @@
   "name": "Sample Command Plugin",
   "version": "1.0.0",
   "author": "DroidDeck",
-  "description": "A minimal sample plugin that registers one command.",
+  "description": "A sample plugin that demonstrates the command, device, run, log, highlight, and test extension points.",
   "apiVersion": "1.0",
   "minHostVersion": "0.1.0",
   "entryAssembly": "SampleCommandPlugin.dll",
@@ -12,7 +12,11 @@
     "command",
     "device-action",
     "device-tab",
-    "toolbar-action"
+    "toolbar-action",
+    "run-step",
+    "log-parser",
+    "highlight-rule-provider",
+    "test-runner"
   ],
   "homepage": "https://github.com/raulshma/droiddeck",
   "license": "MIT"

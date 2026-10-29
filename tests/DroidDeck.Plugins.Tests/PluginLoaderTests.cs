@@ -29,6 +29,10 @@ public sealed class PluginLoaderTests
         Assert.Equal("1.0", plugin.ApiVersion);
         Assert.Equal(directory, plugin.InstallPath);
         Assert.True(plugin.Capabilities.HasFlag(PluginCapability.Command));
+        Assert.True(plugin.Capabilities.HasFlag(PluginCapability.RunStep));
+        Assert.True(plugin.Capabilities.HasFlag(PluginCapability.LogParser));
+        Assert.True(plugin.Capabilities.HasFlag(PluginCapability.HighlightRuleProvider));
+        Assert.True(plugin.Capabilities.HasFlag(PluginCapability.TestRunner));
         Assert.Single(loader.Plugins);
 
         var command = Assert.Single(registry.Commands);
@@ -37,6 +41,10 @@ public sealed class PluginLoaderTests
         Assert.Equal(SamplePluginId, Assert.Single(registry.DeviceActions).PluginId);
         Assert.Equal(SamplePluginId, Assert.Single(registry.ToolbarActions).PluginId);
         Assert.Equal(SamplePluginId, Assert.Single(registry.DeviceTabs).PluginId);
+        Assert.Equal(SamplePluginId, Assert.Single(registry.RunSteps).PluginId);
+        Assert.Equal(SamplePluginId, Assert.Single(registry.LogParsers).PluginId);
+        Assert.Equal(SamplePluginId, Assert.Single(registry.HighlightRuleProviders).PluginId);
+        Assert.Equal(SamplePluginId, Assert.Single(registry.TestRunners).PluginId);
         Assert.NotSame(AssemblyLoadContext.Default, plugin.LoadContext);
         Assert.True(plugin.LoadContext.IsCollectible);
         Assert.Same(plugin.LoadContext, AssemblyLoadContext.GetLoadContext(command.Value.GetType().Assembly));
@@ -90,6 +98,42 @@ public sealed class PluginLoaderTests
     }
 
     [Fact]
+    public async Task LoadedPipelineExtensionsExecuteThroughTheRegistry()
+    {
+        using var temp = new TempDirectory();
+        var directory = StagePlugin(temp, CreateManifest());
+        var registry = new PluginRegistry();
+        await using var loader = CreateLoader(registry);
+        var result = await loader.LoadAsync(directory);
+        Assert.True(result.Succeeded, Describe(result.Validation));
+
+        var projectRoot = temp.CreateDirectory("project");
+        await registry.RunSteps[0].Value.ExecuteAsync(
+            new RunStepContext(projectRoot, "device-1"),
+            CancellationToken.None);
+        var parsed = registry.LogParsers[0].Value.Parse(
+            new LogParserContext("device-1", "I [sample] ready", "sample", "I", "[sample] ready"));
+        var rule = Assert.Single(registry.HighlightRuleProviders[0].Value.Rules);
+        var run = await registry.TestRunners[0].Value.RunAsync(
+            new TestRunnerContext { ProjectRoot = projectRoot },
+            CancellationToken.None);
+
+        Assert.Equal(
+            $"{projectRoot}|device-1",
+            await File.ReadAllTextAsync(Path.Combine(directory, "data", "run-step.txt")));
+        Assert.NotNull(parsed);
+        Assert.Equal("Sample", parsed.Tag);
+        Assert.Equal(rule.Id, parsed.HighlightRuleId);
+        Assert.True(run.Succeeded);
+        var suite = Assert.Single(run.Suites!);
+        Assert.Equal("Sample suite", suite.Name);
+        Assert.Contains(suite.Cases, testCase => testCase.Status == PluginTestStatus.Passed);
+        Assert.Equal(
+            projectRoot,
+            await File.ReadAllTextAsync(Path.Combine(directory, "data", "test-run.txt")));
+    }
+
+    [Fact]
     public async Task UnloadShutsThePluginDownAndRemovesItsExtensions()
     {
         using var temp = new TempDirectory();
@@ -106,6 +150,10 @@ public sealed class PluginLoaderTests
         Assert.Empty(registry.DeviceActions);
         Assert.Empty(registry.ToolbarActions);
         Assert.Empty(registry.DeviceTabs);
+        Assert.Empty(registry.RunSteps);
+        Assert.Empty(registry.LogParsers);
+        Assert.Empty(registry.HighlightRuleProviders);
+        Assert.Empty(registry.TestRunners);
         Assert.Empty(loader.Plugins);
         Assert.True(File.Exists(Path.Combine(directory, "data", "shutdown.txt")));
         Assert.False(await loader.UnloadAsync(SamplePluginId));
@@ -315,7 +363,17 @@ public sealed class PluginLoaderTests
             MinHostVersion = "0.1.0",
             EntryAssembly = "SampleCommandPlugin.dll",
             EntryType = entryType,
-            Capabilities = ["command"],
+            Capabilities =
+            [
+                "command",
+                "device-action",
+                "device-tab",
+                "toolbar-action",
+                "run-step",
+                "log-parser",
+                "highlight-rule-provider",
+                "test-runner",
+            ],
         };
 
     private static string StagePlugin(TempDirectory temp, PluginManifest manifest)

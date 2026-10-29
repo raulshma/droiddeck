@@ -21,6 +21,10 @@ public sealed class SamplePlugin : IPlugin
         context.Extensions.AddDeviceAction(new SampleDeviceAction(context.DataDirectory));
         context.Extensions.AddToolbarAction(new SampleToolbarAction(context.DataDirectory));
         context.Extensions.AddDeviceTab(new SampleDeviceTab());
+        context.Extensions.AddRunStep(new SampleRunStep(context.DataDirectory));
+        context.Extensions.AddLogParser(new SampleLogParser());
+        context.Extensions.AddHighlightRuleProvider(new SampleHighlightRuleProvider());
+        context.Extensions.AddTestRunner(new SampleTestRunner(context.DataDirectory));
     }
 
     /// <inheritdoc />
@@ -163,6 +167,108 @@ public sealed class SampleDeviceTab : IDeviceTabProvider
     {
         ArgumentNullException.ThrowIfNull(context);
         return $"Sample plugin tab for {context.Model ?? context.Serial}.";
+    }
+}
+
+/// <summary>
+/// A run step that writes a marker file so tests can observe the pipeline call.
+/// </summary>
+public sealed class SampleRunStep(string dataDirectory) : IRunStep
+{
+    /// <inheritdoc />
+    public string Id => "com.example.sample.runStep";
+
+    /// <inheritdoc />
+    public async Task<RunStepResult> ExecuteAsync(RunStepContext context, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        Directory.CreateDirectory(dataDirectory);
+        await File.WriteAllTextAsync(
+            Path.Combine(dataDirectory, "run-step.txt"),
+            $"{context.ProjectRoot}|{context.DeviceSerial}",
+            cancellationToken).ConfigureAwait(false);
+        return new RunStepResult(true, "Sample run step completed.");
+    }
+}
+
+/// <summary>
+/// A log parser that tags the sample marker lines and points them at the sample highlight rule.
+/// </summary>
+public sealed class SampleLogParser : ILogParser
+{
+    /// <inheritdoc />
+    public string Id => "com.example.sample.logParser";
+
+    /// <inheritdoc />
+    public string Name => "Sample log parser";
+
+    /// <inheritdoc />
+    public int Priority => 10;
+
+    /// <inheritdoc />
+    public LogParserResult? Parse(LogParserContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        return context.RawLine.Contains("[sample]", StringComparison.Ordinal)
+            ? new LogParserResult(Tag: "Sample", HighlightRuleId: SampleHighlightRuleProvider.RuleId)
+            : null;
+    }
+}
+
+/// <summary>
+/// A highlight rule provider that mirrors the rule the sample parser selects.
+/// </summary>
+public sealed class SampleHighlightRuleProvider : IHighlightRuleProvider
+{
+    /// <summary>The stable identifier of the sample highlight rule.</summary>
+    public const string RuleId = "com.example.sample.highlight";
+
+    /// <inheritdoc />
+    public string Id => "com.example.sample.highlightRules";
+
+    /// <inheritdoc />
+    public IReadOnlyList<PluginHighlightRule> Rules { get; } =
+        [new PluginHighlightRule(RuleId, "Sample highlight", "[sample]")];
+}
+
+/// <summary>
+/// A test runner that produces a deterministic suite so tests can observe results.
+/// </summary>
+public sealed class SampleTestRunner(string dataDirectory) : ITestRunner
+{
+    /// <inheritdoc />
+    public string Id => "com.example.sample.testRunner";
+
+    /// <inheritdoc />
+    public string Name => "Sample test runner";
+
+    /// <inheritdoc />
+    public string? Description => "Produces a deterministic sample suite without running a toolchain.";
+
+    /// <inheritdoc />
+    public bool RequiresDevice => false;
+
+    /// <inheritdoc />
+    public bool SupportsRerun => true;
+
+    /// <inheritdoc />
+    public async Task<PluginTestRunResult> RunAsync(TestRunnerContext context, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        Directory.CreateDirectory(dataDirectory);
+        await File.WriteAllTextAsync(
+            Path.Combine(dataDirectory, "test-run.txt"),
+            context.ProjectRoot,
+            cancellationToken).ConfigureAwait(false);
+        var cases = context.FailedTests.Count > 0
+            ? context.FailedTests
+                .Select(target => new PluginTestCase(target.Name, PluginTestStatus.Passed, target.ClassName))
+                .ToArray()
+            : [new PluginTestCase("SamplePasses", PluginTestStatus.Passed, "SampleTests")];
+        return new PluginTestRunResult(
+            Succeeded: true,
+            Suites: [new PluginTestSuite("Sample suite", cases)],
+            Output: "Sample runner completed.");
     }
 }
 
