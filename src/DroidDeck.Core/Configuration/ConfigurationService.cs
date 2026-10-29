@@ -1,23 +1,39 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using DroidDeck.Core.Infrastructure;
+using DroidDeck.Core.Projects;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DroidDeck.Core.Configuration;
 
 /// <summary>
-/// Loads the embedded defaults and the global settings file, merges them, and
-/// tracks which layer supplied each effective value.
+/// Resolves the eight configuration scopes in precedence order (built-in defaults,
+/// global, active profile, team-shared project, local project, run configuration,
+/// device, and session), tracks where every effective value came from, and persists
+/// the writable layers atomically.
 /// </summary>
 public sealed class ConfigurationService : IConfigurationService, IDisposable
 {
     private readonly AppPaths _paths;
     private readonly ILogger<ConfigurationService> _logger;
     private readonly TimeProvider _timeProvider;
+    private readonly SettingsMigrator _migrator;
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private volatile ConfigSnapshot _current;
+    private readonly List<WeakReference<ConfigChangeToken>> _tokens = [];
     private JsonObject _global = new();
+    private JsonObject _profile = new();
+    private JsonObject _teamProject = new();
+    private JsonObject _localProject = new();
+    private JsonObject _runConfiguration = new();
+    private JsonObject _deviceAll = new();
+    private Dictionary<string, JsonObject> _deviceGroups = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, JsonObject> _deviceSerials = new(StringComparer.OrdinalIgnoreCase);
+    private JsonObject _session = new();
+    private string? _teamRepositoryRoot;
+    private string? _localProjectId;
+    private string? _loadedProfileId;
+    private volatile ConfigSnapshot _current;
     private bool _initialized;
     private bool _disposed;
 
@@ -25,12 +41,14 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
     public ConfigurationService(
         AppPaths paths,
         ILogger<ConfigurationService>? logger = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        SettingsMigrator? migrator = null)
     {
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
         _logger = logger ?? NullLogger<ConfigurationService>.Instance;
         _timeProvider = timeProvider ?? TimeProvider.System;
-        _current = BuildSnapshot(new JsonObject());
+        _migrator = migrator ?? SettingsMigrator.Default;
+        _current = BuildSnapshot();
     }
 
     /// <inheritdoc />
@@ -67,9 +85,9 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
         ConfigScope scope = ConfigScope.Global,
         CancellationToken cancellationToken = default)
     {
-        ValidateScope(scope);
         ValidatePath(path);
-        var node = JsonSerializer.SerializeToNode(value, DroidDeckJson.Options);
+        ValidateWritableScope(scope);
+        var node = JsonSerializer.SerializeToNode(value, DroidDeckJson.Options)?.DeepClone();
 
         ConfigChangedEventArgs? change = null;
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -78,15 +96,44 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
             ThrowIfDisposed();
             await EnsureLoadedLockedAsync(cancellationToken).ConfigureAwait(false);
 
-            var candidate = (JsonObject)_global.DeepClone();
-            SetNode(candidate, path, node?.DeepClone());
-            AddSchemaVersion(candidate);
-            await SaveAsync(candidate, cancellationToken).ConfigureAwait(false);
+            switch (scope)
+            {
+                case ConfigScope.Global:
+                    var globalCandidate = (JsonObject)_global.DeepClone();
+                    SetNode(globalCandidate, path, node);
+                    AddSchemaVersion(globalCandidate);
+                    await SaveGlobalLockedAsync(globalCandidate, cancellationToken).ConfigureAwait(false);
+                    break;
+                case ConfigScope.TeamProject:
+                    RequireTeamProjectLocked();
+                    var teamCandidate = (JsonObject)_teamProject.DeepClone();
+                    SetNode(teamCandidate, path, node);
+                    AddSchemaVersion(teamCandidate);
+                    await SaveTeamProjectLockedAsync(teamCandidate, cancellationToken).ConfigureAwait(false);
+                    break;
+                case ConfigScope.LocalProject:
+                    RequireLocalProjectLocked();
+                    var localCandidate = (JsonObject)_localProject.DeepClone();
+                    SetNode(localCandidate, path, node);
+                    AddSchemaVersion(localCandidate);
+                    await SaveLocalProjectLockedAsync(localCandidate, cancellationToken).ConfigureAwait(false);
+                    break;
+                case ConfigScope.RunConfiguration:
+                    var runCandidate = (JsonObject)_runConfiguration.DeepClone();
+                    SetNode(runCandidate, path, node);
+                    _runConfiguration = runCandidate;
+                    break;
+                case ConfigScope.Session:
+                    var sessionCandidate = (JsonObject)_session.DeepClone();
+                    SetNode(sessionCandidate, path, node);
+                    _session = sessionCandidate;
+                    break;
+            }
 
-            _global = candidate;
-            _current = BuildSnapshot(_global);
-            var source = _current.GetSource(path);
-            change = new ConfigChangedEventArgs(path, scope, source, ConfigChangeKind.Set);
+            await SyncProfileLayerLockedAsync(cancellationToken).ConfigureAwait(false);
+            _current = BuildSnapshot();
+            NotifyTokensLocked();
+            change = new ConfigChangedEventArgs(path, scope, _current.GetSource(path), ConfigChangeKind.Set);
         }
         finally
         {
@@ -102,8 +149,14 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
         ConfigScope scope = ConfigScope.Global,
         CancellationToken cancellationToken = default)
     {
-        ValidateScope(scope);
         ValidatePath(path);
+        if (scope is ConfigScope.BuiltInDefaults or ConfigScope.Device)
+        {
+            throw new NotSupportedException(
+                scope == ConfigScope.BuiltInDefaults
+                    ? "Built-in defaults cannot be reset."
+                    : "Use ResetDeviceOverrideAsync for device and device group overrides.");
+        }
 
         ConfigChangedEventArgs? change = null;
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -112,17 +165,58 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
             ThrowIfDisposed();
             await EnsureLoadedLockedAsync(cancellationToken).ConfigureAwait(false);
 
-            var candidate = (JsonObject)_global.DeepClone();
-            if (RemoveNode(candidate, path))
+            switch (scope)
             {
-                AddSchemaVersion(candidate);
-                await SaveAsync(candidate, cancellationToken).ConfigureAwait(false);
-                _global = candidate;
-                _current = BuildSnapshot(_global);
+                case ConfigScope.Global:
+                    var globalCandidate = (JsonObject)_global.DeepClone();
+                    if (RemoveNode(globalCandidate, path))
+                    {
+                        AddSchemaVersion(globalCandidate);
+                        await SaveGlobalLockedAsync(globalCandidate, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    break;
+                case ConfigScope.TeamProject:
+                    RequireTeamProjectLocked();
+                    var teamCandidate = (JsonObject)_teamProject.DeepClone();
+                    if (RemoveNode(teamCandidate, path))
+                    {
+                        AddSchemaVersion(teamCandidate);
+                        await SaveTeamProjectLockedAsync(teamCandidate, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    break;
+                case ConfigScope.LocalProject:
+                    RequireLocalProjectLocked();
+                    var localCandidate = (JsonObject)_localProject.DeepClone();
+                    if (RemoveNode(localCandidate, path))
+                    {
+                        AddSchemaVersion(localCandidate);
+                        await SaveLocalProjectLockedAsync(localCandidate, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    break;
+                case ConfigScope.RunConfiguration:
+                    var runCandidate = (JsonObject)_runConfiguration.DeepClone();
+                    RemoveNode(runCandidate, path);
+                    _runConfiguration = runCandidate;
+                    break;
+                case ConfigScope.Profile:
+                    var profileCandidate = (JsonObject)_profile.DeepClone();
+                    RemoveNode(profileCandidate, path);
+                    _profile = profileCandidate;
+                    break;
+                case ConfigScope.Session:
+                    var sessionCandidate = (JsonObject)_session.DeepClone();
+                    RemoveNode(sessionCandidate, path);
+                    _session = sessionCandidate;
+                    break;
             }
 
-            var source = _current.GetSource(path);
-            change = new ConfigChangedEventArgs(path, scope, source, ConfigChangeKind.Reset);
+            await SyncProfileLayerLockedAsync(cancellationToken).ConfigureAwait(false);
+            _current = BuildSnapshot();
+            NotifyTokensLocked();
+            change = new ConfigChangedEventArgs(path, scope, _current.GetSource(path), ConfigChangeKind.Reset);
         }
         finally
         {
@@ -133,26 +227,286 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
     }
 
     /// <inheritdoc />
+    public async Task SetProjectContextAsync(ProjectContext? context, CancellationToken cancellationToken = default)
+    {
+        string? repositoryRoot = null;
+        string? localProjectId = null;
+        if (context is not null)
+        {
+            if (!string.IsNullOrWhiteSpace(context.RepositoryRoot))
+            {
+                repositoryRoot = Path.GetFullPath(context.RepositoryRoot);
+            }
+
+            if (!string.IsNullOrWhiteSpace(context.LocalProjectId))
+            {
+                ValidateIdentifier(context.LocalProjectId);
+                localProjectId = context.LocalProjectId;
+            }
+        }
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            _teamRepositoryRoot = repositoryRoot;
+            _localProjectId = localProjectId;
+            _teamProject = repositoryRoot is null
+                ? []
+                : await LoadLayerDocumentAsync(
+                    TeamProjectFile,
+                    layerName: "team-shared project",
+                    quarantineOnFailure: false,
+                    cancellationToken).ConfigureAwait(false) ?? [];
+            _localProject = localProjectId is null
+                ? []
+                : await LoadLayerDocumentAsync(
+                    LocalProjectFile,
+                    layerName: "local project",
+                    quarantineOnFailure: true,
+                    cancellationToken).ConfigureAwait(false) ?? [];
+            _current = BuildSnapshot();
+            NotifyTokensLocked();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task UseProfileAsync(string? profileId, CancellationToken cancellationToken = default)
+    {
+        if (profileId is not null)
+        {
+            ValidateIdentifier(profileId);
+        }
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            await EnsureLoadedLockedAsync(cancellationToken).ConfigureAwait(false);
+
+            var candidate = (JsonObject)_global.DeepClone();
+            if (profileId is null)
+            {
+                RemoveNode(candidate, SettingsPaths.ActiveProfileId);
+            }
+            else
+            {
+                SetNode(candidate, SettingsPaths.ActiveProfileId, JsonValue.Create(profileId));
+            }
+
+            if (!JsonNode.DeepEquals(candidate, _global))
+            {
+                AddSchemaVersion(candidate);
+                await SaveGlobalLockedAsync(candidate, cancellationToken).ConfigureAwait(false);
+            }
+
+            await SyncProfileLayerLockedAsync(cancellationToken).ConfigureAwait(false);
+            _current = BuildSnapshot();
+            NotifyTokensLocked();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+
+        Changed?.Invoke(
+            this,
+            new ConfigChangedEventArgs(
+                SettingsPaths.ActiveProfileId,
+                ConfigScope.Global,
+                _current.GetSource(SettingsPaths.ActiveProfileId),
+                profileId is null ? ConfigChangeKind.Reset : ConfigChangeKind.Set));
+    }
+
+    /// <inheritdoc />
+    public async Task SetRunConfigurationAsync(
+        RunConfiguration? configuration,
+        CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            await EnsureLoadedLockedAsync(cancellationToken).ConfigureAwait(false);
+            _runConfiguration = configuration is null
+                ? []
+                : RunConfigurationOverrides.Project(configuration);
+            _current = BuildSnapshot();
+            NotifyTokensLocked();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task SetSessionOverridesAsync(
+        IEnumerable<KeyValuePair<string, string>> overrides,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(overrides);
+        var pairs = overrides.ToList();
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            await EnsureLoadedLockedAsync(cancellationToken).ConfigureAwait(false);
+            var candidate = (JsonObject)_session.DeepClone();
+            foreach (var pair in pairs)
+            {
+                ValidatePath(pair.Key);
+                SetNode(candidate, pair.Key, CliOverrides.ParseValue(pair.Value));
+            }
+
+            _session = candidate;
+            await SyncProfileLayerLockedAsync(cancellationToken).ConfigureAwait(false);
+            _current = BuildSnapshot();
+            NotifyTokensLocked();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+
+        foreach (var pair in pairs)
+        {
+            Changed?.Invoke(
+                this,
+                new ConfigChangedEventArgs(
+                    pair.Key,
+                    ConfigScope.Session,
+                    _current.GetSource(pair.Key),
+                    ConfigChangeKind.Set));
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task ClearSessionOverridesAsync(CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            if (_session.Count == 0)
+            {
+                return;
+            }
+
+            _session = new JsonObject();
+            await SyncProfileLayerLockedAsync(cancellationToken).ConfigureAwait(false);
+            _current = BuildSnapshot();
+            NotifyTokensLocked();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task SetDeviceOverrideAsync<T>(
+        string path,
+        T value,
+        DeviceOverrideTarget target,
+        CancellationToken cancellationToken = default)
+    {
+        ValidatePath(path);
+        ValidateTarget(target);
+        var node = JsonSerializer.SerializeToNode(value, DroidDeckJson.Options)?.DeepClone();
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            await EnsureLoadedLockedAsync(cancellationToken).ConfigureAwait(false);
+            var candidate = (JsonObject)DeviceDocumentLocked(target).DeepClone();
+            SetNode(candidate, path, node);
+            StoreDeviceDocumentLocked(target, candidate);
+            _current = BuildSnapshot();
+            NotifyTokensLocked();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+
+        Changed?.Invoke(
+            this,
+            new ConfigChangedEventArgs(
+                path,
+                ConfigScope.Device,
+                _current.GetSource(path),
+                ConfigChangeKind.Set));
+    }
+
+    /// <inheritdoc />
+    public async Task ResetDeviceOverrideAsync(
+        string path,
+        DeviceOverrideTarget target,
+        CancellationToken cancellationToken = default)
+    {
+        ValidatePath(path);
+        ValidateTarget(target);
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            await EnsureLoadedLockedAsync(cancellationToken).ConfigureAwait(false);
+            var candidate = (JsonObject)DeviceDocumentLocked(target).DeepClone();
+            RemoveNode(candidate, path);
+            StoreDeviceDocumentLocked(target, candidate);
+            _current = BuildSnapshot();
+            NotifyTokensLocked();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+
+        Changed?.Invoke(
+            this,
+            new ConfigChangedEventArgs(
+                path,
+                ConfigScope.Device,
+                _current.GetSource(path),
+                ConfigChangeKind.Reset));
+    }
+
+    /// <inheritdoc />
     public ConfigSource GetSource(string path) => _current.GetSource(path);
 
     /// <inheritdoc />
     public T? GetValue<T>(string path)
     {
-        var node = _current.GetValue(path);
-        if (node is null)
+        var snapshot = _current;
+        if (snapshot.TryGetCached<T>(path, out var cached))
         {
-            return default;
+            return cached;
         }
 
-        try
+        T? value = default;
+        var node = snapshot.GetValue(path);
+        if (node is not null)
         {
-            return node.Deserialize<T>(DroidDeckJson.Options);
+            try
+            {
+                value = node.Deserialize<T>(DroidDeckJson.Options);
+            }
+            catch (JsonException exception)
+            {
+                _logger.LogWarning(exception, "The setting {Path} could not be read as {Type}.", path, typeof(T).Name);
+            }
         }
-        catch (JsonException exception)
-        {
-            _logger.LogWarning(exception, "The setting {Path} could not be read as {Type}.", path, typeof(T).Name);
-            return default;
-        }
+
+        snapshot.CacheValue(path, value);
+        return value;
     }
 
     /// <inheritdoc />
@@ -165,6 +519,34 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
         }
 
         return node is JsonValue value && value.TryGetValue<string>(out var text) ? text : node.ToJsonString();
+    }
+
+    /// <inheritdoc />
+    public ConfigChangeToken GetChangeToken()
+    {
+        lock (_tokens)
+        {
+            var token = new ConfigChangeToken();
+            _tokens.Add(new WeakReference<ConfigChangeToken>(token));
+            return token;
+        }
+    }
+
+    private void NotifyTokensLocked()
+    {
+        lock (_tokens)
+        {
+            for (var index = _tokens.Count - 1; index >= 0; index--)
+            {
+                if (!_tokens[index].TryGetTarget(out var token))
+                {
+                    _tokens.RemoveAt(index);
+                    continue;
+                }
+
+                token.NotifyChanged();
+            }
+        }
     }
 
     /// <inheritdoc />
@@ -187,24 +569,26 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
         }
 
         _paths.EnsureCreated();
-        var result = await LoadGlobalAsync(cancellationToken).ConfigureAwait(false);
-        _global = result.Global;
-        _current = result.Snapshot;
-        LastLoadNotice = result.Notice;
+        var (global, notice) = await LoadGlobalAsync(cancellationToken).ConfigureAwait(false);
+        _global = global;
+        LastLoadNotice = notice;
+        await SyncProfileLayerLockedAsync(cancellationToken).ConfigureAwait(false);
+        _current = BuildSnapshot();
         _initialized = true;
 
-        if (result.Notice is not null)
+        if (notice is not null)
         {
-            _logger.LogWarning("Settings recovery notice: {Message}", result.Notice.Message);
+            _logger.LogWarning("Settings recovery notice: {Message}", notice.Message);
         }
     }
 
-    private async Task<LoadedSettings> LoadGlobalAsync(CancellationToken cancellationToken)
+    private async Task<(JsonObject Global, SettingsLoadNotice? Notice)> LoadGlobalAsync(
+        CancellationToken cancellationToken)
     {
         var settingsPath = _paths.SettingsFile;
         if (!File.Exists(settingsPath))
         {
-            return LoadedSettings.Defaults(BuildSnapshot(new JsonObject()));
+            return (new JsonObject(), null);
         }
 
         string text;
@@ -214,34 +598,71 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
         }
         catch (IOException exception)
         {
-            return LoadedSettings.Defaults(
-                BuildSnapshot(new JsonObject()),
-                new SettingsLoadNotice(
-                    $"Settings could not be read: {exception.Message}. Built-in defaults are in use.",
-                    null,
-                    RecoveredFromBackup: false));
+            return (new JsonObject(), new SettingsLoadNotice(
+                $"Settings could not be read: {exception.Message}. Built-in defaults are in use.",
+                null,
+                RecoveredFromBackup: false));
         }
         catch (UnauthorizedAccessException exception)
         {
-            return LoadedSettings.Defaults(
-                BuildSnapshot(new JsonObject()),
-                new SettingsLoadNotice(
-                    $"Settings could not be read: {exception.Message}. Built-in defaults are in use.",
-                    null,
-                    RecoveredFromBackup: false));
+            return (new JsonObject(), new SettingsLoadNotice(
+                $"Settings could not be read: {exception.Message}. Built-in defaults are in use.",
+                null,
+                RecoveredFromBackup: false));
         }
 
         try
         {
-            var global = ParseGlobal(text);
-            MigrateLegacyOnboarding(global);
-            return new LoadedSettings(global, BuildSnapshot(global), Notice: null);
+            var global = ParseAndMigrate(text);
+            EnsureLegacyOnboarding(global);
+            ValidateSettingsDocument(global);
+            return (global, null);
         }
         catch (Exception exception) when (IsInvalidSettings(exception))
         {
             _logger.LogWarning(exception, "The settings file is invalid and will be quarantined.");
             return await RecoverFromCorruptAsync(exception.Message, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Pre-schema settings defaulted to a completed onboarding flow; every loaded global
+    /// document without an explicit onboarding section keeps that behavior.
+    /// </summary>
+    private static void EnsureLegacyOnboarding(JsonObject document)
+    {
+        if (document.ContainsKey("onboarding"))
+        {
+            return;
+        }
+
+        document["onboarding"] = new JsonObject { ["completed"] = true };
+    }
+
+    /// <summary>
+    /// Deserializes the merged document as the typed settings model so wrong-typed
+    /// values fail the load and trigger recovery instead of leaking JsonExceptions.
+    /// </summary>
+    private static void ValidateSettingsDocument(JsonObject global)
+    {
+        var effective = SettingsDefaults.CreateCopy();
+        effective["schemaVersion"] = AppSettings.CurrentSchemaVersion;
+        MergeInto(
+            effective,
+            global,
+            string.Empty,
+            ConfigSource.Global("validation"),
+            new Dictionary<string, ConfigSource>(StringComparer.OrdinalIgnoreCase),
+            new Dictionary<string, List<ConfigSource>>(StringComparer.OrdinalIgnoreCase));
+        _ = DeserializeSettings(effective);
+    }
+
+    private static AppSettings DeserializeSettings(JsonObject effective)
+    {
+        var settings = effective.Deserialize(SettingsJsonContext.Default.AppSettings)
+            ?? throw new InvalidOperationException("The effective settings document could not be deserialized.");
+        settings.SchemaVersion = AppSettings.CurrentSchemaVersion;
+        return settings;
     }
 
     private static bool IsInvalidSettings(Exception exception) =>
@@ -251,7 +672,7 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
             or InvalidOperationException
             or NotSupportedException;
 
-    private async Task<LoadedSettings> RecoverFromCorruptAsync(
+    private async Task<(JsonObject Global, SettingsLoadNotice? Notice)> RecoverFromCorruptAsync(
         string reason,
         CancellationToken cancellationToken)
     {
@@ -281,17 +702,14 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
             try
             {
                 var backupText = await File.ReadAllTextAsync(backupPath, cancellationToken).ConfigureAwait(false);
-                var backup = ParseGlobal(backupText);
-                MigrateLegacyOnboarding(backup);
-                var backupSnapshot = BuildSnapshot(backup);
+                var backup = ParseAndMigrate(backupText);
+                EnsureLegacyOnboarding(backup);
+                ValidateSettingsDocument(backup);
                 await AtomicFile.WriteAllTextAsync(_paths.SettingsFile, backupText, keepBackup: false, cancellationToken)
                     .ConfigureAwait(false);
 
                 var message = "Settings were invalid and have been restored from the last backup.";
-                return new LoadedSettings(
-                    backup,
-                    backupSnapshot,
-                    new SettingsLoadNotice(message, quarantinedPath, RecoveredFromBackup: true));
+                return (backup, new SettingsLoadNotice(message, quarantinedPath, RecoveredFromBackup: true));
             }
             catch (Exception exception) when (
                 exception is IOException
@@ -319,12 +737,109 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
         }
 
         var defaultsMessage = $"Settings were invalid ({reason}). Built-in defaults are in use.";
-        return LoadedSettings.Defaults(
-            BuildSnapshot(new JsonObject()),
-            new SettingsLoadNotice(defaultsMessage, quarantinedPath, RecoveredFromBackup: false));
+        return (new JsonObject(), new SettingsLoadNotice(defaultsMessage, quarantinedPath, RecoveredFromBackup: false));
     }
 
-    private static JsonObject ParseGlobal(string text)
+    private async Task<JsonObject?> LoadProfileLockedAsync(string? profileId, CancellationToken cancellationToken)
+    {
+        _profile = new JsonObject();
+        _loadedProfileId = null;
+        if (profileId is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            ValidateIdentifier(profileId);
+        }
+        catch (ArgumentException exception)
+        {
+            _logger.LogWarning(exception, "The profile identifier {ProfileId} is invalid and the layer is skipped.", profileId);
+            return null;
+        }
+
+        _profile = await LoadLayerDocumentAsync(
+            ProfileFile(profileId),
+            layerName: $"profile '{profileId}'",
+            quarantineOnFailure: true,
+            cancellationToken).ConfigureAwait(false) ?? new JsonObject();
+        _loadedProfileId = profileId;
+        return _profile;
+    }
+
+    /// <summary>
+    /// Loads the profile document when the active profile id changed. The session layer
+    /// wins over the global selection because it is the highest layer, so a
+    /// session-scope <c>profile.activeId</c> activates its profile immediately.
+    /// </summary>
+    private async Task SyncProfileLayerLockedAsync(CancellationToken cancellationToken)
+    {
+        var activeProfileId = ResolveActiveProfileId();
+        if (string.Equals(activeProfileId, _loadedProfileId, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        await LoadProfileLockedAsync(activeProfileId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<JsonObject?> LoadLayerDocumentAsync(
+        string file,
+        string layerName,
+        bool quarantineOnFailure,
+        CancellationToken cancellationToken)
+    {
+        if (file.Length == 0 || !File.Exists(file))
+        {
+            return null;
+        }
+
+        string text;
+        try
+        {
+            text = await File.ReadAllTextAsync(file, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(
+                exception,
+                "The {Layer} configuration file {File} could not be read and is ignored.",
+                layerName,
+                file);
+            return null;
+        }
+
+        try
+        {
+            return ParseAndMigrate(text);
+        }
+        catch (Exception exception) when (IsInvalidSettings(exception))
+        {
+            // Repository files are never moved aside because git owns them; the layer is
+            // skipped and the violation is reported through the log instead.
+            _logger.LogWarning(
+                exception,
+                "The {Layer} configuration file {File} is invalid and is ignored.",
+                layerName,
+                file);
+            if (quarantineOnFailure && File.Exists(file))
+            {
+                try
+                {
+                    CorruptFileQuarantine.Quarantine(file, _paths.QuarantineDirectory, _timeProvider.GetUtcNow());
+                }
+                catch (Exception cleanupException) when (cleanupException is IOException or UnauthorizedAccessException)
+                {
+                    _logger.LogWarning(cleanupException, "The invalid file could not be quarantined.");
+                }
+            }
+
+            return null;
+        }
+    }
+
+    private JsonObject ParseAndMigrate(string text)
     {
         var node = JsonNode.Parse(
             text,
@@ -335,59 +850,139 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
             });
         if (node is not JsonObject document)
         {
-            throw new InvalidDataException("The settings document must be a JSON object.");
+            throw new InvalidDataException("The configuration document must be a JSON object.");
         }
 
-        var schemaVersion = AppSettings.CurrentSchemaVersion;
-        if (ConfigSnapshot.TryGetProperty(document, "schemaVersion", out var versionNode) && versionNode is not null)
+        var version = ReadSchemaVersion(document);
+        if (version > AppSettings.CurrentSchemaVersion)
         {
-            if (versionNode is not JsonValue versionValue ||
-                !versionValue.TryGetValue<int>(out schemaVersion) ||
-                schemaVersion < 1)
-            {
-                throw new InvalidDataException("The settings schemaVersion is invalid.");
-            }
-
-            if (schemaVersion > AppSettings.CurrentSchemaVersion)
-            {
-                throw new InvalidDataException(
-                    $"The settings schemaVersion {schemaVersion} is newer than the supported version {AppSettings.CurrentSchemaVersion}.");
-            }
+            throw new InvalidDataException(
+                $"The configuration schemaVersion {version} is newer than the supported version {AppSettings.CurrentSchemaVersion}.");
         }
 
-        document["schemaVersion"] = AppSettings.CurrentSchemaVersion;
+        _migrator.Migrate(document, version);
         return document;
     }
 
-    private static void MigrateLegacyOnboarding(JsonObject document)
+    private static int ReadSchemaVersion(JsonObject document)
     {
-        if (document.ContainsKey("onboarding"))
+        if (!ConfigSnapshot.TryGetProperty(document, "schemaVersion", out var versionNode) || versionNode is null)
         {
-            return;
+            return 0;
         }
 
-        document["onboarding"] = new JsonObject
+        if (versionNode is not JsonValue versionValue ||
+            !versionValue.TryGetValue<int>(out var version) ||
+            version < 1)
         {
-            ["completed"] = true,
-        };
+            throw new InvalidDataException("The configuration schemaVersion is invalid.");
+        }
+
+        return version;
     }
 
-    private ConfigSnapshot BuildSnapshot(JsonObject global)
+    private ConfigSnapshot BuildSnapshot()
     {
         var effective = SettingsDefaults.CreateCopy();
-        AddSchemaVersion(effective);
+        effective["schemaVersion"] = AppSettings.CurrentSchemaVersion;
         var sources = new Dictionary<string, ConfigSource>(StringComparer.OrdinalIgnoreCase);
+        var contributions = new Dictionary<string, List<ConfigSource>>(StringComparer.OrdinalIgnoreCase);
         RecordLeaves(effective, string.Empty, ConfigSource.Defaults, sources);
 
-        var globalSource = ConfigSource.Global(_paths.SettingsFile);
-        MergeInto(effective, global, string.Empty, globalSource, sources);
+        foreach (var (document, source) in Layers())
+        {
+            MergeInto(effective, document, string.Empty, source, sources, contributions);
+        }
+
         effective["schemaVersion"] = AppSettings.CurrentSchemaVersion;
+        var settings = DeserializeSettings(effective);
 
-        var settings = effective.Deserialize(SettingsJsonContext.Default.AppSettings)
-            ?? throw new InvalidOperationException("The effective settings document could not be deserialized.");
-        settings.SchemaVersion = AppSettings.CurrentSchemaVersion;
+        var contributionMap = new Dictionary<string, IReadOnlyList<ConfigSource>>(
+            contributions.Count,
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in contributions)
+        {
+            contributionMap[pair.Key] = pair.Value;
+        }
 
-        return new ConfigSnapshot(settings, effective, sources);
+        return new ConfigSnapshot(settings, effective, sources, contributionMap);
+    }
+
+    private IEnumerable<(JsonObject Document, ConfigSource Source)> Layers()
+    {
+        yield return (_global, ConfigSource.Global(_paths.SettingsFile));
+        if (ResolveActiveProfileId() is { } profileId)
+        {
+            yield return (_profile, new ConfigSource(ConfigScope.Profile, $"profiles/{profileId}.json"));
+        }
+
+        if (_teamRepositoryRoot is not null)
+        {
+            yield return (_teamProject, new ConfigSource(ConfigScope.TeamProject, TeamProjectFile));
+        }
+
+        if (_localProjectId is not null)
+        {
+            yield return (_localProject, new ConfigSource(ConfigScope.LocalProject, LocalProjectFile));
+        }
+
+        yield return (_runConfiguration, new ConfigSource(ConfigScope.RunConfiguration, "run-configuration"));
+        yield return (_deviceAll, new ConfigSource(ConfigScope.Device, DeviceOverrideTarget.AllDevices.Origin));
+        foreach (var group in OrderedKeys(_deviceGroups))
+        {
+            yield return (_deviceGroups[group], new ConfigSource(ConfigScope.Device, DeviceOverrideTarget.Group(group).Origin));
+        }
+
+        foreach (var serial in OrderedKeys(_deviceSerials))
+        {
+            yield return (_deviceSerials[serial], new ConfigSource(ConfigScope.Device, DeviceOverrideTarget.Serial(serial).Origin));
+        }
+
+        yield return (_session, new ConfigSource(ConfigScope.Session, "session"));
+    }
+
+    private static IEnumerable<string> OrderedKeys(Dictionary<string, JsonObject> documents) =>
+        documents.Keys.OrderBy(static key => key, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The session layer wins over the global selection because it is the highest layer,
+    /// so a session-scope <c>profile.activeId</c> activates its profile immediately.
+    /// </summary>
+    private string? ResolveActiveProfileId()
+    {
+        if (TryGetDocumentString(_session, SettingsPaths.ActiveProfileId, out var sessionProfile) &&
+            !string.IsNullOrWhiteSpace(sessionProfile))
+        {
+            return sessionProfile;
+        }
+
+        return TryGetDocumentString(_global, SettingsPaths.ActiveProfileId, out var globalProfile) &&
+               !string.IsNullOrWhiteSpace(globalProfile)
+            ? globalProfile
+            : null;
+    }
+
+    private static bool TryGetDocumentString(JsonObject document, string path, out string? value)
+    {
+        value = null;
+        JsonNode? current = document;
+        foreach (var segment in path.Split('.'))
+        {
+            if (current is not JsonObject obj || !ConfigSnapshot.TryGetProperty(obj, segment, out var next))
+            {
+                return false;
+            }
+
+            current = next;
+        }
+
+        if (current is not JsonValue jsonValue || !jsonValue.TryGetValue<string>(out var text))
+        {
+            return false;
+        }
+
+        value = text;
+        return true;
     }
 
     private static void MergeInto(
@@ -395,7 +990,8 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
         JsonObject overrides,
         string prefix,
         ConfigSource source,
-        Dictionary<string, ConfigSource> sources)
+        Dictionary<string, ConfigSource> sources,
+        Dictionary<string, List<ConfigSource>> contributions)
     {
         foreach (var property in overrides)
         {
@@ -405,13 +1001,14 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
 
             if (existing is JsonObject existingObject && property.Value is JsonObject overrideObject)
             {
-                MergeInto(existingObject, overrideObject, path, source, sources);
+                MergeInto(existingObject, overrideObject, path, source, sources, contributions);
                 continue;
             }
 
             target[actualKey] = property.Value?.DeepClone();
             RemoveSourcesUnder(path, sources);
-            RecordLeaves(property.Value, path, source, sources);
+            RemoveContributionsBelow(path, contributions);
+            RecordLeaves(property.Value, path, source, sources, contributions);
         }
     }
 
@@ -419,22 +1016,36 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
         JsonNode? node,
         string path,
         ConfigSource source,
-        Dictionary<string, ConfigSource> sources)
+        Dictionary<string, ConfigSource> sources,
+        Dictionary<string, List<ConfigSource>>? contributions = null)
     {
         if (node is JsonObject obj && obj.Count > 0)
         {
             foreach (var property in obj)
             {
-                RecordLeaves(property.Value, Combine(path, property.Key), source, sources);
+                RecordLeaves(property.Value, Combine(path, property.Key), source, sources, contributions);
             }
 
             return;
         }
 
-        if (!string.IsNullOrEmpty(path))
+        if (string.IsNullOrEmpty(path))
         {
-            sources[path] = source;
+            return;
         }
+
+        sources[path] = source;
+        if (contributions is null)
+        {
+            return;
+        }
+
+        if (!contributions.TryGetValue(path, out var list))
+        {
+            contributions[path] = list = [];
+        }
+
+        list.Add(source);
     }
 
     private static void RemoveSourcesUnder(string path, Dictionary<string, ConfigSource> sources)
@@ -447,6 +1058,22 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
         foreach (var key in keys)
         {
             sources.Remove(key);
+        }
+    }
+
+    /// <summary>
+    /// Drops contribution history for descendants of a replaced node. The entry for the
+    /// node itself is kept so every layer that set it stays visible in the source map.
+    /// </summary>
+    private static void RemoveContributionsBelow(string path, Dictionary<string, List<ConfigSource>> contributions)
+    {
+        var prefix = path + ".";
+        var keys = contributions.Keys
+            .Where(key => key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        foreach (var key in keys)
+        {
+            contributions.Remove(key);
         }
     }
 
@@ -513,19 +1140,129 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
         document["schemaVersion"] = AppSettings.CurrentSchemaVersion;
     }
 
-    private async Task SaveAsync(JsonObject document, CancellationToken cancellationToken)
+    private async Task SaveGlobalLockedAsync(JsonObject document, CancellationToken cancellationToken)
     {
         var json = document.ToJsonString(DroidDeckJson.Options);
         await AtomicFile.WriteAllTextAsync(_paths.SettingsFile, json, keepBackup: true, cancellationToken)
             .ConfigureAwait(false);
+        _global = document;
     }
 
-    private static void ValidateScope(ConfigScope scope)
+    private async Task SaveTeamProjectLockedAsync(JsonObject document, CancellationToken cancellationToken)
     {
-        if (scope != ConfigScope.Global)
+        var violations = TeamProjectConfigValidator.Validate(document);
+        if (violations.Violations.Count > 0)
         {
-            throw new NotSupportedException(
-                $"The {scope} scope is not implemented yet. Only the Global scope is available in this build.");
+            throw new TeamConfigViolationException(violations.Violations);
+        }
+
+        // No backup file: a stray project.json.bak would dirty the repository.
+        var json = document.ToJsonString(DroidDeckJson.Options);
+        await AtomicFile.WriteAllTextAsync(TeamProjectFile, json, keepBackup: false, cancellationToken)
+            .ConfigureAwait(false);
+        _teamProject = document;
+    }
+
+    private async Task SaveLocalProjectLockedAsync(JsonObject document, CancellationToken cancellationToken)
+    {
+        var json = document.ToJsonString(DroidDeckJson.Options);
+        await AtomicFile.WriteAllTextAsync(LocalProjectFile, json, keepBackup: true, cancellationToken)
+            .ConfigureAwait(false);
+        _localProject = document;
+    }
+
+    private string TeamProjectFile => Path.Combine(_teamRepositoryRoot ?? string.Empty, ".droiddeck", "project.json");
+
+    private string LocalProjectFile =>
+        Path.Combine(_paths.ProjectsDirectory, "overrides", (_localProjectId ?? string.Empty) + ".json");
+
+    private string ProfileFile(string profileId) => Path.Combine(_paths.DataDirectory, "profiles", profileId + ".json");
+
+    private void RequireTeamProjectLocked()
+    {
+        if (_teamRepositoryRoot is null)
+        {
+            throw new InvalidOperationException(
+                "Attach a project with SetProjectContextAsync before writing team-shared configuration.");
+        }
+    }
+
+    private void RequireLocalProjectLocked()
+    {
+        if (_localProjectId is null)
+        {
+            throw new InvalidOperationException(
+                "Attach a project with SetProjectContextAsync before writing local project overrides.");
+        }
+    }
+
+    private JsonObject DeviceDocumentLocked(DeviceOverrideTarget target) => target.Kind switch
+    {
+        DeviceOverrideKind.All => _deviceAll,
+        DeviceOverrideKind.Group => GetOrAddDeviceDocument(_deviceGroups, target.Key),
+        DeviceOverrideKind.Serial => GetOrAddDeviceDocument(_deviceSerials, target.Key),
+        _ => throw new ArgumentOutOfRangeException(nameof(target), target.Kind, null),
+    };
+
+    private static JsonObject GetOrAddDeviceDocument(Dictionary<string, JsonObject> documents, string key)
+    {
+        if (!documents.TryGetValue(key, out var document))
+        {
+            documents[key] = document = new JsonObject();
+        }
+
+        return document;
+    }
+
+    private void StoreDeviceDocumentLocked(DeviceOverrideTarget target, JsonObject document)
+    {
+        switch (target.Kind)
+        {
+            case DeviceOverrideKind.All:
+                _deviceAll = document;
+                break;
+            case DeviceOverrideKind.Group:
+                _deviceGroups[target.Key] = document;
+                break;
+            case DeviceOverrideKind.Serial:
+                _deviceSerials[target.Key] = document;
+                break;
+        }
+    }
+
+    private static void ValidateWritableScope(ConfigScope scope)
+    {
+        if (scope is ConfigScope.BuiltInDefaults or ConfigScope.Profile or ConfigScope.Device)
+        {
+            throw new NotSupportedException(scope switch
+            {
+                ConfigScope.BuiltInDefaults => "Built-in defaults cannot be overridden.",
+                ConfigScope.Profile => "Profile documents are managed by the profile service.",
+                _ => "Use SetDeviceOverrideAsync for device and device group overrides.",
+            });
+        }
+    }
+
+    private static void ValidateTarget(DeviceOverrideTarget target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        if (target.Kind is DeviceOverrideKind.Group or DeviceOverrideKind.Serial &&
+            string.IsNullOrWhiteSpace(target.Key))
+        {
+            throw new ArgumentException("A device group name or device serial is required.", nameof(target));
+        }
+    }
+
+    private static void ValidateIdentifier(string identifier)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(identifier);
+        if (identifier.Length > 128 ||
+            identifier.Contains("..", StringComparison.Ordinal) ||
+            !identifier.All(static c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '-'))
+        {
+            throw new ArgumentException(
+                "Identifiers must be 1-128 characters of letters, digits, dots, underscores, or hyphens.",
+                nameof(identifier));
         }
     }
 
@@ -539,13 +1276,4 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);
-
-    private readonly record struct LoadedSettings(
-        JsonObject Global,
-        ConfigSnapshot Snapshot,
-        SettingsLoadNotice? Notice)
-    {
-        public static LoadedSettings Defaults(ConfigSnapshot snapshot, SettingsLoadNotice? notice = null) =>
-            new(new JsonObject(), snapshot, notice);
-    }
 }

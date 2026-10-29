@@ -1,3 +1,5 @@
+using DroidDeck.Core.Projects;
+
 namespace DroidDeck.Core.Configuration;
 
 /// <summary>The kind of configuration change.</summary>
@@ -51,7 +53,11 @@ public sealed record SettingsLoadNotice(
 /// </summary>
 public interface IConfigurationService
 {
-    /// <summary>Gets the current immutable snapshot.</summary>
+    /// <summary>
+    /// Gets the current immutable snapshot. Snapshots are replaced on every write, so
+    /// consumers can cache against one snapshot; repeated reads against a snapshot are
+    /// cached and must stay within the 1 ms per-resolution budget.
+    /// </summary>
     ConfigSnapshot Current { get; }
 
     /// <summary>Gets whether the settings file has been loaded.</summary>
@@ -72,12 +78,55 @@ public interface IConfigurationService
     /// <summary>Gets the source of an effective value.</summary>
     ConfigSource GetSource(string path);
 
+    /// <summary>
+    /// Attaches the active project, activating the team-shared layer
+    /// (<c>&lt;repo&gt;/.droiddeck/project.json</c>) and the local project override layer.
+    /// Pass <see langword="null"/> to detach. Publishes a new snapshot; observe
+    /// <see cref="GetChangeToken"/> for bulk invalidation.
+    /// </summary>
+    Task SetProjectContextAsync(ProjectContext? context, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Activates the named profile layer, or deactivates it with <see langword="null"/>.
+    /// The selection persists in the global scope.
+    /// </summary>
+    Task UseProfileAsync(string? profileId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Replaces the run-configuration layer with the given run configuration, or clears
+    /// the layer with <see langword="null"/>. Publishes a new snapshot without per-path events.
+    /// </summary>
+    Task SetRunConfigurationAsync(RunConfiguration? configuration, CancellationToken cancellationToken = default);
+
+    /// <summary>Applies raw key/value pairs to the session layer; values may be JSON or plain text.</summary>
+    Task SetSessionOverridesAsync(IEnumerable<KeyValuePair<string, string>> overrides, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Removes every session-layer override. Publishes a new snapshot without per-path
+    /// events; observe <see cref="GetChangeToken"/> for bulk invalidation.
+    /// </summary>
+    Task ClearSessionOverridesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Sets an override for all devices, a device group, or one device serial.</summary>
+    Task SetDeviceOverrideAsync<T>(string path, T value, DeviceOverrideTarget target, CancellationToken cancellationToken = default);
+
+    /// <summary>Removes an override for all devices, a device group, or one device serial.</summary>
+    Task ResetDeviceOverrideAsync(string path, DeviceOverrideTarget target, CancellationToken cancellationToken = default);
+
+    /// <summary>Gets a token that signals the publication of a new snapshot.</summary>
+    ConfigChangeToken GetChangeToken();
+
     /// <summary>Gets a typed effective value.</summary>
     T? GetValue<T>(string path);
 
     /// <summary>Gets a string effective value.</summary>
     string? GetString(string path);
 
-    /// <summary>Raised after a value is set or reset.</summary>
+    /// <summary>
+    /// Raised after a value is set or reset. The event fires synchronously before the
+    /// writing call returns, so propagation stays within the 100 ms budget; bulk layer
+    /// swaps (project context, session clears, run configurations) publish a new
+    /// snapshot and notify <see cref="GetChangeToken"/> without per-path events.
+    /// </summary>
     event EventHandler<ConfigChangedEventArgs>? Changed;
 }
