@@ -7,21 +7,20 @@ using Microsoft.Extensions.Logging;
 namespace DroidDeck.App.Services;
 
 /// <summary>
-/// Owns plugin discovery and load results for the shell, extension page, and
-/// diagnostics report.
+/// Owns plugin discovery and lifecycle for the shell, extension page, and
+/// diagnostics report. The manager loads plugins after the first frame and
+/// isolates their faults; enable and disable complete on restart.
 /// </summary>
 public sealed class PluginHost : IAsyncDisposable
 {
     private readonly PluginRegistry _registry;
-    private readonly PluginLoader _loader;
+    private readonly PluginManager _manager;
     private readonly AppPaths _paths;
     private readonly ILogger<PluginHost> _logger;
     private readonly object _sync = new();
-    private readonly HashSet<string> _disabledPlugins = new(StringComparer.OrdinalIgnoreCase);
     private readonly PluginExtensionCatalog _catalog;
     private readonly PluginHealthTracker _health;
     private readonly PluginActionInvoker _invoker;
-    private IReadOnlyList<PluginLoadResult> _results = [];
     private bool _initialized;
     private bool _disposed;
 
@@ -29,12 +28,13 @@ public sealed class PluginHost : IAsyncDisposable
     public PluginHost(PluginRegistry registry, PluginLoader loader, AppPaths paths, ILogger<PluginHost> logger)
     {
         _registry = registry ?? throw new ArgumentNullException(nameof(registry));
-        _loader = loader ?? throw new ArgumentNullException(nameof(loader));
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        _catalog = new PluginExtensionCatalog(registry);
         _health = new PluginHealthTracker();
         _invoker = new PluginActionInvoker(_health);
+        _catalog = new PluginExtensionCatalog(registry);
+        _manager = new PluginManager(loader, _health);
+        _manager.Changed += OnManagerChanged;
     }
 
     /// <summary>Gets the shared extension registry.</summary>
@@ -55,32 +55,26 @@ public sealed class PluginHost : IAsyncDisposable
     /// <summary>Gets why plugins were skipped, if they were.</summary>
     public string? DisabledReason { get; private set; }
 
+    /// <summary>Gets whether a restart is required for plugin changes to take full effect.</summary>
+    public bool RestartRequired => _manager.RestartRequired;
+
+    /// <summary>Gets the manager status of every installed plugin.</summary>
+    public IReadOnlyList<PluginStatus> Statuses => _manager.Statuses;
+
     /// <summary>Gets the results of the last plugin scan.</summary>
-    public IReadOnlyList<PluginLoadResult> Results
-    {
-        get
-        {
-            lock (_sync)
-            {
-                return _results;
-            }
-        }
-    }
+    public IReadOnlyList<PluginLoadResult> Results => _manager.Results;
 
-    /// <summary>Gets the number of successfully loaded plugins.</summary>
-    public int LoadedCount => Results.Count(result => result.Succeeded && !IsDisabled(result.Plugin!.Id));
+    /// <summary>Gets the number of enabled, loaded plugins.</summary>
+    public int LoadedCount => _manager.Statuses.Count(status => status.State == PluginState.Loaded);
 
-    /// <summary>Gets whether a plugin has been disabled in this launch.</summary>
+    /// <summary>Gets whether a plugin is disabled for this session or on disk.</summary>
     public bool IsDisabled(string pluginId)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pluginId);
-        lock (_sync)
-        {
-            return _disabledPlugins.Contains(pluginId);
-        }
+        return _manager.IsDisabled(pluginId);
     }
 
-    /// <summary>Raised after a plugin scan completes.</summary>
+    /// <summary>Raised after a plugin scan or a manager action completes.</summary>
     public event EventHandler? ResultsChanged;
 
     /// <summary>Registers built-ins and loads installed plugins unless disabled.</summary>
@@ -92,6 +86,11 @@ public sealed class PluginHost : IAsyncDisposable
         DisabledReason = disabledReason;
         if (disabled)
         {
+            lock (_sync)
+            {
+                _initialized = true;
+            }
+
             if (_logger.IsEnabled(LogLevel.Information))
             {
                 _logger.LogInformation("Plugins disabled: {Reason}", disabledReason);
@@ -103,25 +102,14 @@ public sealed class PluginHost : IAsyncDisposable
 
         try
         {
-            var results = await _loader.LoadInstalledAsync(_paths.PluginsDirectory, cancellationToken)
-                .ConfigureAwait(false);
-            lock (_sync)
-            {
-                _results = results;
-                _initialized = true;
-            }
-
-            if (_logger.IsEnabled(LogLevel.Information))
-            {
-                _logger.LogInformation(
-                    "Plugin scan complete: {Loaded} loaded, {Failed} failed.",
-                    results.Count(result => result.Succeeded),
-                    results.Count(result => !result.Succeeded));
-            }
+            await _manager.InitializeAsync(_paths.PluginsDirectory, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             _logger.LogError(exception, "Plugin discovery failed.");
+        }
+        finally
+        {
             lock (_sync)
             {
                 _initialized = true;
@@ -144,39 +132,27 @@ public sealed class PluginHost : IAsyncDisposable
     }
 
     /// <summary>
-    /// Disables a loaded plugin by shutting it down and removing its contributions.
-    /// The plugin stays installed; restart DroidDeck to load it again.
+    /// Disables a plugin. Its extensions are removed immediately and the state
+    /// persists; a restart is required to unload it.
     /// </summary>
     /// <returns><see langword="true"/> when the plugin was found and disabled.</returns>
-    public async Task<bool> DisableAsync(string pluginId, CancellationToken cancellationToken = default)
+    public Task<bool> DisableAsync(string pluginId, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pluginId);
         ObjectDisposedException.ThrowIf(_disposed, this);
+        return _manager.DisableAsync(pluginId, cancellationToken);
+    }
 
-        var plugin = Results
-            .Select(result => result.Plugin)
-            .FirstOrDefault(candidate => candidate is not null &&
-                string.Equals(candidate.Id, pluginId, StringComparison.OrdinalIgnoreCase));
-        if (plugin is null)
-        {
-            return false;
-        }
-
-        await plugin.ShutdownAsync(cancellationToken).ConfigureAwait(false);
-        lock (_sync)
-        {
-            _disabledPlugins.Add(plugin.Id);
-        }
-
-        if (_logger.IsEnabled(LogLevel.Information))
-        {
-            _logger.LogInformation(
-                "Plugin {PluginId} was disabled. Its extensions were removed; a restart is required to load it again.",
-                plugin.Id);
-        }
-
-        RaiseChanged();
-        return true;
+    /// <summary>
+    /// Enables a plugin. The plugin loads when DroidDeck restarts; the manager
+    /// reports the restart requirement.
+    /// </summary>
+    /// <returns><see langword="true"/> when the plugin was found and enabled.</returns>
+    public Task<bool> EnableAsync(string pluginId, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pluginId);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _manager.EnableAsync(pluginId, cancellationToken);
     }
 
     /// <summary>Builds a short health section for diagnostics reports.</summary>
@@ -196,24 +172,33 @@ public sealed class PluginHost : IAsyncDisposable
             builder.AppendLine($"Loaded plugins: {LoadedCount}");
         }
 
-        foreach (var result in Results)
+        foreach (var status in _manager.Statuses)
         {
-            if (result.Plugin is { } plugin)
+            var line = $"- {status.Id} {status.Version}: {status.StatusLabel}";
+            if (status.Reason is not null)
             {
-                var status = IsDisabled(plugin.Id) ? "disabled (restart to re-enable)" : "loaded";
-                var health = _health.Get(plugin.Id);
-                if (!health.IsHealthy)
+                line += $": {status.Reason}";
+            }
+
+            var health = _health.Get(status.Id);
+            if (!health.IsHealthy)
+            {
+                line += $", unhealthy: {health.LastError}";
+            }
+
+            builder.AppendLine(line);
+            if (status.Reason is null)
+            {
+                foreach (var issue in status.Issues)
                 {
-                    status += $", unhealthy: {health.LastError}";
+                    builder.AppendLine($"  - {issue}");
                 }
-
-                builder.AppendLine($"- {plugin.Id} {plugin.Version}: {status}");
             }
+        }
 
-            foreach (var issue in result.Validation.Issues)
-            {
-                builder.AppendLine($"- {result.Plugin?.Id ?? "unknown plugin"}: {issue}");
-            }
+        if (_manager.RestartRequired)
+        {
+            builder.AppendLine("A restart is required for plugin changes to take full effect.");
         }
 
         return builder.ToString().TrimEnd();
@@ -228,8 +213,11 @@ public sealed class PluginHost : IAsyncDisposable
         }
 
         _disposed = true;
-        await _loader.DisposeAsync().ConfigureAwait(false);
+        _manager.Changed -= OnManagerChanged;
+        await _manager.DisposeAsync().ConfigureAwait(false);
     }
+
+    private void OnManagerChanged(object? sender, EventArgs e) => RaiseChanged();
 
     private void RaiseChanged()
     {

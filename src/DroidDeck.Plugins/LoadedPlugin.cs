@@ -63,6 +63,27 @@ public sealed class LoadedPlugin : IPluginInfo, IAsyncDisposable
     public string InstallPath { get; }
 
     /// <summary>
+    /// Removes the plugin's extensions while keeping its assemblies loaded. A
+    /// restart is required to unload a disabled plugin; the plugin is shut down
+    /// cleanly when the host exits.
+    /// </summary>
+    public void Disable()
+    {
+        if (_shutdown)
+        {
+            return;
+        }
+
+        _registry.RemoveAll(Id);
+        if (_logger.IsEnabled(LogLevel.Information))
+        {
+            _logger.LogInformation(
+                "Disabled plugin {PluginId}. Its extensions were removed; a restart is required to unload it.",
+                Id);
+        }
+    }
+
+    /// <summary>
     /// Shuts the plugin down, removes its extensions, and unloads its assemblies.
     /// Plugin failures are logged and never propagate to the host.
     /// </summary>

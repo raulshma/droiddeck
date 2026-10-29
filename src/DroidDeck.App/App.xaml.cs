@@ -487,7 +487,10 @@ public partial class App : Application, IDisposable
             : safeMode
                 ? "safe mode"
                 : null;
-        _ = InitializePluginsAsync(_pluginHost, pluginsDisabled, reason, logger);
+        // Plugins must not delay first frame: their load starts on the UI
+        // dispatcher after the shell is up and continues off the UI thread.
+        _window?.DispatcherQueue.TryEnqueue(() =>
+            _ = InitializePluginsAsync(_pluginHost, pluginsDisabled, reason, logger));
 
         try
         {

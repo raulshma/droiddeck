@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using DroidDeck.App.Services;
 using DroidDeck.Core;
@@ -54,6 +55,7 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         UpdateSummary();
         UpdateCommandRows();
         UpdateRows();
+        RestartNotice.IsOpen = _plugins.RestartRequired;
     }
 
     /// <inheritdoc />
@@ -84,13 +86,14 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         }
         else
         {
-            var failed = _plugins.Results.Count(result => !result.Succeeded);
+            var failed = _plugins.Statuses.Count(status =>
+                status.State is PluginState.DisabledByError or PluginState.Incompatible);
             var unhealthy = _plugins.Health.Snapshot().Count(health => !health.IsHealthy);
             PluginsStatusText.Text = failed == 0
                 ? unhealthy == 0
                     ? $"{_plugins.LoadedCount} plugin(s) loaded. No plugin issues were reported."
                     : $"{_plugins.LoadedCount} plugin(s) loaded, {unhealthy} unhealthy. See the health details below."
-                : $"{_plugins.LoadedCount} plugin(s) loaded, {failed} failed. Review the issues below and the Activity log.";
+                : $"{_plugins.LoadedCount} plugin(s) loaded, {failed} failed. Review the reasons below and the Activity log.";
         }
 
         var registry = _plugins.Registry;
@@ -102,12 +105,10 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
     private void UpdateRows()
     {
         _rows.Clear();
-        foreach (var result in _plugins.Results)
+        foreach (var status in _plugins.Statuses)
         {
-            var pluginId = result.Plugin?.Id;
-            var disabled = pluginId is not null && _plugins.IsDisabled(pluginId);
-            var health = pluginId is null ? null : _plugins.Health.Get(pluginId);
-            _rows.Add(new PluginRow(result, disabled, health));
+            var health = _plugins.Health.Get(status.Id);
+            _rows.Add(new PluginRow(status, health));
         }
 
         EmptyText.Text = _plugins.PluginsDisabled
@@ -150,10 +151,9 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         }
     }
 
-    private async void OnDisablePluginClick(object sender, RoutedEventArgs e)
+    private async void OnEnablePluginClick(object sender, RoutedEventArgs e)
     {
-        if ((sender as FrameworkElement)?.DataContext is not PluginRow { CanDisable: true } row ||
-            row.PluginId is not { } pluginId)
+        if ((sender as FrameworkElement)?.DataContext is not PluginRow { CanEnable: true } row)
         {
             return;
         }
@@ -165,14 +165,49 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
 
         try
         {
-            var disabled = await _plugins.DisableAsync(pluginId);
-            ShowAction(disabled
-                ? $"Disabled {row.Title}. Its extensions were removed; restart DroidDeck to load it again."
-                : $"{row.Title} is no longer loaded.");
+            var enabled = await _plugins.EnableAsync(row.PluginId);
+            ShowAction(enabled
+                ? $"Enabled {row.Title}. Restart DroidDeck to load it."
+                : $"{row.Title} is already enabled.");
         }
         catch (Exception exception)
         {
-            _logger.LogWarning(exception, "The plugin {PluginId} could not be disabled.", pluginId);
+            _logger.LogWarning(exception, "The plugin {PluginId} could not be enabled.", row.PluginId);
+            ShowAction(
+                $"Enabling {row.Title} failed: {exception.Message} (Diagnostics ID {_diagnostics.DiagnosticsId}).",
+                isError: true);
+        }
+        finally
+        {
+            if (sender is Button current)
+            {
+                current.IsEnabled = true;
+            }
+        }
+    }
+
+    private async void OnDisablePluginClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not PluginRow { CanDisable: true } row)
+        {
+            return;
+        }
+
+        if (sender is Button button)
+        {
+            button.IsEnabled = false;
+        }
+
+        try
+        {
+            var disabled = await _plugins.DisableAsync(row.PluginId);
+            ShowAction(disabled
+                ? $"Disabled {row.Title}. Its extensions were removed; restart DroidDeck to unload it completely."
+                : $"{row.Title} is not loaded.");
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "The plugin {PluginId} could not be disabled.", row.PluginId);
             ShowAction(
                 $"Disabling {row.Title} failed: {exception.Message} (Diagnostics ID {_diagnostics.DiagnosticsId}).",
                 isError: true);
@@ -183,6 +218,59 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
             {
                 current.IsEnabled = true;
             }
+        }
+    }
+
+    private void OnOpenPluginFolderClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not PluginRow row)
+        {
+            return;
+        }
+
+        try
+        {
+            var dataDirectory = Path.Combine(row.InstallPath, "data");
+            var target = Directory.Exists(dataDirectory) ? dataDirectory : row.InstallPath;
+            Directory.CreateDirectory(target);
+            using var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                Arguments = $"\"{target}\"",
+                UseShellExecute = true,
+            });
+            ShowAction($"Opened the data folder for {row.Title}.");
+        }
+        catch (Exception exception) when (exception is Win32Exception or InvalidOperationException or IOException)
+        {
+            _logger.LogWarning(exception, "The plugin folder could not be opened.");
+            ShowAction("The plugin folder could not be opened.", isError: true);
+        }
+    }
+
+    private void OnViewPluginLogsClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not PluginRow row)
+        {
+            return;
+        }
+
+        try
+        {
+            _paths.EnsureCreated();
+            using var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                Arguments = $"\"{_paths.LogsDirectory}\"",
+                UseShellExecute = true,
+            });
+            ShowAction(
+                $"Opened the log folder. Entries for {row.Title} use the category \"DroidDeck.Plugins.{row.PluginId}\".");
+        }
+        catch (Exception exception) when (exception is Win32Exception or InvalidOperationException or IOException)
+        {
+            _logger.LogWarning(exception, "The log folder could not be opened from extensions.");
+            ShowAction("The log folder could not be opened.", isError: true);
         }
     }
 
@@ -274,38 +362,35 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         }
     }
 
-    /// <summary>One plugin result shaped for the extensions list.</summary>
+    /// <summary>One installed plugin shaped for the extensions list.</summary>
     public sealed class PluginRow
     {
-        /// <summary>Creates a row from a plugin load result and its health.</summary>
-        public PluginRow(PluginLoadResult result, bool disabled, PluginHealthSnapshot? health)
+        /// <summary>Creates a row from a plugin status and its health.</summary>
+        public PluginRow(PluginStatus status, PluginHealthSnapshot? health)
         {
-            ArgumentNullException.ThrowIfNull(result);
-            PluginId = result.Plugin?.Id;
-            CanDisable = result.Succeeded && !disabled;
-            DisableId = PluginId is null ? string.Empty : $"DisablePlugin_{PluginId}";
-            if (result.Plugin is { } plugin)
+            ArgumentNullException.ThrowIfNull(status);
+            PluginId = status.Id;
+            InstallPath = status.InstallPath;
+            State = status.State;
+            EnableId = $"EnablePlugin_{status.Id}";
+            DisableId = $"DisablePlugin_{status.Id}";
+            FolderId = $"PluginFolder_{status.Id}";
+            LogsId = $"PluginLogs_{status.Id}";
+            Title = status.Name;
+            Subtitle = $"{status.Id} · version {status.Version} · API {status.ApiVersion}";
+            Status = status.StatusLabel;
+            StatusBrush = ResolveBrush(status.State switch
             {
-                Title = plugin.Name;
-                Subtitle = $"{plugin.Id} · version {plugin.Version} · API {plugin.ApiVersion}";
-            }
-            else
-            {
-                Title = "Plugin failed to load";
-                Subtitle = "A plugin folder did not pass validation or could not be loaded.";
-            }
+                PluginState.Loaded => "SystemFillColorSuccessBrush",
+                PluginState.Disabled or PluginState.EnabledPendingRestart => "SystemFillColorCautionBrush",
+                _ => "SystemFillColorCriticalBrush",
+            });
 
-            Status = disabled ? "Disabled" : result.Succeeded ? "Loaded" : "Failed";
-            StatusBrush = ResolveBrush(disabled
-                ? "SystemFillColorCautionBrush"
-                : result.Succeeded
-                    ? "SystemFillColorSuccessBrush"
-                    : "SystemFillColorCriticalBrush");
-            Issues = string.Join(
-                Environment.NewLine,
-                result.Validation.Issues.Select(issue => issue.ToString()));
+            Reason = status.Reason ??
+                string.Join(Environment.NewLine, status.Issues.Select(issue => issue.ToString()));
+            HasReason = Reason.Length > 0;
 
-            HasHealth = result.Succeeded && !disabled && health is not null;
+            HasHealth = status.State == PluginState.Loaded && health is not null;
             if (!HasHealth || health is null)
             {
                 Health = string.Empty;
@@ -313,9 +398,8 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
             }
             else if (health.IsHealthy)
             {
-                Health = health.SuccessCount + health.FailureCount == 0
-                    ? "Healthy · no invocations yet"
-                    : $"Healthy · {health.SuccessCount} succeeded, {health.FailureCount} failed";
+                var duration = status.LoadDuration.TotalMilliseconds.ToString("F0", CultureInfo.InvariantCulture);
+                Health = $"Healthy · loaded in {duration} ms · {health.FailureCount} error(s)";
                 HealthBrush = ResolveBrush("SystemFillColorSuccessBrush");
             }
             else
@@ -327,14 +411,32 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
             }
         }
 
-        /// <summary>Gets the plugin identifier, if the plugin loaded.</summary>
-        public string? PluginId { get; }
+        /// <summary>Gets the plugin identifier.</summary>
+        public string PluginId { get; }
+
+        /// <summary>Gets the plugin installation directory.</summary>
+        public string InstallPath { get; }
+
+        /// <summary>Gets the plugin lifecycle state.</summary>
+        public PluginState State { get; }
+
+        /// <summary>Gets whether the plugin can be enabled.</summary>
+        public bool CanEnable => State is PluginState.Disabled or PluginState.DisabledByError or PluginState.Incompatible;
 
         /// <summary>Gets whether the plugin can be disabled now.</summary>
-        public bool CanDisable { get; }
+        public bool CanDisable => State is PluginState.Loaded or PluginState.EnabledPendingRestart;
+
+        /// <summary>Gets the enable button automation id.</summary>
+        public string EnableId { get; }
 
         /// <summary>Gets the disable button automation id.</summary>
         public string DisableId { get; }
+
+        /// <summary>Gets the open-folder button automation id.</summary>
+        public string FolderId { get; }
+
+        /// <summary>Gets the view-logs button automation id.</summary>
+        public string LogsId { get; }
 
         /// <summary>Gets the plugin name or failure title.</summary>
         public string Title { get; }
@@ -342,11 +444,17 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         /// <summary>Gets the plugin identity line.</summary>
         public string Subtitle { get; }
 
-        /// <summary>Gets the load status.</summary>
+        /// <summary>Gets the status label.</summary>
         public string Status { get; }
 
         /// <summary>Gets the status brush.</summary>
         public Brush StatusBrush { get; }
+
+        /// <summary>Gets the rejection or failure reason, when one exists.</summary>
+        public string Reason { get; }
+
+        /// <summary>Gets whether the reason should be shown.</summary>
+        public bool HasReason { get; }
 
         /// <summary>Gets the health summary.</summary>
         public string Health { get; }
@@ -356,12 +464,6 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
 
         /// <summary>Gets the health brush.</summary>
         public Brush HealthBrush { get; }
-
-        /// <summary>Gets validation and load issues.</summary>
-        public string Issues { get; }
-
-        /// <summary>Gets whether issues should be shown.</summary>
-        public bool HasIssues => Issues.Length > 0;
 
         private static Brush ResolveBrush(string key) =>
             Application.Current.Resources.TryGetValue(key, out var resource) && resource is Brush brush
