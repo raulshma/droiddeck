@@ -226,6 +226,30 @@ public static class InstallFailureDiagnoser
                     },
                 ],
             },
+            "INSTALL_PARSE_FAILED_NO_CERTIFICATES" => new InstallDiagnosis
+            {
+                Code = code,
+                Title = "The APK is not signed",
+                Explanation = "Android rejected the APK because it has no signing certificate or the signature is broken.",
+                Guidance = "Sign the APK with apksigner, or enable signingConfigs in the build and rebuild the app.",
+                Actions = [Retry()],
+            },
+            "INSTALL_PARSE_FAILED_NOT_APK" or "INSTALL_FAILED_INVALID_APK" => new InstallDiagnosis
+            {
+                Code = code,
+                Title = "The APK is invalid or corrupt",
+                Explanation = "Android could not parse the package archive.",
+                Guidance = "Rebuild or re-download the APK, and make sure the base APK is included with its splits.",
+                Actions = [Retry()],
+            },
+            "INSTALL_FAILED_NO_MATCHING_ABIS" => new InstallDiagnosis
+            {
+                Code = code,
+                Title = "The APK does not support this device",
+                Explanation = "The APK contains native code for ABIs the device cannot run.",
+                Guidance = "Use an APK that includes the device ABI, or install the matching split APK.",
+                Actions = [Retry()],
+            },
             "INSTALL_FAILED_ABORTED" => new InstallDiagnosis
             {
                 Code = code,
@@ -256,6 +280,12 @@ public static class InstallFailureDiagnoser
     private static string? ExtractCode(string output)
     {
         var index = output.IndexOf("INSTALL_FAILED_", StringComparison.Ordinal);
+        var parseIndex = output.IndexOf("INSTALL_PARSE_FAILED_", StringComparison.Ordinal);
+        if (parseIndex >= 0 && (index < 0 || parseIndex < index))
+        {
+            index = parseIndex;
+        }
+
         if (index < 0)
         {
             return null;

@@ -8,6 +8,7 @@ using DroidDeck.Core.Diagnostics;
 using DroidDeck.Core.Infrastructure;
 using DroidDeck.Core.Notifications;
 using DroidDeck.Core.Resources;
+using DroidDeck.Core.Runs;
 using DroidDeck.Core.Screen;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -18,6 +19,8 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Graphics;
+using Windows.Storage;
+using Windows.Storage.Pickers;
 using WinRT.Interop;
 
 namespace DroidDeck.App;
@@ -55,6 +58,7 @@ public sealed partial class MainWindow : Window
     private readonly IDeviceService _devices;
     private readonly IDiagnosticsService _diagnostics;
     private readonly IConfigurationService _configuration;
+    private readonly ApkInstallService _apkInstalls;
     private readonly PluginHost _pluginHost;
     private readonly SessionWorkspace _workspace;
     private readonly INotificationService _notifications;
@@ -66,6 +70,7 @@ public sealed partial class MainWindow : Window
     private bool _suppressSelectionChanged;
     private bool _placementRestored;
     private bool _allowClose;
+    private bool _apkInstallBusy;
     private string? _notificationSessionId;
 
     /// <summary>Creates the main window.</summary>
@@ -74,6 +79,7 @@ public sealed partial class MainWindow : Window
         IDeviceService devices,
         IDiagnosticsService diagnostics,
         IConfigurationService configuration,
+        ApkInstallService apkInstalls,
         PluginHost pluginHost,
         SessionWorkspace workspace,
         INotificationService notifications,
@@ -84,6 +90,7 @@ public sealed partial class MainWindow : Window
         _devices = devices ?? throw new ArgumentNullException(nameof(devices));
         _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+        _apkInstalls = apkInstalls ?? throw new ArgumentNullException(nameof(apkInstalls));
         _pluginHost = pluginHost ?? throw new ArgumentNullException(nameof(pluginHost));
         _workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
         _notifications = notifications ?? throw new ArgumentNullException(nameof(notifications));
@@ -306,6 +313,237 @@ public sealed partial class MainWindow : Window
     }
 
     private void OnFinishSetupClick(object sender, RoutedEventArgs e) => Navigate("onboarding");
+
+    private async void OnInstallApkClick(object sender, RoutedEventArgs e)
+    {
+        if (_apkInstallBusy)
+        {
+            ShowStatusMessage("An APK install is already in progress.");
+            return;
+        }
+
+        try
+        {
+            var picker = new FileOpenPicker
+            {
+                SuggestedStartLocation = PickerLocationId.Downloads,
+                ViewMode = PickerViewMode.List,
+            };
+            picker.FileTypeFilter.Add(".apk");
+            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
+            var files = await picker.PickMultipleFilesAsync();
+            if (files.Count > 0)
+            {
+                await ShowApkInstallAsync(files.Select(file => file.Path).ToArray());
+            }
+        }
+        catch (Exception exception) when (
+            exception is COMException or InvalidOperationException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(exception, "The APK picker could not be opened.");
+            ShowStatusMessage("The APK picker could not be opened.");
+        }
+    }
+
+    private void OnRootDragOver(object sender, DragEventArgs e)
+    {
+        var hasFiles = e.DataView.Contains(StandardDataFormats.StorageItems);
+        e.AcceptedOperation = hasFiles ? DataPackageOperation.Copy : DataPackageOperation.None;
+        if (!hasFiles)
+        {
+            DropOverlay.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        e.DragUIOverride.Caption = "Install APK";
+        e.DragUIOverride.IsCaptionVisible = true;
+        e.DragUIOverride.IsGlyphVisible = true;
+        DropOverlay.Visibility = Visibility.Visible;
+    }
+
+    private void OnRootDragLeave(object sender, DragEventArgs e) =>
+        DropOverlay.Visibility = Visibility.Collapsed;
+
+    private async void OnRootDrop(object sender, DragEventArgs e)
+    {
+        DropOverlay.Visibility = Visibility.Collapsed;
+        e.AcceptedOperation = DataPackageOperation.Copy;
+        if (!e.DataView.Contains(StandardDataFormats.StorageItems))
+        {
+            return;
+        }
+
+        IReadOnlyList<IStorageItem> items;
+        try
+        {
+            items = await e.DataView.GetStorageItemsAsync();
+        }
+        catch (Exception exception) when (
+            exception is COMException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            _logger.LogWarning(exception, "Dropped files could not be read.");
+            ShowStatusMessage("The dropped files could not be read.");
+            return;
+        }
+
+        IReadOnlyList<string> paths;
+        try
+        {
+            paths = await CollectApkPathsAsync(items);
+        }
+        catch (Exception exception) when (
+            exception is COMException or UnauthorizedAccessException or IOException)
+        {
+            _logger.LogWarning(exception, "The dropped folder could not be read.");
+            ShowStatusMessage("The dropped folder could not be read.");
+            return;
+        }
+
+        await ShowApkInstallAsync(paths);
+    }
+
+    private static async Task<IReadOnlyList<string>> CollectApkPathsAsync(
+        IReadOnlyList<IStorageItem> items)
+    {
+        var paths = new List<string>();
+        foreach (var item in items)
+        {
+            switch (item)
+            {
+                case StorageFile file:
+                    paths.Add(file.Path);
+                    break;
+                case StorageFolder folder:
+                    var apks = (await folder.GetFilesAsync())
+                        .Where(file => file.Name.EndsWith(".apk", StringComparison.OrdinalIgnoreCase))
+                        .Select(file => file.Path)
+                        .ToArray();
+                    if (apks.Length == 0)
+                    {
+                        paths.Add(folder.Path);
+                    }
+                    else
+                    {
+                        paths.AddRange(apks);
+                    }
+
+                    break;
+            }
+        }
+
+        return paths
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(200)
+            .ToArray();
+    }
+
+    private async Task ShowApkInstallAsync(IReadOnlyList<string> apkPaths)
+    {
+        if (_apkInstallBusy)
+        {
+            ShowStatusMessage("An APK install is already in progress.");
+            return;
+        }
+
+        _apkInstallBusy = true;
+        InstallApkButton.IsEnabled = false;
+        try
+        {
+            ShowStatusMessage("Inspecting APK...");
+            ApkInstallInspection inspection;
+            try
+            {
+                inspection = await _apkInstalls.InspectAsync(apkPaths);
+            }
+            catch (Exception exception) when (
+                exception is IOException or InvalidOperationException or UnauthorizedAccessException or AggregateException)
+            {
+                _logger.LogWarning(exception, "APK inspection failed.");
+                await ShowMessageAsync(
+                    "APK inspection failed",
+                    "DroidDeck could not inspect the dropped files. Check the toolchain diagnostics and try again.");
+                return;
+            }
+
+            try
+            {
+                await _devices.RefreshAsync();
+            }
+            catch (Exception exception) when (
+                exception is IOException or InvalidOperationException or UnauthorizedAccessException)
+            {
+                _logger.LogWarning(exception, "Devices could not be refreshed before the APK install.");
+            }
+
+            var dialog = new ApkInstallDialog(inspection, _devices.Devices);
+            var choice = await ShowDialogAsync(dialog);
+            if (choice == ContentDialogResult.None || dialog.SelectedPlan is not { } plan)
+            {
+                ShowStatusMessage("APK install canceled.");
+                return;
+            }
+
+            var selectedDevices = dialog.SelectedDevices;
+            ShowStatusMessage(
+                $"Installing {plan.PackageName} on {selectedDevices.Count} device(s)...");
+            IReadOnlyList<ApkInstallResult> results;
+            try
+            {
+                results = await _apkInstalls.InstallAsync(plan, selectedDevices, dialog.Launch);
+            }
+            catch (Exception exception) when (
+                exception is IOException or InvalidOperationException or UnauthorizedAccessException or AggregateException)
+            {
+                _logger.LogWarning(exception, "The APK install could not run.");
+                await ShowMessageAsync(
+                    "APK install failed",
+                    "DroidDeck could not start the install. Check the device connection and try again.");
+                return;
+            }
+
+            var summary = ApkInstallSummary.From(results);
+            ShowStatusMessage(
+                $"{plan.PackageName}: {summary.Succeeded} installed, {summary.Failed} failed, " +
+                $"{summary.Skipped} skipped.");
+            await ShowDialogAsync(new ApkInstallResultDialog(plan, results));
+        }
+        finally
+        {
+            _apkInstallBusy = false;
+            InstallApkButton.IsEnabled = true;
+        }
+    }
+
+    private async Task<ContentDialogResult> ShowDialogAsync(ContentDialog dialog)
+    {
+        dialog.XamlRoot = RootGrid.XamlRoot;
+        try
+        {
+            return await dialog.ShowAsync();
+        }
+        catch (InvalidOperationException exception)
+        {
+            _logger.LogWarning(exception, "A dialog could not be opened because another dialog is active.");
+            ShowStatusMessage("Close the open dialog and try again.");
+            return ContentDialogResult.None;
+        }
+    }
+
+    private async Task ShowMessageAsync(string title, string message)
+    {
+        var dialog = new ContentDialog
+        {
+            Title = title,
+            Content = new TextBlock
+            {
+                Text = message,
+                TextWrapping = TextWrapping.Wrap,
+            },
+            CloseButtonText = "Close",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        await ShowDialogAsync(dialog);
+    }
 
     private void ShowStatusMessage(string message)
     {

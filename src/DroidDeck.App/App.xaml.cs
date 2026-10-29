@@ -396,6 +396,7 @@ public partial class App : Application, IDisposable
             Preferences = configuration.Current.Settings.Notifications.ToPreferences(),
         });
         services.AddSingleton<IRunSessionService, RunSessionService>();
+        services.AddSingleton<ApkInstallService>();
         services.AddSingleton<IMultiDeviceRunService>(provider => new MultiDeviceRunService(
             provider.GetRequiredService<IRunSessionService>(),
             provider.GetRequiredService<IDeviceOperationCoordinator>(),

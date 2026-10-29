@@ -7,7 +7,14 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
-    <Grid x:Name="RootGrid" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+    <Grid
+        x:Name="RootGrid"
+        AllowDrop="True"
+        Background="{ThemeResource ApplicationPageBackgroundThemeBrush}"
+        DragEnter="OnRootDragOver"
+        DragLeave="OnRootDragLeave"
+        DragOver="OnRootDragOver"
+        Drop="OnRootDrop">
         <Grid.RowDefinitions>
             <RowDefinition Height="48" />
             <RowDefinition Height="*" />
@@ -181,6 +188,14 @@
                 HorizontalAlignment="Right"
                 VerticalAlignment="Center">
                 <Button
+                    x:Name="InstallApkButton"
+                    Content="Install APK"
+                    FontSize="12"
+                    Padding="10,2"
+                    Click="OnInstallApkClick"
+                    ToolTipService.ToolTip="Choose an APK, or drop .apk files anywhere in the app."
+                    AutomationProperties.AutomationId="InstallApkButton" />
+                <Button
                     x:Name="FinishSetupButton"
                     Content="Finish setup"
                     FontSize="12"
@@ -203,5 +218,32 @@
                     AutomationProperties.AutomationId="CopyDiagnosticsButton" />
             </StackPanel>
         </Grid>
+
+        <Border
+            x:Name="DropOverlay"
+            Grid.RowSpan="3"
+            Background="{ThemeResource SystemFillColorAttentionBackgroundBrush}"
+            IsHitTestVisible="False"
+            Visibility="Collapsed">
+            <StackPanel
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Spacing="10">
+                <FontIcon
+                    Glyph="&#xE896;"
+                    FontSize="44"
+                    HorizontalAlignment="Center" />
+                <TextBlock
+                    Text="Drop APK to install"
+                    FontSize="24"
+                    FontWeight="SemiBold"
+                    HorizontalAlignment="Center" />
+                <TextBlock
+                    Text="DroidDeck inspects the package and lets you choose the devices."
+                    FontSize="13"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    HorizontalAlignment="Center" />
+            </StackPanel>
+        </Border>
     </Grid>
 </Window>
