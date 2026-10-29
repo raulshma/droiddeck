@@ -5,6 +5,7 @@ using DroidDeck.Core.Processes;
 using DroidDeck.Core.Projects;
 using DroidDeck.Core.Runs;
 using DroidDeck.Core.Sessions;
+using DroidDeck.Plugin.Abstractions;
 using DroidDeck.TestSupport;
 
 namespace DroidDeck.Core.Tests.Runs;
@@ -126,6 +127,98 @@ public sealed class RunSessionServiceTests : IDisposable
 
         var request = Assert.Single(runner.Requests);
         Assert.Contains("emu=false", request.Arguments);
+    }
+
+    [Fact]
+    public async Task CustomPipeline_ExecutesConfiguredPluginRunStep()
+    {
+        var configuration = new RunConfiguration
+        {
+            Name = "plugin-step",
+            Kind = RunConfigurationKind.Custom,
+            Steps =
+            [
+                new RunStepDefinition
+                {
+                    Id = "notify",
+                    Name = "Notify the team",
+                    StepId = "plugin.notify",
+                },
+            ],
+        };
+        var registry = new TestPluginRegistry();
+        var step = new TestRunStep("plugin.notify");
+        registry.AddRunStep(step);
+        await using var service = CreateService(plugins: registry);
+
+        var session = await service.RunAsync(CreateRequest(configuration));
+
+        Assert.Equal(RunSessionState.Succeeded, session.State);
+        Assert.True(step.Executed);
+        Assert.Equal(_root, step.LastContext?.ProjectRoot);
+        Assert.Equal("emulator-5554", step.LastContext?.DeviceSerial);
+        var recorded = Assert.Single(
+            session.Steps,
+            candidate => candidate.Id.EndsWith("notify", StringComparison.Ordinal));
+        Assert.Equal(RunStepState.Succeeded, recorded.State);
+        Assert.Equal("Plugin step completed.", recorded.OutputTail);
+    }
+
+    [Fact]
+    public async Task CustomPipeline_UnregisteredRunStepFailsWithGuidance()
+    {
+        var configuration = new RunConfiguration
+        {
+            Name = "missing-step",
+            Kind = RunConfigurationKind.Custom,
+            Steps =
+            [
+                new RunStepDefinition { Id = "notify", StepId = "plugin.missing" },
+            ],
+        };
+        await using var service = CreateService(plugins: new TestPluginRegistry());
+
+        var session = await service.RunAsync(CreateRequest(configuration));
+
+        Assert.Equal(RunSessionState.Failed, session.State);
+        var recorded = Assert.Single(
+            session.Steps,
+            candidate => candidate.Id.EndsWith("notify", StringComparison.Ordinal));
+        Assert.Equal(RunStepState.Failed, recorded.State);
+        Assert.Contains("plugin.missing", recorded.Error, StringComparison.Ordinal);
+        Assert.Contains("not registered", recorded.Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CustomPipeline_RegisteredRunStepHonorsItsTimeout()
+    {
+        var configuration = new RunConfiguration
+        {
+            Name = "slow-step",
+            Kind = RunConfigurationKind.Custom,
+            Steps =
+            [
+                new RunStepDefinition
+                {
+                    Id = "slow",
+                    Name = "Slow step",
+                    StepId = "plugin.slow",
+                    TimeoutSeconds = 1,
+                },
+            ],
+        };
+        var registry = new TestPluginRegistry();
+        registry.AddRunStep(new BlockingRunStep("plugin.slow"));
+        await using var service = CreateService(plugins: registry);
+
+        var session = await service.RunAsync(CreateRequest(configuration));
+
+        Assert.Equal(RunSessionState.Failed, session.State);
+        var recorded = Assert.Single(
+            session.Steps,
+            candidate => candidate.Id.EndsWith("slow", StringComparison.Ordinal));
+        Assert.Equal(RunStepState.Failed, recorded.State);
+        Assert.Contains("timed out", recorded.Error, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -974,7 +1067,8 @@ public sealed class RunSessionServiceTests : IDisposable
         IDeviceOperationCoordinator? coordinator = null,
         IRunPlanBuilder? planBuilder = null,
         MetroSession.PortProbe? metroProbe = null,
-        MetroSession.ReloadSender? metroReload = null)
+        MetroSession.ReloadSender? metroReload = null,
+        IPluginRegistry? plugins = null)
     {
         return new RunSessionService(
             planBuilder ?? new RunPlanBuilderStub(),
@@ -986,7 +1080,8 @@ public sealed class RunSessionServiceTests : IDisposable
             runner ?? new FakeRunner(),
             coordinator: coordinator,
             metroProbe: metroProbe,
-            metroReload: metroReload);
+            metroReload: metroReload,
+            plugins: plugins);
     }
 
     private RunRequest CreateRequest(
@@ -1069,6 +1164,35 @@ public sealed class RunSessionServiceTests : IDisposable
         {
             Requests.Add(request);
             return Task.FromResult(Handler?.Invoke(request) ?? Result(0));
+        }
+    }
+
+    private sealed class TestRunStep(string id) : IRunStep
+    {
+        public bool Executed { get; private set; }
+
+        public RunStepContext? LastContext { get; private set; }
+
+        public string Id => id;
+
+        public Task<RunStepResult> ExecuteAsync(RunStepContext context, CancellationToken cancellationToken)
+        {
+            Executed = true;
+            LastContext = context;
+            return Task.FromResult(new RunStepResult(true, "Plugin step completed."));
+        }
+    }
+
+    private sealed class BlockingRunStep(string id) : IRunStep
+    {
+        public string Id => id;
+
+        public async Task<RunStepResult> ExecuteAsync(
+            RunStepContext context,
+            CancellationToken cancellationToken)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return new RunStepResult(true, "Never returns in time.");
         }
     }
 

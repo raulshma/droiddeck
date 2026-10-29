@@ -27,6 +27,7 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
     private readonly IRunPlanBuilder _plans;
     private readonly SessionWorkspace _workspace;
     private readonly IConfigurationService _configuration;
+    private readonly PluginHost _plugins;
     private readonly ILogger<ProjectsPage> _logger;
     private readonly DispatcherQueue? _dispatcher;
     private ProjectModel? _selected;
@@ -42,6 +43,7 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
         IRunPlanBuilder plans,
         SessionWorkspace workspace,
         IConfigurationService configuration,
+        PluginHost plugins,
         ILogger<ProjectsPage> logger)
     {
         _projects = projects ?? throw new ArgumentNullException(nameof(projects));
@@ -50,6 +52,7 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
         _plans = plans ?? throw new ArgumentNullException(nameof(plans));
         _workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+        _plugins = plugins ?? throw new ArgumentNullException(nameof(plugins));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _dispatcher = DispatcherQueue.GetForCurrentThread();
 
@@ -650,7 +653,12 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
         }
 
         var configuration = CreateDefaultConfiguration(_selected);
-        var dialog = new RunConfigurationDialog(_selected, configuration, _devices.Devices, _plans)
+        var dialog = new RunConfigurationDialog(
+            _selected,
+            configuration,
+            _devices.Devices,
+            _plans,
+            GetRegisteredStepOptions())
         {
             XamlRoot = XamlRoot,
         };
@@ -677,7 +685,12 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
             return;
         }
 
-        var dialog = new RunConfigurationDialog(_selected, _selectedConfiguration.Clone(), _devices.Devices, _plans)
+        var dialog = new RunConfigurationDialog(
+            _selected,
+            _selectedConfiguration.Clone(),
+            _devices.Devices,
+            _plans,
+            GetRegisteredStepOptions())
         {
             XamlRoot = XamlRoot,
         };
@@ -706,6 +719,13 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
             ShowAction($"Saved run configuration \"{dialog.Configuration.Name}\".");
         });
     }
+
+    private RunStepOption[] GetRegisteredStepOptions() =>
+        _plugins.Registry.RunSteps
+            .Select(extension => new RunStepOption(
+                extension.Value.Id,
+                $"{extension.Value.Id} · {extension.PluginId}"))
+            .ToArray();
 
     private async void OnDuplicateRunConfigClick(object sender, RoutedEventArgs e)
     {

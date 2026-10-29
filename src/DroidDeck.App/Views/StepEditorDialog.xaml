@@ -12,10 +12,19 @@
     <ScrollViewer MaxHeight="560">
         <StackPanel Spacing="10" MinWidth="560">
             <TextBlock
-                Text="Steps run after the built-in pipeline. Placeholders such as {projectRoot}, {deviceSerial}, {packageName}, {artifactPath}, and {configurationName} are expanded before the step runs."
+                Text="Steps run after the built-in pipeline. Choose a registered step from a plugin or built-in, or enter a custom command. Placeholders such as {projectRoot}, {deviceSerial}, {packageName}, {artifactPath}, and {configurationName} are expanded before a command runs."
                 FontSize="12"
                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                 TextWrapping="Wrap" />
+
+            <StackPanel Spacing="4">
+                <TextBlock Text="Step source" Style="{StaticResource FieldLabelStyle}" />
+                <ComboBox
+                    x:Name="StepSourceCombo"
+                    HorizontalAlignment="Stretch"
+                    SelectionChanged="OnStepSourceChanged"
+                    AutomationProperties.AutomationId="StepSourceCombo" />
+            </StackPanel>
 
             <Grid ColumnSpacing="12" RowSpacing="8">
                 <Grid.ColumnDefinitions>
@@ -42,43 +51,47 @@
                 </StackPanel>
             </Grid>
 
-            <StackPanel Spacing="4">
-                <TextBlock Text="Command" Style="{StaticResource FieldLabelStyle}" />
-                <TextBox
-                    x:Name="CommandBox"
-                    PlaceholderText="For example: scripts/seed.cmd"
-                    AutomationProperties.AutomationId="StepCommandBox" />
-            </StackPanel>
-
-            <StackPanel Spacing="4">
-                <TextBlock Text="Arguments (one per line)" Style="{StaticResource FieldLabelStyle}" />
-                <TextBox
-                    x:Name="ArgumentsBox"
-                    AcceptsReturn="True"
-                    TextWrapping="Wrap"
-                    Height="72"
-                    AutomationProperties.AutomationId="StepArgumentsBox" />
-            </StackPanel>
-
-            <Grid ColumnSpacing="12">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
+            <StackPanel
+                x:Name="CommandFields"
+                Spacing="10">
                 <StackPanel Spacing="4">
-                    <TextBlock Text="Working directory (relative to project)" Style="{StaticResource FieldLabelStyle}" />
-                    <TextBox x:Name="WorkingDirectoryBox" AutomationProperties.AutomationId="StepWorkingDirectoryBox" />
-                </StackPanel>
-                <StackPanel Grid.Column="1" Spacing="4">
-                    <TextBlock Text="Environment (KEY=VALUE, one per line)" Style="{StaticResource FieldLabelStyle}" />
+                    <TextBlock Text="Command" Style="{StaticResource FieldLabelStyle}" />
                     <TextBox
-                        x:Name="EnvironmentBox"
+                        x:Name="CommandBox"
+                        PlaceholderText="For example: scripts/seed.cmd"
+                        AutomationProperties.AutomationId="StepCommandBox" />
+                </StackPanel>
+
+                <StackPanel Spacing="4">
+                    <TextBlock Text="Arguments (one per line)" Style="{StaticResource FieldLabelStyle}" />
+                    <TextBox
+                        x:Name="ArgumentsBox"
                         AcceptsReturn="True"
                         TextWrapping="Wrap"
                         Height="72"
-                        AutomationProperties.AutomationId="StepEnvironmentBox" />
+                        AutomationProperties.AutomationId="StepArgumentsBox" />
                 </StackPanel>
-            </Grid>
+
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Working directory (relative to project)" Style="{StaticResource FieldLabelStyle}" />
+                        <TextBox x:Name="WorkingDirectoryBox" AutomationProperties.AutomationId="StepWorkingDirectoryBox" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Spacing="4">
+                        <TextBlock Text="Environment (KEY=VALUE, one per line)" Style="{StaticResource FieldLabelStyle}" />
+                        <TextBox
+                            x:Name="EnvironmentBox"
+                            AcceptsReturn="True"
+                            TextWrapping="Wrap"
+                            Height="72"
+                            AutomationProperties.AutomationId="StepEnvironmentBox" />
+                    </StackPanel>
+                </Grid>
+            </StackPanel>
 
             <Grid ColumnSpacing="12">
                 <Grid.ColumnDefinitions>

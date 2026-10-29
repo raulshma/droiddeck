@@ -9,6 +9,7 @@ using DroidDeck.Core.Processes;
 using DroidDeck.Core.Projects;
 using DroidDeck.Core.Resources;
 using DroidDeck.Core.Sessions;
+using DroidDeck.Plugin.Abstractions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -34,6 +35,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
     private readonly IProcessRunner _runner;
     private readonly IResourceGuard? _resourceGuard;
     private readonly IDeviceOperationCoordinator? _coordinator;
+    private readonly IPluginRegistry? _plugins;
     private readonly ILogger<RunSessionService> _logger;
     private readonly MetroSession.PortProbe? _metroProbe;
     private readonly MetroSession.ReloadSender? _metroReload;
@@ -56,7 +58,8 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         IDeviceOperationCoordinator? coordinator = null,
         ILogger<RunSessionService>? logger = null,
         MetroSession.PortProbe? metroProbe = null,
-        MetroSession.ReloadSender? metroReload = null)
+        MetroSession.ReloadSender? metroReload = null,
+        IPluginRegistry? plugins = null)
     {
         _planBuilder = planBuilder ?? throw new ArgumentNullException(nameof(planBuilder));
         _artifacts = artifacts ?? throw new ArgumentNullException(nameof(artifacts));
@@ -67,6 +70,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         _runner = runner ?? throw new ArgumentNullException(nameof(runner));
         _resourceGuard = resourceGuard;
         _coordinator = coordinator;
+        _plugins = plugins;
         _logger = logger ?? NullLogger<RunSessionService>.Instance;
         _metroProbe = metroProbe;
         _metroReload = metroReload;
@@ -1731,6 +1735,104 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Executes a run step registered by a built-in or a plugin. The step's
+    /// failures follow the configured policy and plugin exceptions are contained.
+    /// </summary>
+    private async Task<RegisteredStepResult> RunRegisteredStepAsync(
+        RunContext context,
+        RunStep step,
+        RunStepDefinition definition,
+        CancellationToken cancellationToken)
+    {
+        var session = context.Session;
+        var registered = _plugins?.RunSteps.FirstOrDefault(extension =>
+            string.Equals(extension.Value.Id, definition.StepId, StringComparison.OrdinalIgnoreCase));
+        if (registered is null)
+        {
+            var missing = $"The run step '{definition.StepId}' is not registered. " +
+                          "Install the plugin that provides it and restart DroidDeck.";
+            if (definition.FailurePolicy == StepFailurePolicy.Continue)
+            {
+                FailStepOnly(session, step, missing);
+                return RegisteredStepResult.PartiallyFailed;
+            }
+
+            await FailStepAsync(context, step, missing).ConfigureAwait(false);
+            return RegisteredStepResult.Terminal;
+        }
+
+        var attempts = definition.FailurePolicy == StepFailurePolicy.Retry
+            ? Math.Max(1, definition.RetryCount + 1)
+            : 1;
+        var timeout = TimeSpan.FromSeconds(Math.Clamp(definition.TimeoutSeconds, 1, 24 * 60 * 60));
+        var runContext = new RunStepContext(session.ProjectRoot, session.DeviceSerial);
+        RunStepResult? result = null;
+        for (var attempt = 1; attempt <= attempts; attempt++)
+        {
+            StartStep(session, step);
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(timeout);
+            try
+            {
+                result = await registered.Value
+                    .ExecuteAsync(runContext, timeoutCts.Token)
+                    .WaitAsync(timeout, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                CancelStep(step);
+                await FinishCancelledAsync(context).ConfigureAwait(false);
+                return RegisteredStepResult.Terminal;
+            }
+            catch (OperationCanceledException)
+            {
+                result = new RunStepResult(
+                    false,
+                    $"The step timed out after {definition.TimeoutSeconds} seconds.");
+            }
+            catch (TimeoutException)
+            {
+                result = new RunStepResult(
+                    false,
+                    $"The step timed out after {definition.TimeoutSeconds} seconds.");
+            }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(
+                    exception,
+                    "The run step {StepId} from {PluginId} threw.",
+                    definition.StepId,
+                    registered.PluginId);
+                result = new RunStepResult(false, $"The run step failed: {exception.Message}");
+            }
+
+            if (result.Succeeded)
+            {
+                SucceedStep(session, step, result.Summary ?? "Completed.");
+                return RegisteredStepResult.Continue;
+            }
+
+            if (attempt < attempts)
+            {
+                step.Error = $"Attempt {attempt} failed. Retrying.";
+            }
+        }
+
+        var message = string.IsNullOrWhiteSpace(result?.Summary)
+            ? "The run step did not produce a result."
+            : result.Summary;
+        if (definition.FailurePolicy == StepFailurePolicy.Continue)
+        {
+            FailStepOnly(session, step, message);
+            return RegisteredStepResult.PartiallyFailed;
+        }
+
+        await FailStepAsync(context, step, message).ConfigureAwait(false);
+        return RegisteredStepResult.Terminal;
+    }
+
     private async Task<CustomStepResult> RunCustomStepsAsync(RunContext context, CancellationToken cancellationToken)
     {
         var session = context.Session;
@@ -1755,6 +1857,23 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             if (!shouldRun)
             {
                 SkipStep(session, step, reason ?? "The step condition is false.");
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(definition.StepId))
+            {
+                var registered = await RunRegisteredStepAsync(context, step, definition, cancellationToken)
+                    .ConfigureAwait(false);
+                if (registered == RegisteredStepResult.Terminal)
+                {
+                    return CustomStepResult.Terminal;
+                }
+
+                if (registered == RegisteredStepResult.PartiallyFailed)
+                {
+                    partiallyFailed = true;
+                }
+
                 continue;
             }
 
@@ -2496,6 +2615,13 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
     private enum CustomStepResult
     {
         Succeeded,
+        PartiallyFailed,
+        Terminal,
+    }
+
+    private enum RegisteredStepResult
+    {
+        Continue,
         PartiallyFailed,
         Terminal,
     }

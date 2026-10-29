@@ -4,36 +4,85 @@ using Microsoft.UI.Xaml.Controls;
 
 namespace DroidDeck.App.Views;
 
-/// <summary>Edits one custom shell step.</summary>
+/// <summary>Edits one custom shell step or selects a registered run step.</summary>
 public sealed partial class StepEditorDialog : ContentDialog
 {
+    private const string CustomStepLabel = "Custom command";
+    private readonly IReadOnlyList<RunStepOption> _registeredSteps;
+    private bool _initializing;
+
     /// <summary>Creates a step editor for a new or existing step.</summary>
-    public StepEditorDialog(RunStepDefinition? step = null)
+    public StepEditorDialog(
+        RunStepDefinition? step = null,
+        IReadOnlyList<RunStepOption>? registeredSteps = null)
     {
         InitializeComponent();
+        _registeredSteps = registeredSteps ?? [];
         FailurePolicyCombo.ItemsSource = Enum.GetValues<StepFailurePolicy>();
         Step = Copy(step);
-        NameBox.Text = Step.Name;
-        CommandBox.Text = Step.Command ?? string.Empty;
-        ArgumentsBox.Text = string.Join(Environment.NewLine, Step.Arguments);
-        WorkingDirectoryBox.Text = Step.WorkingDirectory ?? string.Empty;
-        EnvironmentBox.Text = string.Join(
-            Environment.NewLine,
-            Step.Environment.Select(pair => $"{pair.Key}={pair.Value}"));
-        ConditionBox.Text = Step.Condition ?? string.Empty;
-        FailurePolicyCombo.SelectedItem = Step.FailurePolicy;
-        RetryBox.Value = Step.RetryCount;
-        TimeoutBox.Value = Step.TimeoutSeconds;
-        EnabledCheck.IsChecked = Step.Enabled;
+        _initializing = true;
+        try
+        {
+            var options = new[] { new RunStepOption(string.Empty, CustomStepLabel) }
+                .Concat(_registeredSteps)
+                .ToArray();
+            StepSourceCombo.ItemsSource = options;
+            StepSourceCombo.SelectedItem = options.FirstOrDefault(option => string.Equals(
+                option.Id,
+                Step.StepId ?? string.Empty,
+                StringComparison.OrdinalIgnoreCase));
+            NameBox.Text = Step.Name;
+            CommandBox.Text = Step.Command ?? string.Empty;
+            ArgumentsBox.Text = string.Join(Environment.NewLine, Step.Arguments);
+            WorkingDirectoryBox.Text = Step.WorkingDirectory ?? string.Empty;
+            EnvironmentBox.Text = string.Join(
+                Environment.NewLine,
+                Step.Environment.Select(pair => $"{pair.Key}={pair.Value}"));
+            ConditionBox.Text = Step.Condition ?? string.Empty;
+            FailurePolicyCombo.SelectedItem = Step.FailurePolicy;
+            RetryBox.Value = Step.RetryCount;
+            TimeoutBox.Value = Step.TimeoutSeconds;
+            EnabledCheck.IsChecked = Step.Enabled;
+        }
+        finally
+        {
+            _initializing = false;
+        }
+
+        ApplyStepSource();
     }
 
     /// <summary>Gets the edited step. It is only applied after the dialog is accepted.</summary>
     public RunStepDefinition Step { get; }
 
+    private void OnStepSourceChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initializing || StepSourceCombo.SelectedItem is not RunStepOption option)
+        {
+            return;
+        }
+
+        Step.StepId = option.Id.Length == 0 ? null : option.Id;
+        if (option.Id.Length > 0 && string.IsNullOrWhiteSpace(NameBox.Text))
+        {
+            NameBox.Text = option.Label;
+        }
+
+        ApplyStepSource();
+    }
+
+    private void ApplyStepSource()
+    {
+        var registered = !string.IsNullOrWhiteSpace(Step.StepId);
+        CommandFields.Visibility = registered ? Visibility.Collapsed : Visibility.Visible;
+        Title = registered ? "Registered step" : "Custom step";
+    }
+
     private void OnPrimaryButtonClick(ContentDialog sender, ContentDialogButtonClickEventArgs args)
     {
         var command = CommandBox.Text.Trim();
-        if (command.Length == 0)
+        var registered = !string.IsNullOrWhiteSpace(Step.StepId);
+        if (!registered && command.Length == 0)
         {
             args.Cancel = true;
             ErrorText.Text = "A command is required.";
@@ -42,15 +91,21 @@ public sealed partial class StepEditorDialog : ContentDialog
         }
 
         Step.Name = string.IsNullOrWhiteSpace(NameBox.Text)
-            ? Path.GetFileNameWithoutExtension(command)
+            ? registered
+                ? Step.StepId!
+                : Path.GetFileNameWithoutExtension(command)
             : NameBox.Text.Trim();
-        Step.Command = command;
-        Step.Arguments = ArgumentsBox.Text
-            .Split('\n', StringSplitOptions.TrimEntries)
-            .Where(line => line.Length > 0)
-            .ToList();
-        Step.WorkingDirectory = NullIfEmpty(WorkingDirectoryBox.Text);
-        Step.Environment = ParseEnvironment(EnvironmentBox.Text);
+        Step.Command = registered ? null : command;
+        Step.Arguments = registered
+            ? []
+            : ArgumentsBox.Text
+                .Split('\n', StringSplitOptions.TrimEntries)
+                .Where(line => line.Length > 0)
+                .ToList();
+        Step.WorkingDirectory = registered ? null : NullIfEmpty(WorkingDirectoryBox.Text);
+        Step.Environment = registered
+            ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            : ParseEnvironment(EnvironmentBox.Text);
         Step.Condition = NullIfEmpty(ConditionBox.Text);
         Step.FailurePolicy = FailurePolicyCombo.SelectedItem is StepFailurePolicy policy
             ? policy
@@ -78,6 +133,7 @@ public sealed partial class StepEditorDialog : ContentDialog
             Name = step.Name,
             Kind = step.Kind,
             Command = step.Command,
+            StepId = step.StepId,
             Arguments = [.. step.Arguments],
             WorkingDirectory = step.WorkingDirectory,
             Environment = new Dictionary<string, string>(step.Environment, StringComparer.OrdinalIgnoreCase),
@@ -113,4 +169,13 @@ public sealed partial class StepEditorDialog : ContentDialog
 
     private static string? NullIfEmpty(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+}
+
+/// <summary>One registered run step offered in the step editor.</summary>
+/// <param name="Id">The registered step identifier; empty for a custom command.</param>
+/// <param name="Label">The display label.</param>
+public sealed record RunStepOption(string Id, string Label)
+{
+    /// <inheritdoc />
+    public override string ToString() => Label;
 }

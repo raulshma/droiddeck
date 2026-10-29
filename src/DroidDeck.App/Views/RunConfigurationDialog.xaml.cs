@@ -11,6 +11,7 @@ public sealed partial class RunConfigurationDialog : ContentDialog
 {
     private readonly ProjectModel _project;
     private readonly IRunPlanBuilder _plans;
+    private readonly IReadOnlyList<RunStepOption> _registeredSteps;
     private readonly ObservableCollection<StepRow> _steps = [];
     private bool _initializing;
 
@@ -19,11 +20,13 @@ public sealed partial class RunConfigurationDialog : ContentDialog
         ProjectModel project,
         RunConfiguration configuration,
         IReadOnlyList<DeviceInfo> devices,
-        IRunPlanBuilder plans)
+        IRunPlanBuilder plans,
+        IReadOnlyList<RunStepOption>? registeredSteps = null)
     {
         _project = project ?? throw new ArgumentNullException(nameof(project));
         Configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         _plans = plans ?? throw new ArgumentNullException(nameof(plans));
+        _registeredSteps = registeredSteps ?? [];
         ArgumentNullException.ThrowIfNull(devices);
 
         InitializeComponent();
@@ -282,7 +285,7 @@ public sealed partial class RunConfigurationDialog : ContentDialog
 
     private async void OnAddStepClick(object sender, RoutedEventArgs e)
     {
-        var dialog = new StepEditorDialog { XamlRoot = XamlRoot };
+        var dialog = new StepEditorDialog(registeredSteps: _registeredSteps) { XamlRoot = XamlRoot };
         if (await dialog.ShowAsync() == ContentDialogResult.Primary)
         {
             _steps.Add(new StepRow(dialog.Step));
@@ -296,7 +299,7 @@ public sealed partial class RunConfigurationDialog : ContentDialog
             return;
         }
 
-        var dialog = new StepEditorDialog(row.Step) { XamlRoot = XamlRoot };
+        var dialog = new StepEditorDialog(row.Step, _registeredSteps) { XamlRoot = XamlRoot };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary)
         {
             return;
@@ -392,6 +395,7 @@ public sealed partial class RunConfigurationDialog : ContentDialog
         Name = step.Name,
         Kind = step.Kind,
         Command = step.Command,
+        StepId = step.StepId,
         Arguments = [.. step.Arguments],
         WorkingDirectory = step.WorkingDirectory,
         Environment = new Dictionary<string, string>(step.Environment, StringComparer.OrdinalIgnoreCase),
@@ -446,7 +450,11 @@ public sealed partial class RunConfigurationDialog : ContentDialog
             Name = step.Enabled ? step.Name : $"{step.Name} (disabled)";
             Summary = $"{step.FailurePolicy} · {step.TimeoutSeconds}s" +
                       (string.IsNullOrWhiteSpace(step.Condition) ? string.Empty : " · conditional");
-            Command = string.IsNullOrWhiteSpace(step.Command) ? "(no command)" : step.Command;
+            Command = !string.IsNullOrWhiteSpace(step.StepId)
+                ? $"Registered step: {step.StepId}"
+                : string.IsNullOrWhiteSpace(step.Command)
+                    ? "(no command)"
+                    : step.Command;
         }
 
         /// <summary>Gets the step.</summary>

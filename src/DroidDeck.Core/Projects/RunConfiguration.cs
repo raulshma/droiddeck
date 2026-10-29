@@ -231,6 +231,12 @@ public sealed class RunStepDefinition
     /// <summary>Gets or sets the executable or script path.</summary>
     public string? Command { get; set; }
 
+    /// <summary>
+    /// Gets or sets the identifier of a registered run step (built-in or plugin)
+    /// to execute. When set, <see cref="Command"/> is ignored.
+    /// </summary>
+    public string? StepId { get; set; }
+
     /// <summary>Gets or sets the arguments. Placeholders are expanded before execution.</summary>
     public List<string> Arguments { get; set; } = [];
 
@@ -405,9 +411,11 @@ public static class RunConfigurationValidator
             }
         }
         else if (configuration.Kind == RunConfigurationKind.Custom &&
-                 configuration.Steps.All(step => !step.Enabled || string.IsNullOrWhiteSpace(step.Command)))
+                 configuration.Steps.All(step =>
+                     !step.Enabled ||
+                     (string.IsNullOrWhiteSpace(step.Command) && string.IsNullOrWhiteSpace(step.StepId))))
         {
-            errors.Add(new("steps", "A custom configuration needs at least one enabled step with a command."));
+            errors.Add(new("steps", "A custom configuration needs at least one enabled step with a command or run step."));
         }
 
         if (configuration.Build.TimeoutSeconds is < 5 or > 24 * 60 * 60)
@@ -422,9 +430,12 @@ public static class RunConfigurationValidator
 
         foreach (var step in configuration.Steps)
         {
-            if (step.Enabled && step.Kind == RunStepKind.Custom && string.IsNullOrWhiteSpace(step.Command))
+            if (step.Enabled &&
+                step.Kind == RunStepKind.Custom &&
+                string.IsNullOrWhiteSpace(step.Command) &&
+                string.IsNullOrWhiteSpace(step.StepId))
             {
-                errors.Add(new($"steps.{step.Id}.command", $"Step \"{step.Name}\" needs a command."));
+                errors.Add(new($"steps.{step.Id}.command", $"Step \"{step.Name}\" needs a command or run step."));
             }
 
             if (step.TimeoutSeconds < 1)
