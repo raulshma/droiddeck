@@ -4,12 +4,14 @@ using System.Runtime.InteropServices;
 using DroidDeck.App.Services;
 using DroidDeck.App.ViewModels;
 using DroidDeck.Core;
+using DroidDeck.Core.Commands;
 using DroidDeck.Core.Configuration;
 using DroidDeck.Core.Diagnostics;
 using DroidDeck.Core.Infrastructure;
 using DroidDeck.Core.Sessions;
 using DroidDeck.Core.Toolchain;
 using Microsoft.Extensions.Logging;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Windows.ApplicationModel.DataTransfer;
@@ -25,7 +27,10 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
     private readonly ISessionStore _sessions;
     private readonly PluginHost _plugins;
     private readonly AppPaths _paths;
+    private readonly ICommandRegistry _commands;
+    private readonly KeybindingMap _keybindings;
     private readonly ILogger<SettingsPage> _logger;
+    private readonly DispatcherQueue _dispatcher;
     private readonly ToolPathRow[] _toolPaths = ToolPathRow.CreateAll();
     private bool _initializing;
     private bool _disposed;
@@ -38,6 +43,8 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         ISessionStore sessions,
         PluginHost plugins,
         AppPaths paths,
+        ICommandRegistry commands,
+        KeybindingMap keybindings,
         ILogger<SettingsPage> logger)
     {
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
@@ -46,12 +53,17 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
         _plugins = plugins ?? throw new ArgumentNullException(nameof(plugins));
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
+        _commands = commands ?? throw new ArgumentNullException(nameof(commands));
+        _keybindings = keybindings ?? throw new ArgumentNullException(nameof(keybindings));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _dispatcher = DispatcherQueue.GetForCurrentThread();
 
         InitializeComponent();
         ThemeCombo.ItemsSource = Enum.GetValues<AppTheme>();
         ToolPathsList.ItemsSource = _toolPaths;
         _toolchain.SnapshotChanged += OnToolchainSnapshotChanged;
+        _commands.Changed += OnCommandsChanged;
+        _keybindings.Changed += OnKeybindingsChanged;
         Refresh();
     }
 
@@ -65,6 +77,8 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
 
         _disposed = true;
         _toolchain.SnapshotChanged -= OnToolchainSnapshotChanged;
+        _commands.Changed -= OnCommandsChanged;
+        _keybindings.Changed -= OnKeybindingsChanged;
     }
 
     /// <inheritdoc />
@@ -114,6 +128,100 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         LoadNoticeBar.IsOpen = notice is not null;
         LoadNoticeBar.Message = notice?.Message ?? string.Empty;
         UpdateToolchainStatus();
+        RefreshShortcutList();
+    }
+
+    private void OnCommandsChanged(object? sender, EventArgs e) =>
+        _dispatcher.TryEnqueue(RefreshShortcutList);
+
+    private void OnKeybindingsChanged(object? sender, EventArgs e) =>
+        _dispatcher.TryEnqueue(RefreshShortcutList);
+
+    private void RefreshShortcutList()
+    {
+        ShortcutList.ItemsSource = _commands.Commands
+            .Select(command => new ShortcutRow(
+                command.Id,
+                command.Title,
+                command.Category,
+                _keybindings.GetEffectiveShortcut(command)?.ToString() ?? "Not set",
+                _keybindings.GetOverride(command.Id) is not null))
+            .ToArray();
+    }
+
+    private async void OnChangeShortcutClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not ShortcutRow row ||
+            _commands.Find(row.Id) is not { } command)
+        {
+            return;
+        }
+
+        var dialog = new ShortcutCaptureDialog(command, _keybindings.GetEffectiveShortcut(command));
+        if (await ShowDialogAsync(dialog) != ContentDialogResult.Primary ||
+            dialog.CapturedShortcut is not { } gesture)
+        {
+            return;
+        }
+
+        var outcome = _keybindings.SetOverride(command.Id, gesture);
+        if (!outcome.Applied)
+        {
+            ShortcutConflictBar.Message = $"{gesture} is already used by " +
+                $"'{outcome.ConflictingWith?.Title ?? "another command"}'. Reset that shortcut first, then try again.";
+            ShortcutConflictBar.IsOpen = true;
+            return;
+        }
+
+        await SaveKeybindingsAsync($"'{command.Title}' now uses {gesture}.");
+    }
+
+    private async void OnResetShortcutClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not ShortcutRow row ||
+            _commands.Find(row.Id) is not { } command)
+        {
+            return;
+        }
+
+        if (!_keybindings.Reset(row.Id))
+        {
+            return;
+        }
+
+        await SaveKeybindingsAsync(
+            $"'{command.Title}' was reset to {command.DefaultShortcut?.ToString() ?? "no shortcut"}.");
+    }
+
+    private async Task SaveKeybindingsAsync(string message)
+    {
+        try
+        {
+            await _keybindings.SaveAsync();
+            ShortcutConflictBar.IsOpen = false;
+            RefreshShortcutList();
+            ShowAction(message);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            ReportFailure("Saving the keyboard shortcut", exception);
+        }
+    }
+
+    private async Task<ContentDialogResult> ShowDialogAsync(ContentDialog dialog)
+    {
+        dialog.XamlRoot = XamlRoot;
+        try
+        {
+            return await dialog.ShowAsync();
+        }
+        catch (InvalidOperationException exception)
+        {
+            _logger.LogWarning(exception, "A dialog could not be opened because another dialog is active.");
+            ShowAction("Close the open dialog and try again.", isError: true);
+            return ContentDialogResult.None;
+        }
     }
 
     private void UpdateSourceHints()

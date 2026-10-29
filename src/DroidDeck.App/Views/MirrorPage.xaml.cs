@@ -482,7 +482,14 @@ public sealed partial class MirrorPage : Page, IRefreshablePage, IDisposable
         }
     }
 
-    private async void OnScreenshotClick(object sender, RoutedEventArgs e)
+    /// <summary>Starts a mirror for the selected device; used by the command palette.</summary>
+    public Task StartMirrorAsync() => StartAsync(CurrentMode);
+
+    /// <summary>Stops the active mirror; used by the command palette.</summary>
+    public Task StopMirrorAsync() => StopAsync();
+
+    /// <summary>Captures a screenshot of the selected device; used by the command palette.</summary>
+    public async Task TakeScreenshotAsync()
     {
         if (SelectedSerial is not { } serial)
         {
@@ -509,7 +516,22 @@ public sealed partial class MirrorPage : Page, IRefreshablePage, IDisposable
         }
     }
 
-    private async void OnStartRecordingClick(object sender, RoutedEventArgs e)
+    /// <summary>Starts or stops a recording of the selected device; used by the command palette.</summary>
+    public async Task ToggleRecordingAsync()
+    {
+        if (CurrentSession is { IsRecording: true })
+        {
+            await StopRecordingAsync();
+        }
+        else
+        {
+            await StartRecordingAsync();
+        }
+    }
+
+    private async void OnScreenshotClick(object sender, RoutedEventArgs e) => await TakeScreenshotAsync();
+
+    private async Task StartRecordingAsync()
     {
         if (SelectedSerial is not { } serial)
         {
@@ -536,7 +558,7 @@ public sealed partial class MirrorPage : Page, IRefreshablePage, IDisposable
         }
     }
 
-    private async void OnStopRecordingClick(object sender, RoutedEventArgs e)
+    private async Task StopRecordingAsync()
     {
         if (SelectedSerial is not { } serial)
         {
@@ -560,6 +582,10 @@ public sealed partial class MirrorPage : Page, IRefreshablePage, IDisposable
             SetBusy(false);
         }
     }
+
+    private async void OnStartRecordingClick(object sender, RoutedEventArgs e) => await StartRecordingAsync();
+
+    private async void OnStopRecordingClick(object sender, RoutedEventArgs e) => await StopRecordingAsync();
 
     private void RememberPath(ScreenOperationResult result)
     {

@@ -83,6 +83,38 @@ public sealed partial class MultiDevicePage : Page, IRefreshablePage, IDisposabl
         _ = RefreshAsync();
     }
 
+    /// <summary>Starts a run for the current selection; used by the command palette.</summary>
+    public Task RunSelectedAsync() => StartRunAsync(dryRun: false);
+
+    /// <summary>Starts a dry run for the current selection; used by the command palette.</summary>
+    public Task RunSelectedDryAsync() => StartRunAsync(dryRun: true);
+
+    /// <summary>Cancels the active run group; used by the command palette.</summary>
+    public async Task CancelActiveRunAsync()
+    {
+        if (_currentGroup is not { IsFinished: false } group)
+        {
+            return;
+        }
+
+        SetBusy(true);
+        try
+        {
+            await _runs.CancelAsync(group.Id);
+            ApplyGroup(group);
+            ShowResult(true, "The multi-device run was cancelled.", null, null);
+        }
+        catch (Exception exception) when (
+            exception is IOException or InvalidOperationException or UnauthorizedAccessException)
+        {
+            ShowResult(false, $"The run could not be cancelled: {exception.Message}", null, null);
+        }
+        finally
+        {
+            SetBusy(false);
+        }
+    }
+
     /// <inheritdoc />
     public void Dispose()
     {
@@ -419,30 +451,7 @@ public sealed partial class MultiDevicePage : Page, IRefreshablePage, IDisposabl
         }
     }
 
-    private async void OnCancelClick(object sender, RoutedEventArgs e)
-    {
-        if (_currentGroup is not { IsFinished: false } group)
-        {
-            return;
-        }
-
-        SetBusy(true);
-        try
-        {
-            await _runs.CancelAsync(group.Id);
-            ApplyGroup(group);
-            ShowResult(true, "The multi-device run was cancelled.", null, null);
-        }
-        catch (Exception exception) when (
-            exception is IOException or InvalidOperationException or UnauthorizedAccessException)
-        {
-            ShowResult(false, $"The run could not be cancelled: {exception.Message}", null, null);
-        }
-        finally
-        {
-            SetBusy(false);
-        }
-    }
+    private async void OnCancelClick(object sender, RoutedEventArgs e) => await CancelActiveRunAsync();
 
     private async void OnRetryClick(object sender, RoutedEventArgs e)
     {
