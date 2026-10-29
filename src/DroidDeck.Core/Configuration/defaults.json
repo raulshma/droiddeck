@@ -100,5 +100,9 @@
   "wireless": {
     "autoReconnect": true,
     "reconnectDelaySeconds": 10
+  },
+  "performance": {
+    "sampleIntervalMs": 1000,
+    "maxSamples": 60
   }
 }

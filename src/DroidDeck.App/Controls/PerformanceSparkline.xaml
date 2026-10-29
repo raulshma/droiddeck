@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="DroidDeck.App.Controls.PerformanceSparkline"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid MinHeight="64">
+        <Canvas x:Name="Plot" Background="Transparent" SizeChanged="OnPlotSizeChanged" />
+        <TextBlock
+            x:Name="EmptyText"
+            Text="Waiting for samples"
+            FontSize="11"
+            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Center" />
+    </Grid>
+</UserControl>

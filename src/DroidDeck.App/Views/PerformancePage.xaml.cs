@@ -1,43 +1,69 @@
 using System.Globalization;
+using System.Runtime.InteropServices;
 using DroidDeck.App.Services;
+using DroidDeck.Core.Configuration;
 using DroidDeck.Core.Devices;
+using DroidDeck.Core.Performance;
 using DroidDeck.Core.Processes;
+using DroidDeck.Core.Runs;
 using DroidDeck.Core.Toolbox;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Windows.Storage.Pickers;
 
 namespace DroidDeck.App.Views;
 
 /// <summary>
-/// Reads CPU, memory, frame timing, display latency, and battery state through
-/// the toolbox shell so every measurement shows its exact adb command.
+/// Samples launch time, frame timing, CPU, memory, and battery for a running
+/// application. Live values feed lightweight charts, a session summary, and CSV
+/// export; one-shot diagnostics remain available with their exact adb commands.
 /// </summary>
 public sealed partial class PerformancePage : Page, IRefreshablePage, IDisposable
 {
+    private const int ChartPoints = 120;
+
     private readonly IDeviceToolboxService _toolbox;
     private readonly IDeviceService _devices;
     private readonly SessionWorkspace _workspace;
+    private readonly IConfigurationService _configuration;
+    private readonly IRunSessionService _sessions;
+    private readonly PerformanceSampler _sampler;
     private readonly DispatcherQueue? _dispatcher;
     private readonly UiOutputBuffer? _outputBuffer;
+    private readonly List<PerformanceSample> _samples = [];
     private CancellationTokenSource? _cts;
+    private CancellationTokenSource? _sampleCts;
     private bool _busy;
+    private bool _sampling;
+    private bool _initializing;
     private bool _disposed;
 
     /// <summary>Creates the performance page.</summary>
     public PerformancePage(
         IDeviceToolboxService toolbox,
         IDeviceService devices,
-        SessionWorkspace workspace)
+        SessionWorkspace workspace,
+        IConfigurationService configuration,
+        IRunSessionService sessions)
     {
         _toolbox = toolbox ?? throw new ArgumentNullException(nameof(toolbox));
         _devices = devices ?? throw new ArgumentNullException(nameof(devices));
         _workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
+        _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+        _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
+        _sampler = new PerformanceSampler(toolbox);
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         _outputBuffer = _dispatcher is null ? null : new UiOutputBuffer(_dispatcher, AppendOutputText);
 
         InitializeComponent();
+        _initializing = true;
+        IntervalBox.Value = _configuration.Current.Settings.Performance.EffectiveSampleIntervalMs;
+        _initializing = false;
+
         _devices.DevicesChanged += OnDevicesChanged;
+        _sessions.SessionChanged += OnSessionChanged;
         Refresh();
     }
 
@@ -45,6 +71,7 @@ public sealed partial class PerformancePage : Page, IRefreshablePage, IDisposabl
     public void Refresh()
     {
         RefreshDevices();
+        UpdateLaunchTime(LatestLaunchSession());
         if (SelectedDevice is not null)
         {
             _ = LoadAppsAsync();
@@ -61,8 +88,11 @@ public sealed partial class PerformancePage : Page, IRefreshablePage, IDisposabl
 
         _disposed = true;
         _devices.DevicesChanged -= OnDevicesChanged;
+        _sessions.SessionChanged -= OnSessionChanged;
         _cts?.Cancel();
         _cts?.Dispose();
+        _sampleCts?.Cancel();
+        _sampleCts?.Dispose();
     }
 
     private DeviceInfo? SelectedDevice => DeviceCombo.SelectedItem as DeviceInfo;
@@ -72,6 +102,49 @@ public sealed partial class PerformancePage : Page, IRefreshablePage, IDisposabl
     private string PackageName => PackageBox.Text.Trim();
 
     private void OnDevicesChanged(object? sender, DeviceListChangedEventArgs e) => Dispatch(RefreshDevices);
+
+    private void OnSessionChanged(object? sender, RunSessionChangedEventArgs e) =>
+        Dispatch(() =>
+        {
+            if (e.Session.LaunchTime is not null)
+            {
+                UpdateLaunchTime(e.Session);
+                if (PackageBox.Text.Length == 0 && !string.IsNullOrWhiteSpace(e.Session.PackageName))
+                {
+                    PackageBox.Text = e.Session.PackageName;
+                }
+            }
+        });
+
+    private RunSession? LatestLaunchSession()
+    {
+        var serial = SelectedSerial;
+        var package = PackageName;
+        return _sessions.Sessions.FirstOrDefault(session =>
+                   session.LaunchTime.HasValue &&
+                   (serial is null || string.Equals(session.DeviceSerial, serial, StringComparison.Ordinal)) &&
+                   (package.Length == 0 ||
+                    string.Equals(session.PackageName, package, StringComparison.OrdinalIgnoreCase)))
+               ?? _sessions.Sessions.FirstOrDefault(session =>
+                   session.LaunchTime.HasValue &&
+                   (serial is null || string.Equals(session.DeviceSerial, serial, StringComparison.Ordinal)));
+    }
+
+    private void UpdateLaunchTime(RunSession? session)
+    {
+        if (session?.LaunchTime is not { } launchTime)
+        {
+            LaunchTimeText.Text = "No run launch time yet. Start a run to capture it.";
+            return;
+        }
+
+        var device = string.IsNullOrWhiteSpace(session.DeviceName)
+            ? session.DeviceSerial
+            : session.DeviceName;
+        LaunchTimeText.Text = string.Create(
+            CultureInfo.InvariantCulture,
+            $"Last launch: {launchTime.TotalMilliseconds:0} ms on {device} ({session.ProjectName}).");
+    }
 
     private void RefreshDevices()
     {
@@ -94,6 +167,8 @@ public sealed partial class PerformancePage : Page, IRefreshablePage, IDisposabl
 
     private async void OnDeviceSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        StopSampling();
+        ResetSamples();
         if (SelectedDevice is { } device)
         {
             _workspace.OpenDevice(device.Serial);
@@ -105,6 +180,7 @@ public sealed partial class PerformancePage : Page, IRefreshablePage, IDisposabl
         CommandText.Text = string.Empty;
         AppCombo.ItemsSource = null;
         PackageBox.Text = string.Empty;
+        UpdateLaunchTime(LatestLaunchSession());
         await LoadAppsAsync();
     }
 
@@ -154,6 +230,294 @@ public sealed partial class PerformancePage : Page, IRefreshablePage, IDisposabl
         if (AppCombo.SelectedItem is AppRow row)
         {
             PackageBox.Text = row.App.PackageName;
+            UpdateLaunchTime(LatestLaunchSession());
+        }
+    }
+
+    private async void OnIntervalChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+    {
+        if (_initializing || double.IsNaN(args.NewValue))
+        {
+            return;
+        }
+
+        var interval = PerformanceSettings.ClampSampleInterval((int)Math.Round(args.NewValue));
+        if (interval == _configuration.Current.Settings.Performance.SampleIntervalMs)
+        {
+            return;
+        }
+
+        try
+        {
+            await _configuration.SetAsync(SettingsPaths.PerformanceSampleIntervalMs, interval);
+            ShowResult(
+                true,
+                _sampling
+                    ? $"The sampling interval is {interval} ms. Restart sampling to apply it."
+                    : $"The sampling interval is {interval} ms.",
+                _sampling ? "Stop and start sampling to use the new interval." : null);
+        }
+        catch (Exception exception) when (
+            exception is IOException or InvalidOperationException or UnauthorizedAccessException)
+        {
+            ShowResult(false, $"The sampling interval could not be saved: {exception.Message}", null);
+        }
+    }
+
+    private async void OnStartSamplingClick(object sender, RoutedEventArgs e)
+    {
+        if (_sampling || SelectedSerial is not { } serial)
+        {
+            return;
+        }
+
+        var package = PackageName;
+        if (package.Length == 0)
+        {
+            ShowResult(
+                false,
+                "Enter an application package to start sampling.",
+                "Choose an application above, or type its package name.");
+            return;
+        }
+
+        ResetSamples();
+        _sampleCts?.Dispose();
+        _sampleCts = new CancellationTokenSource();
+        var token = _sampleCts.Token;
+        var settings = _configuration.Current.Settings.Performance;
+        var interval = TimeSpan.FromMilliseconds(settings.EffectiveSampleIntervalMs);
+        var maxSamples = settings.EffectiveMaxSamples;
+        _sampling = true;
+        SetSamplingUi(true);
+        SetBusy(true);
+        ShowResult(true, $"Sampling {package} every {interval.TotalMilliseconds:0} ms.", null);
+
+        try
+        {
+            await _sampler.RunAsync(
+                serial,
+                package,
+                interval,
+                sample =>
+                {
+                    Dispatch(() => AddSample(sample, maxSamples));
+                    return Task.CompletedTask;
+                },
+                token);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception) when (
+            exception is IOException or InvalidOperationException or UnauthorizedAccessException)
+        {
+            ShowResult(false, $"Sampling stopped: {exception.Message}", null);
+        }
+        finally
+        {
+            _sampling = false;
+            SetSamplingUi(false);
+            SetBusy(false);
+            UpdateSummary();
+        }
+    }
+
+    private void OnStopSamplingClick(object sender, RoutedEventArgs e) => StopSampling();
+
+    private void StopSampling()
+    {
+        if (!_sampling)
+        {
+            return;
+        }
+
+        _sampleCts?.Cancel();
+    }
+
+    private void AddSample(PerformanceSample sample, int maxSamples)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _samples.Add(sample);
+        while (_samples.Count > maxSamples)
+        {
+            _samples.RemoveAt(0);
+        }
+
+        if (sample.Warnings.Count > 0)
+        {
+            WarningText.Text = string.Join(Environment.NewLine, sample.Warnings.Distinct(StringComparer.Ordinal));
+            WarningText.Visibility = Visibility.Visible;
+        }
+
+        UpdateCharts();
+        StatusText.Text = string.Create(
+            CultureInfo.InvariantCulture,
+            $"{_samples.Count} sample(s). Last point {sample.Timestamp.ToLocalTime():HH:mm:ss}.");
+        ExportButton.IsEnabled = _samples.Count > 0;
+        ClearButton.IsEnabled = _samples.Count > 0;
+    }
+
+    private void UpdateCharts()
+    {
+        var visible = _samples.Count <= ChartPoints
+            ? _samples
+            : _samples.GetRange(_samples.Count - ChartPoints, ChartPoints);
+
+        CpuChart.SetValues(visible.Select(sample => sample.CpuPercent).ToArray(), 0, 100);
+        var memoryMaximum = visible
+            .Where(sample => sample.MemoryMegabytes.HasValue)
+            .Select(sample => sample.MemoryMegabytes!.Value)
+            .DefaultIfEmpty(1)
+            .Max();
+        MemoryChart.SetValues(
+            visible.Select(sample => sample.MemoryMegabytes).ToArray(),
+            0,
+            Math.Max(1, Math.Ceiling(memoryMaximum * 1.1)));
+        FpsChart.SetValues(visible.Select(sample => sample.Fps).ToArray(), 0, 60);
+        JankChart.SetValues(visible.Select(sample => sample.JankPercent).ToArray(), 0, 100);
+        BatteryChart.SetValues(
+            visible.Select(sample => sample.BatteryPercent is { } level ? level : (double?)null).ToArray(),
+            0,
+            100);
+
+        CpuValueText.Text = FormatPercent(visible.LastOrDefault()?.CpuPercent);
+        MemoryValueText.Text = visible.LastOrDefault()?.MemoryMegabytes is { } memory
+            ? string.Create(CultureInfo.InvariantCulture, $"{memory:0.0} MB")
+            : "--";
+        FpsValueText.Text = visible.LastOrDefault()?.Fps is { } fps
+            ? string.Create(CultureInfo.InvariantCulture, $"{fps:0.0}")
+            : "--";
+        JankValueText.Text = FormatPercent(visible.LastOrDefault()?.JankPercent);
+        BatteryValueText.Text = visible.LastOrDefault()?.BatteryPercent is { } battery
+            ? string.Create(CultureInfo.InvariantCulture, $"{battery}%")
+            : "--";
+    }
+
+    private void UpdateSummary()
+    {
+        var summary = PerformanceSummary.FromSamples(_samples);
+        if (summary.SampleCount == 0)
+        {
+            SummaryText.Text = "Start sampling to build a summary.";
+            return;
+        }
+
+        var lines = new List<string>
+        {
+            $"Samples: {summary.SampleCount} over {FormatDuration(summary.Duration)}",
+            FormatStat("CPU", summary.Cpu, "%", "0.0"),
+            FormatStat("Memory", summary.Memory, " MB", "0.0"),
+            FormatStat("FPS", summary.Fps, string.Empty, "0.0"),
+            FormatStat("Jank", summary.Jank, "%", "0.0"),
+            FormatStat("Battery", summary.Battery, "%", "0"),
+        };
+        var last = _samples[^1];
+        if (last.BatteryTemperatureCelsius is { } temperature)
+        {
+            lines.Add(string.Create(CultureInfo.InvariantCulture, $"Battery temperature: {temperature:0.0} C"));
+        }
+
+        if (LatestLaunchSession() is { LaunchTime: { } launchTime } launch)
+        {
+            var device = string.IsNullOrWhiteSpace(launch.DeviceName)
+                ? launch.DeviceSerial
+                : launch.DeviceName;
+            lines.Add(string.Create(
+                CultureInfo.InvariantCulture,
+                $"Launch time: {launchTime.TotalMilliseconds:0} ms ({device}, {launch.ProjectName})"));
+        }
+
+        SummaryText.Text = string.Join(Environment.NewLine, lines);
+    }
+
+    private static string FormatStat(string label, PerformanceStat stat, string unit, string format)
+    {
+        if (stat.Count == 0)
+        {
+            return $"{label}: no data";
+        }
+
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"{label}: avg {stat.Average!.Value.ToString(format, CultureInfo.InvariantCulture)}{unit} " +
+            $"(min {stat.Min!.Value.ToString(format, CultureInfo.InvariantCulture)}, " +
+            $"max {stat.Max!.Value.ToString(format, CultureInfo.InvariantCulture)}; n={stat.Count})");
+    }
+
+    private static string FormatPercent(double? value) =>
+        value is { } present
+            ? string.Create(CultureInfo.InvariantCulture, $"{present:0.0}%")
+            : "--";
+
+    private static string FormatDuration(TimeSpan duration) =>
+        duration.ToString(@"mm\:ss", CultureInfo.InvariantCulture);
+
+    private void ResetSamples()
+    {
+        _samples.Clear();
+        CpuChart.Clear();
+        MemoryChart.Clear();
+        FpsChart.Clear();
+        JankChart.Clear();
+        BatteryChart.Clear();
+        CpuValueText.Text = "--";
+        MemoryValueText.Text = "--";
+        FpsValueText.Text = "--";
+        JankValueText.Text = "--";
+        BatteryValueText.Text = "--";
+        WarningText.Text = string.Empty;
+        WarningText.Visibility = Visibility.Collapsed;
+        SummaryText.Text = "Start sampling to build a summary.";
+        StatusText.Text = "No samples yet.";
+        ExportButton.IsEnabled = false;
+        ClearButton.IsEnabled = false;
+    }
+
+    private void OnClearSamplesClick(object sender, RoutedEventArgs e)
+    {
+        StopSampling();
+        ResetSamples();
+    }
+
+    private async void OnExportCsvClick(object sender, RoutedEventArgs e)
+    {
+        if (_samples.Count == 0)
+        {
+            ShowResult(false, "There are no samples to export.", "Start sampling first.");
+            return;
+        }
+
+        try
+        {
+            var csv = PerformanceCsvExporter.Export(_samples);
+            var serial = SelectedSerial ?? "device";
+            var picker = new FileSavePicker
+            {
+                SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
+                SuggestedFileName = $"performance-{Sanitize(serial)}-{DateTime.Now:yyyyMMdd-HHmmss}",
+                DefaultFileExtension = ".csv",
+            };
+            picker.FileTypeChoices.Add("CSV", new List<string> { ".csv" });
+            InitializePicker(picker);
+            var file = await picker.PickSaveFileAsync();
+            if (file is null)
+            {
+                return;
+            }
+
+            await File.WriteAllTextAsync(file.Path, csv);
+            ShowResult(true, $"Exported {_samples.Count} samples to {file.Path}.", null);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidOperationException or
+            ArgumentException or COMException)
+        {
+            ShowResult(false, $"The samples could not be exported: {exception.Message}", null);
         }
     }
 
@@ -363,7 +727,7 @@ public sealed partial class PerformancePage : Page, IRefreshablePage, IDisposabl
         var hertz = 1_000_000_000d / nanoseconds;
         return string.Create(
             CultureInfo.InvariantCulture,
-            $"Refresh period {nanoseconds} ns · about {hertz:F1} Hz");
+            $"Refresh period {nanoseconds} ns - about {hertz:F1} Hz");
     }
 
     private static string SummarizeBattery(string output)
@@ -382,7 +746,21 @@ public sealed partial class PerformancePage : Page, IRefreshablePage, IDisposabl
             : string.Join(Environment.NewLine, interesting);
     }
 
-    private void OnCancelClick(object sender, RoutedEventArgs e) => _cts?.Cancel();
+    private void OnCancelClick(object sender, RoutedEventArgs e)
+    {
+        _cts?.Cancel();
+        StopSampling();
+    }
+
+    private void SetSamplingUi(bool sampling)
+    {
+        StartButton.IsEnabled = !sampling;
+        StopButton.IsEnabled = sampling;
+        DeviceCombo.IsEnabled = !sampling;
+        AppCombo.IsEnabled = !sampling && AppCombo.Items.Count > 0;
+        PackageBox.IsEnabled = !sampling;
+        IntervalBox.IsEnabled = !sampling;
+    }
 
     private void SetBusy(bool busy)
     {
@@ -417,6 +795,19 @@ public sealed partial class PerformancePage : Page, IRefreshablePage, IDisposabl
         }
 
         _dispatcher.TryEnqueue(() => action());
+    }
+
+    private static string Sanitize(string value)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        return string.Concat(value.Select(character => invalid.Contains(character) ? '-' : character));
+    }
+
+    private static void InitializePicker(object picker)
+    {
+        var window = App.Instance.Services.GetRequiredService<MainWindow>();
+        var handle = WinRT.Interop.WindowNative.GetWindowHandle(window);
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, handle);
     }
 
     /// <summary>One installed application shaped for the picker.</summary>

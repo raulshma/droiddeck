@@ -91,6 +91,8 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
             RetentionDaysBox.Value = settings.Logging.RetentionDays;
             RetentionGigabytesBox.Value = BytesToGigabytes(settings.Logging.MaxSessionBytes);
             RunConcurrencyBox.Value = settings.Run.MaxConcurrentDevices;
+            PerformanceIntervalBox.Value = settings.Performance.SampleIntervalMs;
+            PerformanceSamplesBox.Value = settings.Performance.MaxSamples;
             UpdateRetentionSummary();
             UpdateSourceHints();
         }
@@ -267,6 +269,54 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         catch (Exception exception)
         {
             ReportFailure("Saving the multi-device concurrency limit", exception);
+        }
+    }
+
+    private async void OnPerformanceIntervalChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+    {
+        if (_initializing || double.IsNaN(args.NewValue))
+        {
+            return;
+        }
+
+        var interval = PerformanceSettings.ClampSampleInterval((int)Math.Round(args.NewValue));
+        if (interval == _configuration.Current.Settings.Performance.SampleIntervalMs)
+        {
+            return;
+        }
+
+        try
+        {
+            await _configuration.SetAsync(SettingsPaths.PerformanceSampleIntervalMs, interval);
+            ShowAction($"Performance samples are captured every {interval} ms.");
+        }
+        catch (Exception exception)
+        {
+            ReportFailure("Saving the performance sampling interval", exception);
+        }
+    }
+
+    private async void OnPerformanceSamplesChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+    {
+        if (_initializing || double.IsNaN(args.NewValue))
+        {
+            return;
+        }
+
+        var count = PerformanceSettings.ClampSampleCount((int)Math.Round(args.NewValue));
+        if (count == _configuration.Current.Settings.Performance.MaxSamples)
+        {
+            return;
+        }
+
+        try
+        {
+            await _configuration.SetAsync(SettingsPaths.PerformanceMaxSamples, count);
+            ShowAction($"Performance charts retain the latest {count} samples.");
+        }
+        catch (Exception exception)
+        {
+            ReportFailure("Saving the performance sample retention", exception);
         }
     }
 

@@ -229,6 +229,41 @@ public sealed class RunSessionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ApkPipeline_RecordsTheLaunchDurationFromTheDevice()
+    {
+        var apk = Path.Combine(_root, "app.apk");
+        var configuration = new RunConfiguration
+        {
+            Name = "apk",
+            Kind = RunConfigurationKind.Apk,
+            Artifact = { Glob = "**/*.apk" },
+        };
+        var artifacts = new FakeArtifactResolver
+        {
+            Resolution = new ArtifactResolution
+            {
+                Glob = "**/*.apk",
+                BaseApk = apk,
+                Files = [apk],
+                Info = new ApkInfo
+                {
+                    PackageName = "com.example.app",
+                    LaunchableActivity = "com.example.app.MainActivity",
+                },
+            },
+        };
+        var commands = new FakeDeviceCommands { LaunchTime = TimeSpan.FromMilliseconds(120) };
+        await using var service = CreateService(artifacts: artifacts, commands: commands);
+
+        var session = await service.RunAsync(CreateRequest(configuration));
+
+        Assert.Equal(RunSessionState.Running, session.State);
+        Assert.Equal(TimeSpan.FromMilliseconds(120), session.LaunchTime);
+        var launch = Assert.Single(session.Steps, step => step.Id == "launch");
+        Assert.Contains("Launched in 120 ms", launch.OutputTail, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task CrashEvents_AccumulateInSessionTimeline()
     {
         var (service, session, logcat) = await RunWithAttachedLogcatAsync();
@@ -1059,6 +1094,8 @@ public sealed class RunSessionServiceTests : IDisposable
 
         public ProcessResult? LaunchResult { get; init; }
 
+        public TimeSpan? LaunchTime { get; init; }
+
         public int? PackageUid { get; init; }
 
         public List<(string Serial, int DevicePort, int HostPort)> ReverseCalls { get; } = [];
@@ -1085,6 +1122,7 @@ public sealed class RunSessionServiceTests : IDisposable
                     Succeeded = true,
                     CommandLine = "adb shell am start -W",
                     Output = "Status: ok\nLaunchState: WARM\nTotalTime: 120",
+                    LaunchTime = LaunchTime,
                 }
                 : ToDeviceCommandResult(LaunchResult));
 

@@ -65,6 +65,9 @@ public sealed class AppSettings
     /// <summary>Gets or sets wireless ADB settings.</summary>
     public WirelessSettings Wireless { get; set; } = new();
 
+    /// <summary>Gets or sets performance sampling settings.</summary>
+    public PerformanceSettings Performance { get; set; } = new();
+
     /// <summary>Gets or sets unknown keys preserved for forward compatibility.</summary>
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? AdditionalSettings { get; set; }
@@ -147,6 +150,48 @@ public sealed class WirelessSettings
     public int ReconnectDelaySeconds { get; set; } = 10;
 
     /// <summary>Gets or sets unknown keys preserved for forward compatibility.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalSettings { get; set; }
+}
+
+/// <summary>Settings for live performance sampling.</summary>
+public sealed class PerformanceSettings
+{
+    /// <summary>The shortest supported sampling interval in milliseconds.</summary>
+    public const int MinimumSampleIntervalMs = 250;
+
+    /// <summary>The longest supported sampling interval in milliseconds.</summary>
+    public const int MaximumSampleIntervalMs = 60_000;
+
+    /// <summary>The smallest supported retention count.</summary>
+    public const int MinimumSampleCount = 10;
+
+    /// <summary>The largest supported retention count.</summary>
+    public const int MaximumSampleCount = 3_600;
+
+    /// <summary>Gets or sets the sampling interval in milliseconds.</summary>
+    public int SampleIntervalMs { get; set; } = 1_000;
+
+    /// <summary>Gets or sets how many samples are retained for charts and export.</summary>
+    public int MaxSamples { get; set; } = 60;
+
+    /// <summary>Gets the interval clamped to the range the sampler supports.</summary>
+    [JsonIgnore]
+    public int EffectiveSampleIntervalMs => ClampSampleInterval(SampleIntervalMs);
+
+    /// <summary>Gets the retention count clamped to a usable range.</summary>
+    [JsonIgnore]
+    public int EffectiveMaxSamples => ClampSampleCount(MaxSamples);
+
+    /// <summary>Clamps a sampling interval to the supported range.</summary>
+    public static int ClampSampleInterval(int milliseconds) =>
+        Math.Clamp(milliseconds, MinimumSampleIntervalMs, MaximumSampleIntervalMs);
+
+    /// <summary>Clamps a retention count to the supported range.</summary>
+    public static int ClampSampleCount(int samples) =>
+        Math.Clamp(samples, MinimumSampleCount, MaximumSampleCount);
+
+    /// <summary>Gets unknown keys preserved for forward compatibility.</summary>
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? AdditionalSettings { get; set; }
 }
@@ -557,4 +602,10 @@ public static class SettingsPaths
 
     /// <summary>Wireless reconnect delay path.</summary>
     public const string WirelessReconnectDelaySeconds = "wireless.reconnectDelaySeconds";
+
+    /// <summary>Performance sampling interval path.</summary>
+    public const string PerformanceSampleIntervalMs = "performance.sampleIntervalMs";
+
+    /// <summary>Performance sample retention path.</summary>
+    public const string PerformanceMaxSamples = "performance.maxSamples";
 }

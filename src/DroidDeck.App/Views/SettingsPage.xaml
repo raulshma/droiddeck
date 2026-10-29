@@ -266,6 +266,35 @@
 
             <Border Style="{StaticResource CardBorderStyle}">
                 <StackPanel Spacing="10">
+                    <TextBlock Text="Performance sampling" Style="{StaticResource SectionHeaderStyle}" />
+                    <TextBlock
+                        Text="Live performance charts sample CPU, memory, frames, and battery at this interval. A shorter interval shows more detail but runs more adb commands."
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                    <NumberBox
+                        x:Name="PerformanceIntervalBox"
+                        Header="Sampling interval (ms)"
+                        Minimum="250"
+                        Maximum="60000"
+                        SmallChange="250"
+                        SpinButtonPlacementMode="Compact"
+                        ValueChanged="OnPerformanceIntervalChanged"
+                        AutomationProperties.AutomationId="PerformanceIntervalBox" />
+                    <NumberBox
+                        x:Name="PerformanceSamplesBox"
+                        Header="Samples retained"
+                        Minimum="10"
+                        Maximum="3600"
+                        SmallChange="10"
+                        SpinButtonPlacementMode="Compact"
+                        ValueChanged="OnPerformanceSamplesChanged"
+                        AutomationProperties.AutomationId="PerformanceSamplesBox" />
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorderStyle}">
+                <StackPanel Spacing="10">
                     <TextBlock Text="Session retention" Style="{StaticResource SectionHeaderStyle}" />
                     <TextBlock
                         Text="Old sessions are removed at launch and when retention is applied. Keep at least one session if you want to review recent history."
