@@ -66,15 +66,20 @@ public sealed record ConfigSource(ConfigScope Scope, string? Origin = null)
 public sealed class ConfigSnapshot
 {
     private readonly IReadOnlyDictionary<string, ConfigSource> _sources;
+    private readonly IReadOnlyDictionary<string, IReadOnlyList<ConfigSource>> _contributions;
+    private readonly object _valueCacheLock = new();
+    private readonly Dictionary<(string Path, Type Type), object?> _valueCache = [];
 
     internal ConfigSnapshot(
         AppSettings settings,
         JsonObject effective,
-        IReadOnlyDictionary<string, ConfigSource> sources)
+        IReadOnlyDictionary<string, ConfigSource> sources,
+        IReadOnlyDictionary<string, IReadOnlyList<ConfigSource>> contributions)
     {
         Settings = settings;
         Effective = effective;
         _sources = sources;
+        _contributions = contributions;
     }
 
     /// <summary>Gets the typed effective settings.</summary>
@@ -115,8 +120,42 @@ public sealed class ConfigSnapshot
         return current;
     }
 
+    /// <summary>
+    /// Gets every layer that contributed the effective value, ordered from the lowest
+    /// precedence to the highest; the last entry is the winning source. Built-in
+    /// defaults are not listed; unknown paths return an empty list.
+    /// </summary>
+    public IReadOnlyList<ConfigSource> GetContributions(string path)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        return _contributions.TryGetValue(path, out var contributors) ? contributors : [];
+    }
+
     /// <summary>Gets all source-map entries.</summary>
     public IReadOnlyDictionary<string, ConfigSource> GetSourceMap() => _sources;
+
+    internal bool TryGetCached<T>(string path, out T? value)
+    {
+        lock (_valueCacheLock)
+        {
+            if (_valueCache.TryGetValue((path, typeof(T)), out var cached))
+            {
+                value = (T?)cached;
+                return true;
+            }
+        }
+
+        value = default;
+        return false;
+    }
+
+    internal void CacheValue<T>(string path, T? value)
+    {
+        lock (_valueCacheLock)
+        {
+            _valueCache[(path, typeof(T))] = value;
+        }
+    }
 
     internal static bool TryGetProperty(JsonObject obj, string name, out JsonNode? value)
     {

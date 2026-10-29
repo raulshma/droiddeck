@@ -456,6 +456,9 @@ public sealed class NotificationsSettings
 /// <summary>Well-known configuration paths.</summary>
 public static class SettingsPaths
 {
+    /// <summary>Active profile identifier path.</summary>
+    public const string ActiveProfileId = "profile.activeId";
+
     /// <summary>Theme path.</summary>
     public const string Theme = "appearance.theme";
 

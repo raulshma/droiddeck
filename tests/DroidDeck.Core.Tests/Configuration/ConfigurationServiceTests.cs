@@ -438,16 +438,18 @@ public sealed class ConfigurationServiceTests
     }
 
     [Fact]
-    public async Task NonGlobalScopesAreRejected()
+    public async Task UnsupportedScopesAreRejected()
     {
         using var temp = new TempDirectory();
         using var service = CreateService(temp);
         await service.InitializeAsync();
 
         await Assert.ThrowsAsync<NotSupportedException>(
+            () => service.SetAsync(SettingsPaths.Theme, AppTheme.Dark, ConfigScope.BuiltInDefaults));
+        await Assert.ThrowsAsync<NotSupportedException>(
             () => service.SetAsync(SettingsPaths.Theme, AppTheme.Dark, ConfigScope.Profile));
         await Assert.ThrowsAsync<NotSupportedException>(
-            () => service.ResetAsync(SettingsPaths.Theme, ConfigScope.LocalProject));
+            () => service.SetAsync(SettingsPaths.Theme, AppTheme.Dark, ConfigScope.Device));
     }
 
     [Theory]
