@@ -27,7 +27,7 @@ Sources are stored in `<data>\catalog\sources.json`, fetched catalogs are cached
       "description": "Adds a notes panel to every connected device.",
       "iconUrl": "https://example.com/icon.png",
       "homepage": "https://example.com/device-notes",
-      "license": "MIT",
+      "license": "GPL-3.0-only",
       "tags": ["notes", "productivity"],
       "versions": [
         {

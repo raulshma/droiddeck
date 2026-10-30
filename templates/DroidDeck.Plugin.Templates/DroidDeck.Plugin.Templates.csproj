@@ -10,7 +10,7 @@
     <Description>dotnet new templates for DroidDeck plugins: command, page, device action, and renderer.</Description>
     <Authors>DroidDeck contributors</Authors>
     <Company>DroidDeck contributors</Company>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
     <PackageProjectUrl>$(DroidDeckRepositoryUrl)</PackageProjectUrl>
     <RepositoryUrl>$(DroidDeckRepositoryUrl)</RepositoryUrl>
     <RepositoryType>git</RepositoryType>

@@ -9,5 +9,5 @@
   "entryAssembly": "SamplePerfPlugin1.dll",
   "entryType": "SamplePerfPlugin1.PerfPlugin",
   "homepage": "https://github.com/raulshma/droiddeck",
-  "license": "MIT"
+  "license": "GPL-3.0-only"
 }

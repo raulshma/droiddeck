@@ -211,7 +211,7 @@
                         <TextBlock Text="Licenses, privacy, and security" Style="{StaticResource SectionHeaderStyle}" />
                         <StackPanel Orientation="Horizontal" Spacing="4">
                             <HyperlinkButton
-                                Content="DroidDeck license (MIT)"
+                                Content="DroidDeck license (GPL-3.0)"
                                 NavigateUri="https://github.com/raulshma/droiddeck/blob/main/LICENSE"
                                 AutomationProperties.AutomationId="LicenseLink" />
                             <HyperlinkButton

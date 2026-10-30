@@ -22,7 +22,7 @@ even when the plugin code would not run.
   "dependencies": [],
   "icon": "icon.png",
   "homepage": "https://example.com/hello",
-  "license": "MIT"
+  "license": "GPL-3.0-only"
 }
 ```
 

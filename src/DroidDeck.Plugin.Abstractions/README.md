@@ -11,4 +11,4 @@ The plugin API is version 1.0. The ABI is stable within a major version.
 
 Documentation: <https://github.com/raulshma/droiddeck/blob/main/docs/plugin-sdk/index.md>
 
-Licensed under the MIT license.
+Licensed under the GNU General Public License v3.0.

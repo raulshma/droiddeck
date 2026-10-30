@@ -1,7 +1,8 @@
 # Third-party notices
 
-DroidDeck is distributed under the MIT License in [LICENSE](../LICENSE). This file
-lists the third-party components in the distribution and the notices that apply.
+DroidDeck is distributed under the GNU General Public License version 3 in
+[LICENSE](../LICENSE). This file lists the third-party components in the
+distribution and the notices that apply.
 
 ## Runtime components
 

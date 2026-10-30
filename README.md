@@ -112,6 +112,8 @@ artifact. A separate workflow publishes the documentation to GitHub Pages.
 
 ## License
 
-DroidDeck is released under the MIT License. See [LICENSE](LICENSE) and
-[third-party notices](Licenses/THIRD-PARTY-NOTICES.md). Android is a trademark of
-Google LLC; DroidDeck is not affiliated with Google.
+DroidDeck is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, version 3 (GPL-3.0-only). Copyright (C) 2026 DroidDeck contributors.
+See [LICENSE](LICENSE) and [third-party notices](Licenses/THIRD-PARTY-NOTICES.md).
+Android is a trademark of Google LLC; DroidDeck is not affiliated with Google.

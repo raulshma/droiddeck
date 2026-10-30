@@ -1,11 +1,17 @@
 # Licensing
 
-DroidDeck is open source under the MIT License. The full text is in
-[LICENSE](../LICENSE) and is copied next to the executable as `LICENSE`.
+DroidDeck is free software distributed under the GNU General Public License,
+version 3 (GPL-3.0-only). The full text is in [LICENSE](../LICENSE) and is copied
+next to the executable as `LICENSE`.
 
-You may use, copy, modify, merge, publish, distribute, sublicense, and sell copies
-of DroidDeck, provided the copyright notice and permission notice are included. The
-software comes with no warranty.
+You may run, study, share, and modify DroidDeck. If you distribute the app or a
+modified version, the GPL-3.0 requires you to:
+
+- make the complete corresponding source code available under GPL-3.0,
+- keep the copyright and license notices intact, and
+- state significant changes made to the software.
+
+DroidDeck comes with no warranty, to the extent permitted by law.
 
 ## Third-party notices
 
@@ -46,9 +52,10 @@ Android is a trademark of Google LLC.
 ## Plugins
 
 Plugins are separate works with their own licenses. The catalog shows a plugin's
-declared license, and the plugin package should include its license file. The MIT
-License of DroidDeck does not apply to third-party plugins, and installing a plugin
-does not change its terms.
+declared license, and the plugin package should include its license file. Because
+plugins are loaded in-process and link against the GPL-3.0 plugin SDK, distributed
+plugins must be GPL-3.0-compatible. Installing a plugin changes neither the license
+of DroidDeck nor the license of the plugin.
 
 ## About the app
 
@@ -64,8 +71,8 @@ same files are available in the repository:
 ## Contributions
 
 By contributing code, documentation, or samples to this repository, you agree that
-your contribution is licensed under the same MIT License. Do not contribute code you
-cannot license under these terms.
+your contribution is licensed under the same GPL-3.0 terms. Do not contribute code
+you cannot license under these terms.
 
 ## Questions
 

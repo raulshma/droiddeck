@@ -11,5 +11,5 @@
   "capabilities": [
     "project-detector"
   ],
-  "license": "MIT"
+  "license": "GPL-3.0-only"
 }

@@ -9,7 +9,7 @@
     <Description>WinUI component kit and renderer contracts for DroidDeck plugins.</Description>
     <Authors>DroidDeck contributors</Authors>
     <Company>DroidDeck contributors</Company>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
     <PackageProjectUrl>$(DroidDeckRepositoryUrl)</PackageProjectUrl>
     <RepositoryUrl>$(DroidDeckRepositoryUrl)</RepositoryUrl>
     <RepositoryType>git</RepositoryType>

@@ -9,7 +9,7 @@
     <Description>Packages a built DroidDeck plugin folder as a .ddplugin archive with a SHA-256 hash.</Description>
     <Authors>DroidDeck contributors</Authors>
     <Company>DroidDeck contributors</Company>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
     <PackageProjectUrl>$(DroidDeckRepositoryUrl)</PackageProjectUrl>
     <RepositoryUrl>$(DroidDeckRepositoryUrl)</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
