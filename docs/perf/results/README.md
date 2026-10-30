@@ -57,17 +57,17 @@ The product budgets above are measured separately by the release-check tool.
 ## Known noise
 
 A developer desktop is not a quiet benchmark machine. The 2026-10-31 results
-show startup medians ranging from roughly 320 ms to 770 ms across individual
-runs. Record several batches, keep the raw samples, and only treat a difference
-as meaningful when it appears across batches. Size, memory growth, and handle
-growth are deterministic enough to gate directly.
+show individual startup runs ranging from roughly 320 ms to 1,360 ms across
+batches. Record several batches, keep the raw samples, and only treat a
+difference as meaningful when it appears across batches. Size, memory growth,
+and handle growth are deterministic enough to gate directly.
 
 ## Results
 
 | Date | Command | Result | Notes |
 | --- | --- | --- | --- |
-| 2026-10-31 | size, 0.0.1-alpha | Pass (232.8 MiB extracted, 90.5 MiB zip) | [Report](2026-10-31-size-0.0.1-alpha.json); source commit `3a9f35c`. |
-| 2026-10-31 | startup, 0.0.1-alpha | Pass (median 562 ms, p95 627 ms) | [Report](2026-10-31-startup-0.0.1-alpha.json); ten runs including two warmups at `3a9f35c`. |
+| 2026-10-31 | size, 0.0.1-alpha | Pass (235.3 MiB extracted, 91.2 MiB zip) | [Report](2026-10-31-size-0.0.1-alpha.json); source commit `7bd6731`; regenerated after the missing XBF/PRI publish fix. |
+| 2026-10-31 | startup, 0.0.1-alpha | Pass (median 1207 ms, p95 1333 ms) | [Report](2026-10-31-startup-0.0.1-alpha.json); ten runs including two warmups at `7bd6731`; the earlier report measured the startup failure window and was discarded. |
 | 2026-10-31 | size, no R2R | Pass (232.8 MiB extracted, 90.5 MiB zip) | 1.0.0-candidate reference measurement; see ADR 0003. |
 | 2026-10-31 | size, R2R | Fail (284.2 MiB) | 34 MiB over the extracted budget; R2R disabled. |
 | 2026-10-31 | startup, no R2R | Pass (batch 1 median 564 ms, p95 648 ms; batch 2 median 513 ms, p95 696 ms) | Two batches of ten runs. |

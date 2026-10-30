@@ -103,7 +103,9 @@ dotnet run --project tools/DroidDeck.ReleaseCheck -c Release -- `
 
 The release workflow does not gate on startup because hosted runners are too
 noisy; this measurement is part of the release evidence and must be run on the
-reference machine.
+reference machine. The check reads the isolated data directory's log for the
+`DroidDeck failed to start.` marker, so a run that only shows the startup
+failure window fails the check instead of producing a sample.
 
 Budget: median at most 2,000 ms and p95 at most 3,000 ms. If the machine is busy,
 repeat the batch and keep the raw samples; a single outlier batch is not a
@@ -301,14 +303,17 @@ users on the alpha; testers upgrade by replacing the portable folder.
 ## 0.0.1-alpha release status (2026-10-31)
 
 This records the evidence gathered for `0.0.1-alpha` from source commit
-`3a9f35c`. It is not a 1.0.0 sign-off; the deferred rows are published as known
+`7bd6731`. It is not a 1.0.0 sign-off; the deferred rows are published as known
 limitations in [`docs/releases/v0.0.1-alpha.md`](releases/v0.0.1-alpha.md).
+The size and startup reports were regenerated after the portable publish was
+fixed to include the compiled XAML resources; the earlier startup report
+measured the startup failure window and was discarded.
 
 | Gate | Status | Evidence |
 | --- | --- | --- |
-| Size | Pass | 232.8 MiB extracted and 90.5 MiB zipped; [report](perf/results/2026-10-31-size-0.0.1-alpha.json). |
-| Startup | Pass | Median 562 ms, p95 627 ms over eight measured runs after two warmups on the reference machine; [report](perf/results/2026-10-31-startup-0.0.1-alpha.json). |
-| Automated suites | Pass | Release build with 0 warnings, 1,315 non-UI tests, and the plugin template suite passed. |
+| Size | Pass | 235.3 MiB extracted and 91.2 MiB zipped; [report](perf/results/2026-10-31-size-0.0.1-alpha.json). |
+| Startup | Pass | Median 1207 ms, p95 1333 ms over eight measured runs after two warmups on the reference machine, with failure-window detection enabled; [report](perf/results/2026-10-31-startup-0.0.1-alpha.json). |
+| Automated suites | Pass | Release build with 0 warnings and 1,324 tests passed locally, including the UI automation and plugin template suites. |
 | Size, R2R reference | Fail | 284.2 MiB, 34 MiB over budget; R2R stays disabled by [ADR 0003](adr/0003-ready-to-run-size-trade-off.md). |
 | Soak | Deferred | The eight-hour soak is deferred by the alpha policy; the two-minute harness smoke remains [here](perf/results/2026-10-31-soak-smoke.json) and is not release evidence. |
 | Security review | Complete | No open remediable high/medium finding; R-01 is a high-impact accepted risk among six in the [security review](security-review.md). |

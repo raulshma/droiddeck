@@ -1,7 +1,7 @@
 {
   "command": "startup",
-  "timestampUtc": "2026-10-30T23:08:55.4158886+00:00",
-  "label": "0.0.1-alpha 3a9f35c",
+  "timestampUtc": "2026-10-30T23:31:15.684481+00:00",
+  "label": "0.0.1-alpha 7bd6731",
   "passed": true,
   "environment": {
     "machineName": "reference-development-pc",
@@ -15,19 +15,20 @@
   "warmupRuns": 2,
   "timeoutSeconds": 60,
   "samplesMilliseconds": [
-    573.2112,
-    597.0266,
-    550.3895,
-    506.983,
-    512.6322,
-    515.3621,
-    639.2258,
-    603.958
+    1028.1123,
+    1287.1163,
+    1222.0631,
+    1184.8874,
+    1125.6275,
+    1358.2892,
+    1282.9108,
+    1191.9092
   ],
   "timedOutRuns": [],
-  "medianMilliseconds": 561.80035,
-  "p95Milliseconds": 626.88207,
-  "maxMilliseconds": 639.2258,
+  "failedStartupRuns": [],
+  "medianMilliseconds": 1206.9861500000002,
+  "p95Milliseconds": 1333.378685,
+  "maxMilliseconds": 1358.2892,
   "medianBudgetMilliseconds": 2000,
   "p95BudgetMilliseconds": 3000,
   "failures": []
