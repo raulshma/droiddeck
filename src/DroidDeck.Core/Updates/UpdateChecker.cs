@@ -107,6 +107,13 @@ public sealed class UpdateChecker
 
         using (response)
         {
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                return new UpdateCheckResult(
+                    UpdateCheckStatus.UpToDate,
+                    "No stable release has been published yet.");
+            }
+
             if (!response.IsSuccessStatusCode)
             {
                 return new UpdateCheckResult(

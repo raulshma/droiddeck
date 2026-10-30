@@ -113,6 +113,19 @@ public sealed class UpdateCheckerTests
     }
 
     [Fact]
+    public async Task NoPublishedStableReleaseIsUpToDate()
+    {
+        var checker = CreateChecker(string.Empty, HttpStatusCode.NotFound);
+
+        var result = await checker.CheckAsync(enabled: true);
+
+        Assert.Equal(UpdateCheckStatus.UpToDate, result.Status);
+        Assert.False(result.UpdateAvailable);
+        Assert.Null(result.LatestVersion);
+        Assert.Contains("stable release", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task ReportsHttpFailures()
     {
         var checker = CreateChecker(string.Empty, HttpStatusCode.Forbidden);
