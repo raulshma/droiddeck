@@ -522,6 +522,323 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
     }
 
     /// <inheritdoc />
+    public JsonNode? GetValueAt(ConfigScope scope, string path)
+    {
+        ValidatePath(path);
+        var document = scope switch
+        {
+            ConfigScope.Global => _global,
+            ConfigScope.Profile => _loadedProfileId is null ? null : _profile,
+            ConfigScope.TeamProject => _teamRepositoryRoot is null ? null : _teamProject,
+            ConfigScope.LocalProject => _localProjectId is null ? null : _localProject,
+            ConfigScope.RunConfiguration => _runConfiguration,
+            ConfigScope.Device => _deviceAll,
+            ConfigScope.Session => _session,
+            _ => null,
+        };
+
+        return document is null ? null : GetNode(document, path);
+    }
+
+    /// <inheritdoc />
+    public SettingsValidationResult ValidateSettings(string json)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(json);
+        var issues = new List<SettingsValidationIssue>();
+        JsonObject document;
+        try
+        {
+            document = ParseDocument(json);
+        }
+        catch (JsonException exception)
+        {
+            issues.Add(new SettingsValidationIssue(
+                SettingsTransfer.NormalizeJsonPath(exception.Path),
+                $"Invalid JSON: {exception.Message}",
+                SettingsIssueSeverity.Error));
+            return new SettingsValidationResult(issues);
+        }
+        catch (InvalidDataException exception)
+        {
+            issues.Add(new SettingsValidationIssue(string.Empty, exception.Message, SettingsIssueSeverity.Error));
+            return new SettingsValidationResult(issues);
+        }
+
+        ValidateDocument(document, issues);
+        return new SettingsValidationResult(issues);
+    }
+
+    /// <inheritdoc />
+    public async Task<SettingsExport> ExportSettingsAsync(
+        SettingsExportOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            await EnsureLoadedLockedAsync(cancellationToken).ConfigureAwait(false);
+            var excluded = new List<string>();
+            var scopes = new Dictionary<ConfigScope, JsonObject>();
+            foreach (var scope in options?.Scopes ?? SettingsExport.DefaultScopes)
+            {
+                var document = ScopeDocumentLocked(scope);
+                if (document is null)
+                {
+                    continue;
+                }
+
+                var copy = SettingsTransfer.Sanitize(document, excluded);
+                copy["schemaVersion"] = AppSettings.CurrentSchemaVersion;
+                scopes[scope] = copy;
+            }
+
+            return new SettingsExport
+            {
+                GeneratedAt = _timeProvider.GetUtcNow(),
+                Scopes = scopes,
+                ExcludedPaths = excluded.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            };
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<SettingsImportPreview> PreviewSettingsImportAsync(
+        string json,
+        ConfigScope scope = ConfigScope.Global,
+        SettingsImportMode mode = SettingsImportMode.Merge,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateImportScope(scope);
+        var prepared = PrepareImport(json, scope);
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            await EnsureLoadedLockedAsync(cancellationToken).ConfigureAwait(false);
+            var current = ScopeDocumentLocked(scope) ?? new JsonObject();
+            IReadOnlyList<SettingsChange> changes = prepared.Validation.IsValid
+                ? SettingsTransfer.Diff(
+                    SettingsTransfer.Flatten(current),
+                    SettingsTransfer.Flatten(prepared.Document),
+                    mode)
+                : [];
+            return new SettingsImportPreview
+            {
+                Scope = scope,
+                Mode = mode,
+                Validation = prepared.Validation,
+                Changes = changes,
+                ExcludedPaths = prepared.Excluded,
+            };
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<SettingsImportResult> ImportSettingsAsync(
+        string json,
+        ConfigScope scope = ConfigScope.Global,
+        SettingsImportMode mode = SettingsImportMode.Merge,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateImportScope(scope);
+        var prepared = PrepareImport(json, scope);
+        if (!prepared.Validation.IsValid)
+        {
+            throw new SettingsValidationException(prepared.Validation);
+        }
+
+        SettingsImportPreview preview;
+        string? backupPath;
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            await EnsureLoadedLockedAsync(cancellationToken).ConfigureAwait(false);
+            RequireWritableLayerLocked(scope);
+            var current = ScopeDocumentLocked(scope) ?? new JsonObject();
+            preview = new SettingsImportPreview
+            {
+                Scope = scope,
+                Mode = mode,
+                Validation = prepared.Validation,
+                Changes = SettingsTransfer.Diff(
+                    SettingsTransfer.Flatten(current),
+                    SettingsTransfer.Flatten(prepared.Document),
+                    mode),
+                ExcludedPaths = prepared.Excluded,
+            };
+
+            var candidate = mode == SettingsImportMode.Replace
+                ? (JsonObject)prepared.Document.DeepClone()
+                : (JsonObject)current.DeepClone();
+            if (mode == SettingsImportMode.Merge)
+            {
+                SettingsTransfer.Merge(candidate, prepared.Document);
+            }
+
+            SettingsTransfer.PreserveSensitive(current, candidate);
+            AddSchemaVersion(candidate);
+            backupPath = await SaveLayerLockedAsync(scope, candidate, cancellationToken).ConfigureAwait(false);
+            await SyncProfileLayerLockedAsync(cancellationToken).ConfigureAwait(false);
+            _current = BuildSnapshot();
+            NotifyTokensLocked();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+
+        foreach (var change in preview.Changes)
+        {
+            Changed?.Invoke(
+                this,
+                new ConfigChangedEventArgs(
+                    change.Path,
+                    scope,
+                    _current.GetSource(change.Path),
+                    change.Kind == SettingsChangeKind.Removed ? ConfigChangeKind.Reset : ConfigChangeKind.Set));
+        }
+
+        return new SettingsImportResult(preview, backupPath);
+    }
+
+    /// <inheritdoc />
+    public async Task<SettingsResetSnapshot> ResetSectionAsync(
+        string section,
+        ConfigScope scope = ConfigScope.Global,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(section);
+        if (section.Contains('.', StringComparison.Ordinal))
+        {
+            throw new ArgumentException("A section name cannot contain dots.", nameof(section));
+        }
+
+        ValidateImportScope(scope);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            await EnsureLoadedLockedAsync(cancellationToken).ConfigureAwait(false);
+            RequireWritableLayerLocked(scope);
+            var current = ScopeDocumentLocked(scope) ?? new JsonObject();
+            var key = SettingsTransfer.FindKey(current, section);
+            var removed = SettingsTransfer.Flatten(current)
+                .Where(pair =>
+                    pair.Key.Equals(section, StringComparison.OrdinalIgnoreCase) ||
+                    pair.Key.StartsWith(section + ".", StringComparison.OrdinalIgnoreCase))
+                .Select(pair => new SettingsChange(pair.Key, SettingsChangeKind.Removed, pair.Value, null))
+                .OrderBy(static change => change.Path, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            if (key is not null)
+            {
+                var candidate = (JsonObject)current.DeepClone();
+                candidate.Remove(key);
+                AddSchemaVersion(candidate);
+                await SaveLayerLockedAsync(scope, candidate, cancellationToken).ConfigureAwait(false);
+                await SyncProfileLayerLockedAsync(cancellationToken).ConfigureAwait(false);
+                _current = BuildSnapshot();
+                NotifyTokensLocked();
+            }
+
+            return new SettingsResetSnapshot
+            {
+                Scope = scope,
+                Document = (JsonObject)current.DeepClone(),
+                Removed = removed,
+            };
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<SettingsResetSnapshot> ResetScopeAsync(
+        ConfigScope scope = ConfigScope.Global,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateImportScope(scope);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            await EnsureLoadedLockedAsync(cancellationToken).ConfigureAwait(false);
+            RequireWritableLayerLocked(scope);
+            var current = ScopeDocumentLocked(scope) ?? new JsonObject();
+            var removed = SettingsTransfer.Flatten(current)
+                .Where(static pair => !pair.Key.Equals("schemaVersion", StringComparison.OrdinalIgnoreCase))
+                .Select(pair => new SettingsChange(pair.Key, SettingsChangeKind.Removed, pair.Value, null))
+                .OrderBy(static change => change.Path, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            var candidate = new JsonObject();
+            AddSchemaVersion(candidate);
+            await SaveLayerLockedAsync(scope, candidate, cancellationToken).ConfigureAwait(false);
+            await SyncProfileLayerLockedAsync(cancellationToken).ConfigureAwait(false);
+            _current = BuildSnapshot();
+            NotifyTokensLocked();
+
+            return new SettingsResetSnapshot
+            {
+                Scope = scope,
+                Document = (JsonObject)current.DeepClone(),
+                Removed = removed,
+            };
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task RestoreSettingsAsync(
+        SettingsResetSnapshot snapshot,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ValidateImportScope(snapshot.Scope);
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            await EnsureLoadedLockedAsync(cancellationToken).ConfigureAwait(false);
+            RequireWritableLayerLocked(snapshot.Scope);
+            var issues = new List<SettingsValidationIssue>();
+            ValidateDocument(snapshot.Document, issues);
+            if (issues.Any(static issue => issue.Severity == SettingsIssueSeverity.Error))
+            {
+                throw new SettingsValidationException(new SettingsValidationResult(issues));
+            }
+
+            var candidate = (JsonObject)snapshot.Document.DeepClone();
+            AddSchemaVersion(candidate);
+            await SaveLayerLockedAsync(snapshot.Scope, candidate, cancellationToken).ConfigureAwait(false);
+            await SyncProfileLayerLockedAsync(cancellationToken).ConfigureAwait(false);
+            _current = BuildSnapshot();
+            NotifyTokensLocked();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <inheritdoc />
     public ConfigChangeToken GetChangeToken()
     {
         lock (_tokens)
@@ -1138,6 +1455,204 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
     private static void AddSchemaVersion(JsonObject document)
     {
         document["schemaVersion"] = AppSettings.CurrentSchemaVersion;
+    }
+
+    private static (JsonObject Document, SettingsValidationResult Validation, IReadOnlyList<string> Excluded) PrepareImport(
+        string json,
+        ConfigScope scope)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(json);
+        var excluded = new List<string>();
+        JsonObject parsed;
+        try
+        {
+            parsed = ParseDocument(json);
+        }
+        catch (JsonException exception)
+        {
+            return (
+                new JsonObject(),
+                new SettingsValidationResult(
+                [
+                    new SettingsValidationIssue(
+                        SettingsTransfer.NormalizeJsonPath(exception.Path),
+                        $"Invalid JSON: {exception.Message}",
+                        SettingsIssueSeverity.Error),
+                ]),
+                excluded);
+        }
+        catch (InvalidDataException exception)
+        {
+            return (
+                new JsonObject(),
+                new SettingsValidationResult(
+                    [new SettingsValidationIssue(string.Empty, exception.Message, SettingsIssueSeverity.Error)]),
+                excluded);
+        }
+
+        var unwrapped = SettingsTransfer.UnwrapBundle(parsed, scope, out var bundleError);
+        if (unwrapped is null)
+        {
+            return (
+                new JsonObject(),
+                new SettingsValidationResult(
+                [
+                    new SettingsValidationIssue(
+                        "scopes",
+                        bundleError ?? "The export bundle could not be read.",
+                        SettingsIssueSeverity.Error),
+                ]),
+                excluded);
+        }
+
+        var document = SettingsTransfer.Sanitize(unwrapped, excluded);
+        var issues = new List<SettingsValidationIssue>();
+        ValidateDocument(document, issues);
+        return (document, new SettingsValidationResult(issues), excluded);
+    }
+
+    private static JsonObject ParseDocument(string text) =>
+        JsonNode.Parse(text, documentOptions: DroidDeckJson.DocumentOptions) as JsonObject
+            ?? throw new InvalidDataException("The settings document must be a JSON object.");
+
+    private static void ValidateDocument(JsonObject document, List<SettingsValidationIssue> issues)
+    {
+        SettingsTransfer.CollectCaseConflicts(document, string.Empty, issues);
+        if (ConfigSnapshot.TryGetProperty(document, "schemaVersion", out var versionNode) && versionNode is not null)
+        {
+            if (versionNode is not JsonValue versionValue ||
+                !versionValue.TryGetValue<int>(out var version) ||
+                version < 1)
+            {
+                issues.Add(new SettingsValidationIssue(
+                    "schemaVersion",
+                    "schemaVersion must be a positive integer.",
+                    SettingsIssueSeverity.Error));
+            }
+            else if (version > AppSettings.CurrentSchemaVersion)
+            {
+                issues.Add(new SettingsValidationIssue(
+                    "schemaVersion",
+                    $"schemaVersion {version} is newer than the supported version {AppSettings.CurrentSchemaVersion}.",
+                    SettingsIssueSeverity.Error));
+            }
+        }
+
+        var effective = SettingsDefaults.CreateCopy();
+        SettingsTransfer.Merge(effective, document);
+        effective["schemaVersion"] = AppSettings.CurrentSchemaVersion;
+        try
+        {
+            _ = DeserializeSettings(effective);
+        }
+        catch (JsonException exception)
+        {
+            var path = SettingsTransfer.NormalizeJsonPath(exception.Path);
+            issues.Add(new SettingsValidationIssue(
+                path,
+                $"The value at \"{(path.Length == 0 ? "document" : path)}\" is invalid: {exception.Message}",
+                SettingsIssueSeverity.Error));
+        }
+        catch (InvalidOperationException exception)
+        {
+            issues.Add(new SettingsValidationIssue(string.Empty, exception.Message, SettingsIssueSeverity.Error));
+        }
+
+        SettingsTransfer.CollectUnknownKeys(document, issues);
+    }
+
+    private JsonObject? ScopeDocumentLocked(ConfigScope scope) => scope switch
+    {
+        ConfigScope.Global => _global,
+        ConfigScope.Profile => _loadedProfileId is null ? null : _profile,
+        ConfigScope.TeamProject => _teamRepositoryRoot is null ? null : _teamProject,
+        ConfigScope.LocalProject => _localProjectId is null ? null : _localProject,
+        ConfigScope.RunConfiguration => _runConfiguration,
+        ConfigScope.Session => _session,
+        ConfigScope.Device => _deviceAll,
+        _ => null,
+    };
+
+    private void RequireWritableLayerLocked(ConfigScope scope)
+    {
+        switch (scope)
+        {
+            case ConfigScope.TeamProject:
+                RequireTeamProjectLocked();
+                break;
+            case ConfigScope.LocalProject:
+                RequireLocalProjectLocked();
+                break;
+            case ConfigScope.Profile when _loadedProfileId is null:
+                throw new InvalidOperationException("Select a profile before changing the profile layer.");
+        }
+    }
+
+    private async Task<string?> SaveLayerLockedAsync(
+        ConfigScope scope,
+        JsonObject document,
+        CancellationToken cancellationToken)
+    {
+        switch (scope)
+        {
+            case ConfigScope.Global:
+                await SaveGlobalLockedAsync(document, cancellationToken).ConfigureAwait(false);
+                return ExistingFile(_paths.SettingsBackupFile);
+            case ConfigScope.TeamProject:
+                RequireTeamProjectLocked();
+                await SaveTeamProjectLockedAsync(document, cancellationToken).ConfigureAwait(false);
+                return null;
+            case ConfigScope.LocalProject:
+                RequireLocalProjectLocked();
+                await SaveLocalProjectLockedAsync(document, cancellationToken).ConfigureAwait(false);
+                return ExistingFile(LocalProjectFile + ".bak");
+            case ConfigScope.Profile:
+                var profileId = _loadedProfileId
+                    ?? throw new InvalidOperationException("Select a profile before changing the profile layer.");
+                var file = ProfileFile(profileId);
+                var json = document.ToJsonString(DroidDeckJson.Options);
+                await AtomicFile.WriteAllTextAsync(file, json, keepBackup: true, cancellationToken)
+                    .ConfigureAwait(false);
+                _profile = document;
+                return ExistingFile(file + ".bak");
+            case ConfigScope.RunConfiguration:
+                _runConfiguration = document;
+                return null;
+            case ConfigScope.Session:
+                _session = document;
+                return null;
+            default:
+                throw new NotSupportedException("This layer cannot be written directly.");
+        }
+    }
+
+    private static string? ExistingFile(string path) => File.Exists(path) ? path : null;
+
+    private static void ValidateImportScope(ConfigScope scope)
+    {
+        if (scope is ConfigScope.BuiltInDefaults or ConfigScope.Device)
+        {
+            throw new NotSupportedException(
+                scope == ConfigScope.BuiltInDefaults
+                    ? "Built-in defaults cannot be imported."
+                    : "Use SetDeviceOverrideAsync for device and device group overrides.");
+        }
+    }
+
+    private static JsonNode? GetNode(JsonObject document, string path)
+    {
+        JsonNode? current = document;
+        foreach (var segment in path.Split('.'))
+        {
+            if (current is not JsonObject obj || !ConfigSnapshot.TryGetProperty(obj, segment, out var next))
+            {
+                return null;
+            }
+
+            current = next;
+        }
+
+        return current;
     }
 
     private async Task SaveGlobalLockedAsync(JsonObject document, CancellationToken cancellationToken)

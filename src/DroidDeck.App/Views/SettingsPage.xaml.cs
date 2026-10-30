@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text.Json.Nodes;
 using DroidDeck.App.Services;
 using DroidDeck.App.ViewModels;
 using DroidDeck.Core;
@@ -10,11 +11,14 @@ using DroidDeck.Core.Diagnostics;
 using DroidDeck.Core.Infrastructure;
 using DroidDeck.Core.Sessions;
 using DroidDeck.Core.Toolchain;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.Storage.Pickers;
 
 namespace DroidDeck.App.Views;
 
@@ -31,8 +35,11 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
     private readonly KeybindingMap _keybindings;
     private readonly ILogger<SettingsPage> _logger;
     private readonly DispatcherQueue _dispatcher;
+    private readonly ConfigurationHealthService _health;
     private readonly ToolPathRow[] _toolPaths = ToolPathRow.CreateAll();
+    private SettingsResetSnapshot? _lastReset;
     private bool _initializing;
+    private bool _uiReady;
     private bool _disposed;
 
     /// <summary>Creates the settings page.</summary>
@@ -57,13 +64,17 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         _keybindings = keybindings ?? throw new ArgumentNullException(nameof(keybindings));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _dispatcher = DispatcherQueue.GetForCurrentThread();
+        _health = new ConfigurationHealthService(configuration, toolchain);
 
         InitializeComponent();
+        InitializeSections();
         ThemeCombo.ItemsSource = Enum.GetValues<AppTheme>();
         ToolPathsList.ItemsSource = _toolPaths;
+        _uiReady = true;
         _toolchain.SnapshotChanged += OnToolchainSnapshotChanged;
         _commands.Changed += OnCommandsChanged;
         _keybindings.Changed += OnKeybindingsChanged;
+        _configuration.Changed += OnConfigurationChanged;
         Refresh();
     }
 
@@ -76,9 +87,11 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         }
 
         _disposed = true;
+        _uiReady = false;
         _toolchain.SnapshotChanged -= OnToolchainSnapshotChanged;
         _commands.Changed -= OnCommandsChanged;
         _keybindings.Changed -= OnKeybindingsChanged;
+        _configuration.Changed -= OnConfigurationChanged;
     }
 
     /// <inheritdoc />
@@ -129,6 +142,8 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         LoadNoticeBar.Message = notice?.Message ?? string.Empty;
         UpdateToolchainStatus();
         RefreshShortcutList();
+        UpdateSearchResults();
+        _ = RefreshHealthAsync();
     }
 
     private void OnCommandsChanged(object? sender, EventArgs e) =>
@@ -148,6 +163,628 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
                 _keybindings.GetOverride(command.Id) is not null))
             .ToArray();
     }
+
+    private void OnConfigurationChanged(object? sender, ConfigChangedEventArgs e)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _dispatcher.TryEnqueue(UpdateSearchResults);
+    }
+
+    private void InitializeSections()
+    {
+        var rows = new List<SettingsSectionRow> { new(null, "All sections") };
+        rows.AddRange(SettingsCatalog.Default.Entries
+            .GroupBy(static entry => entry.Section, StringComparer.OrdinalIgnoreCase)
+            .Select(static group => new SettingsSectionRow(group.Key, group.First().Category)));
+        ResetSectionCombo.ItemsSource = rows;
+        ResetSectionCombo.SelectedIndex = 0;
+    }
+
+    private void OnSearchTextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (!_uiReady)
+        {
+            return;
+        }
+
+        UpdateSearchResults();
+    }
+
+    private void OnSearchLevelChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_uiReady)
+        {
+            return;
+        }
+
+        UpdateSearchResults();
+    }
+
+    private void UpdateSearchResults()
+    {
+        if (!_uiReady || _disposed)
+        {
+            return;
+        }
+
+        var level = SelectedSearchLevel();
+        var text = SearchBox.Text;
+        var matches = SettingsCatalog.Default.Search(
+            new SettingsSearchQuery(text, MaxLevel: level),
+            _configuration.Current);
+        var snapshot = _configuration.Current;
+        SearchResultsList.ItemsSource = matches.Take(50).Select(entry => CreateSearchRow(entry, snapshot)).ToArray();
+
+        var searching = !string.IsNullOrWhiteSpace(text);
+        SearchStatusText.Text = searching
+            ? $"{matches.Count} setting(s) match \"{text.Trim()}\" at {level} level. Searches include names, descriptions, paths, and current values."
+            : $"{matches.Count} setting(s) available at {level} level. Type to search by name, description, path, or current value.";
+        NoSearchResultsText.Visibility = searching && matches.Count == 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    private static SearchResultRow CreateSearchRow(SettingsCatalogEntry entry, ConfigSnapshot snapshot)
+    {
+        var source = snapshot.GetSource(entry.Path);
+        return new SearchResultRow(
+            entry,
+            FormatNode(snapshot.GetValue(entry.Path)),
+            $"Source: {source.DisplayName}",
+            source.Scope is not (ConfigScope.BuiltInDefaults or ConfigScope.Device),
+            source.Scope);
+    }
+
+    private async void OnResetSearchSettingClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not SearchResultRow row || !row.CanReset)
+        {
+            return;
+        }
+
+        try
+        {
+            await _configuration.ResetAsync(row.Entry.Path, row.ResetScope);
+            ShowAction($"'{row.Entry.Label}' was reset in the {DisplayScope(row.ResetScope)} layer.");
+            Refresh();
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            ReportFailure($"Resetting '{row.Entry.Label}'", exception);
+        }
+    }
+
+    private ConfigScope SelectedTransferScope() =>
+        Enum.TryParse<ConfigScope>(
+            (TransferScopeCombo.SelectedItem as ComboBoxItem)?.Tag as string,
+            out var scope)
+            ? scope
+            : ConfigScope.Global;
+
+    private SettingsLevel SelectedSearchLevel() =>
+        Enum.TryParse<SettingsLevel>(
+            (SearchLevelCombo.SelectedItem as ComboBoxItem)?.Tag as string,
+            out var level)
+            ? level
+            : SettingsLevel.Expert;
+
+    private async void OnResetSettingsClick(object sender, RoutedEventArgs e)
+    {
+        var scope = SelectedTransferScope();
+        var sectionRow = ResetSectionCombo.SelectedItem as SettingsSectionRow;
+        var section = sectionRow?.Section;
+        var target = section is null
+            ? $"every setting in the {DisplayScope(scope)} layer"
+            : $"the {sectionRow?.Name ?? section} section in the {DisplayScope(scope)} layer";
+        if (await ConfirmApplyAsync("Reset settings", $"Remove {target}? You can undo this until the page is closed.") !=
+            ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        try
+        {
+            _lastReset = section is null
+                ? await _configuration.ResetScopeAsync(scope)
+                : await _configuration.ResetSectionAsync(section, scope);
+            UndoResetButton.IsEnabled = _lastReset.Removed.Count > 0;
+            TransferStatusText.Text = _lastReset.Removed.Count == 0
+                ? "That layer did not override anything, so nothing changed."
+                : $"Reset {_lastReset.Removed.Count} value(s) in the {DisplayScope(scope)} layer.";
+            ShowAction(_lastReset.Removed.Count == 0 ? "Nothing needed resetting." : "Settings were reset.");
+            Refresh();
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or
+                InvalidOperationException or NotSupportedException)
+        {
+            ReportFailure($"Resetting the {DisplayScope(scope)} layer", exception);
+        }
+    }
+
+    private async void OnUndoResetClick(object sender, RoutedEventArgs e)
+    {
+        if (_lastReset is not { } snapshot)
+        {
+            return;
+        }
+
+        try
+        {
+            await _configuration.RestoreSettingsAsync(snapshot);
+            _lastReset = null;
+            UndoResetButton.IsEnabled = false;
+            TransferStatusText.Text =
+                $"Restored {snapshot.Removed.Count} value(s) in the {DisplayScope(snapshot.Scope)} layer.";
+            ShowAction("The reset was undone.");
+            Refresh();
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or
+                InvalidOperationException or SettingsValidationException)
+        {
+            ReportFailure("Undoing the reset", exception);
+        }
+    }
+
+    private async void OnEditJsonClick(object sender, RoutedEventArgs e)
+    {
+        var scope = SelectedTransferScope();
+        try
+        {
+            var export = await _configuration.ExportSettingsAsync(
+                new SettingsExportOptions { Scopes = [scope] });
+            var document = export.Scopes.TryGetValue(scope, out var layer)
+                ? layer
+                : new JsonObject();
+            var editor = new TextBox
+            {
+                Text = document.ToJsonString(DroidDeckJson.Options),
+                AcceptsReturn = true,
+                TextWrapping = TextWrapping.NoWrap,
+                FontFamily = new FontFamily("Consolas"),
+                FontSize = 12,
+                MinWidth = 480,
+                Height = 360,
+            };
+            var dialog = new ContentDialog
+            {
+                Title = $"Edit {DisplayScope(scope)} settings as JSON",
+                Content = new ScrollViewer
+                {
+                    Content = editor,
+                    HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                },
+                PrimaryButtonText = "Review changes",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Close,
+            };
+            if (await ShowDialogAsync(dialog) != ContentDialogResult.Primary)
+            {
+                return;
+            }
+
+            await ReviewAndImportAsync(editor.Text, scope, SettingsImportMode.Replace);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or
+                InvalidOperationException or NotSupportedException)
+        {
+            ReportFailure($"Opening the {DisplayScope(scope)} layer", exception);
+        }
+    }
+
+    private async void OnImportSettingsClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var picker = new FileOpenPicker
+            {
+                SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
+                ViewMode = PickerViewMode.List,
+            };
+            picker.FileTypeFilter.Add(".json");
+            InitializePicker(picker);
+            var file = await picker.PickSingleFileAsync();
+            if (file is null)
+            {
+                return;
+            }
+
+            var json = await File.ReadAllTextAsync(file.Path);
+            await ReviewAndImportAsync(
+                json,
+                SelectedTransferScope(),
+                ImportReplaceToggle.IsOn ? SettingsImportMode.Replace : SettingsImportMode.Merge);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or COMException or InvalidOperationException)
+        {
+            ReportFailure("Reading the settings file", exception);
+        }
+    }
+
+    private async void OnExportSettingsClick(object sender, RoutedEventArgs e)
+    {
+        var scope = SelectedTransferScope();
+        try
+        {
+            var export = await _configuration.ExportSettingsAsync(
+                new SettingsExportOptions { Scopes = [scope] });
+            if (export.Scopes.Count == 0)
+            {
+                ShowAction("That layer has no settings to export.", isError: true);
+                return;
+            }
+
+            var fileName = DisplayScope(scope).Replace(' ', '-');
+            var picker = new FileSavePicker
+            {
+                SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
+                SuggestedFileName = $"droiddeck-settings-{fileName}-{DateTime.Now:yyyyMMdd-HHmmss}",
+                DefaultFileExtension = ".json",
+            };
+            picker.FileTypeChoices.Add("JSON", new List<string> { ".json" });
+            InitializePicker(picker);
+            var file = await picker.PickSaveFileAsync();
+            if (file is null)
+            {
+                return;
+            }
+
+            await File.WriteAllTextAsync(file.Path, export.ToJson());
+            TransferStatusText.Text = export.ExcludedPaths.Count == 0
+                ? $"Exported the {DisplayScope(scope)} layer to {file.Path}."
+                : $"Exported the {DisplayScope(scope)} layer to {file.Path}. " +
+                    $"{export.ExcludedPaths.Count} secret value(s) were omitted: " +
+                    string.Join(", ", export.ExcludedPaths) + ".";
+            ShowAction("Settings exported.");
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or
+                COMException or InvalidOperationException or NotSupportedException)
+        {
+            ReportFailure("Exporting settings", exception);
+        }
+    }
+
+    private async Task ReviewAndImportAsync(string json, ConfigScope scope, SettingsImportMode mode)
+    {
+        SettingsImportPreview preview;
+        try
+        {
+            preview = await _configuration.PreviewSettingsImportAsync(json, scope, mode);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or
+                InvalidOperationException or NotSupportedException)
+        {
+            ReportFailure("Reading the settings document", exception);
+            return;
+        }
+
+        var errors = preview.Validation.Issues
+            .Where(static issue => issue.Severity == SettingsIssueSeverity.Error)
+            .ToArray();
+        if (errors.Length > 0)
+        {
+            await ShowMessageAsync("Settings cannot be imported", FormatIssues(errors));
+            return;
+        }
+
+        if (!preview.HasChanges)
+        {
+            await ShowMessageAsync(
+                "Nothing to import",
+                $"The document matches the existing {DisplayScope(scope)} layer, so no values would change.");
+            return;
+        }
+
+        if (await ConfirmApplyAsync("Apply settings changes?", BuildPreviewText(preview)) !=
+            ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        try
+        {
+            var result = await _configuration.ImportSettingsAsync(json, scope, mode);
+            TransferStatusText.Text = result.BackupPath is null
+                ? $"Imported {result.Preview.Changes.Count} change(s) into the {DisplayScope(scope)} layer."
+                : $"Imported {result.Preview.Changes.Count} change(s) into the {DisplayScope(scope)} layer. " +
+                    $"Previous values were backed up to {result.BackupPath}.";
+            ShowAction($"Settings imported into the {DisplayScope(scope)} layer.");
+            Refresh();
+        }
+        catch (SettingsValidationException exception)
+        {
+            await ShowMessageAsync("Settings cannot be imported", FormatIssues(exception.Result.Issues));
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or
+                InvalidOperationException or NotSupportedException)
+        {
+            ReportFailure("Importing settings", exception);
+        }
+    }
+
+    private static string BuildPreviewText(SettingsImportPreview preview)
+    {
+        var lines = new List<string>
+        {
+            $"{preview.Changes.Count} change(s) to the {DisplayScope(preview.Scope)} layer ({preview.Mode}):",
+            string.Empty,
+        };
+        lines.AddRange(preview.Changes.Take(20).Select(DescribeChange));
+        if (preview.Changes.Count > 20)
+        {
+            lines.Add($"…and {preview.Changes.Count - 20} more.");
+        }
+
+        var warnings = preview.Validation.Issues
+            .Where(static issue => issue.Severity == SettingsIssueSeverity.Warning)
+            .ToArray();
+        if (warnings.Length > 0)
+        {
+            lines.Add(string.Empty);
+            lines.Add("Warnings:");
+            lines.AddRange(warnings.Take(5).Select(static issue =>
+                (issue.Path.Length == 0 ? "(document)" : issue.Path) + ": " + issue.Message));
+        }
+
+        if (preview.ExcludedPaths.Count > 0)
+        {
+            lines.Add(string.Empty);
+            lines.Add(
+                $"{preview.ExcludedPaths.Count} secret value(s) are not part of the import and keep their existing values: " +
+                string.Join(", ", preview.ExcludedPaths) + ".");
+        }
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static string DescribeChange(SettingsChange change) => change.Kind switch
+    {
+        SettingsChangeKind.Added => $"+ {change.Path} = {FormatNode(change.NewValue)}",
+        SettingsChangeKind.Changed =>
+            $"~ {change.Path}: {FormatNode(change.OldValue)} → {FormatNode(change.NewValue)}",
+        SettingsChangeKind.Removed => $"- {change.Path} (was {FormatNode(change.OldValue)})",
+        _ => change.Path,
+    };
+
+    private static string FormatIssues(IEnumerable<SettingsValidationIssue> issues) =>
+        string.Join(Environment.NewLine, issues.Select(static issue =>
+            (issue.Path.Length == 0 ? "(document)" : issue.Path) + ": " + issue.Message));
+
+    private async Task RefreshHealthAsync()
+    {
+        if (!_uiReady || _disposed)
+        {
+            return;
+        }
+
+        try
+        {
+            var report = await _health.AnalyzeAsync();
+            var problems = report.Issues.Count(static issue => issue.Severity != SettingsHealthSeverity.Info);
+            HealthSummaryText.Text = report.Issues.Count == 0
+                ? "No configuration problems were found."
+                : problems == 0
+                    ? $"No warnings or errors. {report.Issues.Count} informational finding(s)."
+                    : $"{problems} problem(s) need attention.";
+            HealthList.ItemsSource = report.Issues
+                .Select(issue => new SettingsHealthRow(issue, ResolveSeverityBrush(issue.Severity)))
+                .ToArray();
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            ReportFailure("Checking settings health", exception);
+        }
+    }
+
+    private async void OnHealthFixClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not SettingsHealthRow row)
+        {
+            return;
+        }
+
+        if (row.Issue.Fix.Kind == SettingsFixKind.OpenDataDirectory)
+        {
+            OnOpenDataFolderClick(sender, e);
+            return;
+        }
+
+        try
+        {
+            var applied = await _health.ApplyFixAsync(row.Issue);
+            if (!applied)
+            {
+                ShowAction("This problem has to be fixed manually.", isError: true);
+                return;
+            }
+
+            ShowAction($"Applied the suggested fix for '{row.Issue.Title}'.");
+            Refresh();
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            ReportFailure($"Fixing '{row.Issue.Title}'", exception);
+        }
+    }
+
+    private async void OnRecheckHealthClick(object sender, RoutedEventArgs e)
+    {
+        await RefreshHealthAsync();
+        ShowAction("Settings health was checked again.");
+    }
+
+    private static Brush ResolveSeverityBrush(SettingsHealthSeverity severity)
+    {
+        var key = severity switch
+        {
+            SettingsHealthSeverity.Error => "SystemFillColorCriticalBrush",
+            SettingsHealthSeverity.Warning => "SystemFillColorCautionBrush",
+            _ => "SystemFillColorSuccessBrush",
+        };
+        return Application.Current.Resources.TryGetValue(key, out var resource) && resource is Brush brush
+            ? brush
+            : new SolidColorBrush(Microsoft.UI.Colors.Gray);
+    }
+
+    private async Task ShowMessageAsync(string title, string message)
+    {
+        var dialog = new ContentDialog
+        {
+            Title = title,
+            Content = CreateDialogContent(message),
+            CloseButtonText = "Close",
+        };
+        await ShowDialogAsync(dialog);
+    }
+
+    private async Task<ContentDialogResult> ConfirmApplyAsync(string title, string message)
+    {
+        var dialog = new ContentDialog
+        {
+            Title = title,
+            Content = CreateDialogContent(message),
+            PrimaryButtonText = "Apply",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        return await ShowDialogAsync(dialog);
+    }
+
+    private static ScrollViewer CreateDialogContent(string message) => new()
+    {
+        Content = new TextBlock
+        {
+            Text = message,
+            TextWrapping = TextWrapping.Wrap,
+            IsTextSelectionEnabled = true,
+        },
+        MaxHeight = 400,
+        VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+    };
+
+    private static string FormatNode(JsonNode? node) => node switch
+    {
+        null => "(not set)",
+        JsonValue value when value.TryGetValue<string>(out var text) =>
+            text.Length == 0 ? "(empty)" : text,
+        _ => node.ToJsonString(DroidDeckJson.Options),
+    };
+
+    private static string DisplayScope(ConfigScope scope) => scope switch
+    {
+        ConfigScope.BuiltInDefaults => "defaults",
+        ConfigScope.Global => "global",
+        ConfigScope.Profile => "profile",
+        ConfigScope.TeamProject => "team project",
+        ConfigScope.LocalProject => "project",
+        ConfigScope.RunConfiguration => "run configuration",
+        ConfigScope.Device => "device",
+        ConfigScope.Session => "session",
+        _ => scope.ToString(),
+    };
+
+    private static void InitializePicker(object picker)
+    {
+        var window = App.Instance.Services.GetRequiredService<MainWindow>();
+        var handle = WinRT.Interop.WindowNative.GetWindowHandle(window);
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, handle);
+    }
+
+    /// <summary>One settings search match shaped for the results list.</summary>
+    public sealed class SearchResultRow
+    {
+        /// <summary>Creates a row for a catalog entry.</summary>
+        public SearchResultRow(
+            SettingsCatalogEntry entry,
+            string value,
+            string source,
+            bool canReset,
+            ConfigScope resetScope)
+        {
+            Entry = entry;
+            Value = value;
+            Source = source;
+            CanReset = canReset;
+            ResetScope = resetScope;
+            ResetId = AutomationId.For("ResetSetting", entry.Path);
+        }
+
+        /// <summary>Gets the catalog entry.</summary>
+        public SettingsCatalogEntry Entry { get; }
+
+        /// <summary>Gets the setting name.</summary>
+        public string Label => Entry.Label;
+
+        /// <summary>Gets the description, path, and restart note.</summary>
+        public string Detail => Entry.RestartRequired
+            ? $"{Entry.Description} · {Entry.Path} · Requires a restart"
+            : $"{Entry.Description} · {Entry.Path}";
+
+        /// <summary>Gets the formatted current value.</summary>
+        public string Value { get; }
+
+        /// <summary>Gets the layer that supplies the value.</summary>
+        public string Source { get; }
+
+        /// <summary>Gets whether the value can be reset from here.</summary>
+        public bool CanReset { get; }
+
+        /// <summary>Gets the layer the reset applies to.</summary>
+        public ConfigScope ResetScope { get; }
+
+        /// <summary>Gets the automation identifier of the reset button.</summary>
+        public string ResetId { get; }
+    }
+
+    /// <summary>One settings health finding shaped for the health list.</summary>
+    public sealed class SettingsHealthRow
+    {
+        /// <summary>Creates a row for a health finding.</summary>
+        public SettingsHealthRow(SettingsHealthIssue issue, Brush severityBrush)
+        {
+            Issue = issue;
+            SeverityBrush = severityBrush;
+            FixId = AutomationId.For("FixSetting", issue.Id);
+        }
+
+        /// <summary>Gets the health finding.</summary>
+        public SettingsHealthIssue Issue { get; }
+
+        /// <summary>Gets the finding title.</summary>
+        public string Title => Issue.Title;
+
+        /// <summary>Gets the finding explanation.</summary>
+        public string Detail => Issue.Detail;
+
+        /// <summary>Gets the brush matching the finding severity.</summary>
+        public Brush SeverityBrush { get; }
+
+        /// <summary>Gets the repair caption.</summary>
+        public string FixLabel => Issue.Fix.Label;
+
+        /// <summary>Gets whether a repair can be offered.</summary>
+        public bool HasFix => Issue.Fix.Kind != SettingsFixKind.None;
+
+        /// <summary>Gets the automation identifier of the repair button.</summary>
+        public string FixId { get; }
+    }
+
+    /// <summary>One top-level settings section offered for reset.</summary>
+    public sealed record SettingsSectionRow(string? Section, string Name);
 
     private async void OnChangeShortcutClick(object sender, RoutedEventArgs e)
     {

@@ -22,6 +22,214 @@
                 IsOpen="False"
                 IsClosable="True"
                 AutomationProperties.AutomationId="SettingsLoadNotice" />
+            <Border Style="{StaticResource CardBorderStyle}">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="Find a setting" Style="{StaticResource SectionHeaderStyle}" />
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox
+                            x:Name="SearchBox"
+                            PlaceholderText="Search by name, description, path, or current value"
+                            TextChanged="OnSearchTextChanged"
+                            AutomationProperties.AutomationId="SettingsSearchBox" />
+                        <ComboBox
+                            x:Name="SearchLevelCombo"
+                            Grid.Column="1"
+                            Width="140"
+                            SelectedIndex="2"
+                            SelectionChanged="OnSearchLevelChanged"
+                            AutomationProperties.AutomationId="SettingsSearchLevel">
+                            <ComboBoxItem Content="Basic" Tag="Basic" />
+                            <ComboBoxItem Content="Advanced" Tag="Advanced" />
+                            <ComboBoxItem Content="Expert" Tag="Expert" />
+                        </ComboBox>
+                    </Grid>
+                    <TextBlock
+                        x:Name="SearchStatusText"
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                    <ItemsControl
+                        x:Name="SearchResultsList"
+                        AutomationProperties.AutomationId="SettingsSearchResults">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Padding="0,6" ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="{Binding Label}" FontWeight="SemiBold" />
+                                        <TextBlock
+                                            Text="{Binding Detail}"
+                                            FontSize="12"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            TextWrapping="Wrap" />
+                                        <TextBlock
+                                            Text="{Binding Value}"
+                                            FontSize="12"
+                                            FontFamily="Consolas"
+                                            TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <TextBlock
+                                        Grid.Column="1"
+                                        Text="{Binding Source}"
+                                        FontSize="12"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        VerticalAlignment="Top" />
+                                    <Button
+                                        Grid.Column="2"
+                                        Content="Reset"
+                                        VerticalAlignment="Top"
+                                        Visibility="{Binding CanReset, Converter={StaticResource BoolToVisibility}}"
+                                        Click="OnResetSearchSettingClick"
+                                        AutomationProperties.AutomationId="{Binding ResetId}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock
+                        x:Name="NoSearchResultsText"
+                        Text="No settings match that search."
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Visibility="Collapsed" />
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorderStyle}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="Import, export, and reset" Style="{StaticResource SectionHeaderStyle}" />
+                    <TextBlock
+                        Text="Edit a layer as JSON or import a settings file. A diff is shown before anything is written. Secrets are never exported or imported."
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button
+                            Content="Edit as JSON"
+                            Click="OnEditJsonClick"
+                            AutomationProperties.AutomationId="SettingsEditJsonButton" />
+                        <Button
+                            Content="Import…"
+                            Click="OnImportSettingsClick"
+                            AutomationProperties.AutomationId="SettingsImportButton" />
+                        <Button
+                            Content="Export…"
+                            Click="OnExportSettingsClick"
+                            AutomationProperties.AutomationId="SettingsExportButton" />
+                    </StackPanel>
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <ComboBox
+                            x:Name="TransferScopeCombo"
+                            Header="Scope"
+                            MinWidth="180"
+                            SelectedIndex="0"
+                            AutomationProperties.AutomationId="SettingsTransferScope">
+                            <ComboBoxItem Content="Global" Tag="Global" />
+                            <ComboBoxItem Content="Active profile" Tag="Profile" />
+                            <ComboBoxItem Content="Team project" Tag="TeamProject" />
+                            <ComboBoxItem Content="Project" Tag="LocalProject" />
+                            <ComboBoxItem Content="Run configuration" Tag="RunConfiguration" />
+                            <ComboBoxItem Content="Session" Tag="Session" />
+                        </ComboBox>
+                        <ComboBox
+                            x:Name="ResetSectionCombo"
+                            Grid.Column="1"
+                            Header="Section"
+                            MinWidth="200"
+                            DisplayMemberPath="Name"
+                            AutomationProperties.AutomationId="SettingsResetSection" />
+                        <Button
+                            Grid.Column="3"
+                            Content="Reset"
+                            VerticalAlignment="Bottom"
+                            Click="OnResetSettingsClick"
+                            AutomationProperties.AutomationId="SettingsResetButton" />
+                        <Button
+                            x:Name="UndoResetButton"
+                            Grid.Column="4"
+                            Content="Undo reset"
+                            VerticalAlignment="Bottom"
+                            IsEnabled="False"
+                            Click="OnUndoResetClick"
+                            AutomationProperties.AutomationId="SettingsUndoResetButton" />
+                    </Grid>
+                    <ToggleSwitch
+                        x:Name="ImportReplaceToggle"
+                        Header="Import replaces the selected layer"
+                        OnContent="Replace"
+                        OffContent="Merge"
+                        AutomationProperties.AutomationId="SettingsImportReplace" />
+                    <TextBlock
+                        x:Name="TransferStatusText"
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorderStyle}">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="Settings health" Style="{StaticResource SectionHeaderStyle}" />
+                    <TextBlock
+                        x:Name="HealthSummaryText"
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap"
+                        AutomationProperties.AutomationId="SettingsHealthSummary" />
+                    <ItemsControl
+                        x:Name="HealthList"
+                        AutomationProperties.AutomationId="SettingsHealthList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Padding="0,6" ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Spacing="2">
+                                        <TextBlock
+                                            Text="{Binding Title}"
+                                            FontWeight="SemiBold"
+                                            Foreground="{Binding SeverityBrush}"
+                                            TextWrapping="Wrap" />
+                                        <TextBlock
+                                            Text="{Binding Detail}"
+                                            FontSize="12"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <Button
+                                        Grid.Column="1"
+                                        Content="{Binding FixLabel}"
+                                        VerticalAlignment="Top"
+                                        Visibility="{Binding HasFix, Converter={StaticResource BoolToVisibility}}"
+                                        Click="OnHealthFixClick"
+                                        AutomationProperties.AutomationId="{Binding FixId}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <Button
+                        Content="Recheck settings"
+                        Click="OnRecheckHealthClick"
+                        AutomationProperties.AutomationId="SettingsRecheckHealth" />
+                </StackPanel>
+            </Border>
+
             <InfoBar
                 x:Name="ActionBar"
                 Severity="Success"

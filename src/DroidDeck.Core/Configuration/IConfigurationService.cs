@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using DroidDeck.Core.Projects;
 
 namespace DroidDeck.Core.Configuration;
@@ -112,6 +113,65 @@ public interface IConfigurationService
 
     /// <summary>Removes an override for all devices, a device group, or one device serial.</summary>
     Task ResetDeviceOverrideAsync(string path, DeviceOverrideTarget target, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gets the value explicitly stored in one layer, or <see langword="null"/> when the
+    /// layer does not set the path. Device group and serial layers are not inspected.
+    /// </summary>
+    JsonNode? GetValueAt(ConfigScope scope, string path);
+
+    /// <summary>
+    /// Validates a settings document without applying it. The document may use comments
+    /// and trailing commas and may contain unknown keys; findings carry dotted JSON paths.
+    /// </summary>
+    SettingsValidationResult ValidateSettings(string json);
+
+    /// <summary>
+    /// Exports the selected layers as a portable bundle with sensitive paths removed.
+    /// The bundle can be imported back into a single layer.
+    /// </summary>
+    Task<SettingsExport> ExportSettingsAsync(
+        SettingsExportOptions? options = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Describes what importing a document would change without writing anything.</summary>
+    Task<SettingsImportPreview> PreviewSettingsImportAsync(
+        string json,
+        ConfigScope scope = ConfigScope.Global,
+        SettingsImportMode mode = SettingsImportMode.Merge,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Validates and applies a settings document. An invalid document throws
+    /// <see cref="SettingsValidationException"/> and leaves the layer untouched.
+    /// </summary>
+    Task<SettingsImportResult> ImportSettingsAsync(
+        string json,
+        ConfigScope scope = ConfigScope.Global,
+        SettingsImportMode mode = SettingsImportMode.Merge,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Removes every override in one top-level section of a layer and returns the layer
+    /// contents from before the reset so the reset can be undone.
+    /// </summary>
+    Task<SettingsResetSnapshot> ResetSectionAsync(
+        string section,
+        ConfigScope scope = ConfigScope.Global,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Removes every override in a layer and returns the layer contents from before the
+    /// reset so the reset can be undone.
+    /// </summary>
+    Task<SettingsResetSnapshot> ResetScopeAsync(
+        ConfigScope scope = ConfigScope.Global,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Restores a layer captured by a reset, undoing the reset.</summary>
+    Task RestoreSettingsAsync(
+        SettingsResetSnapshot snapshot,
+        CancellationToken cancellationToken = default);
 
     /// <summary>Gets a token that signals the publication of a new snapshot.</summary>
     ConfigChangeToken GetChangeToken();
