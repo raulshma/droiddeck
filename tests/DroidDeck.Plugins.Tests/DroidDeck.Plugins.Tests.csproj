@@ -19,6 +19,7 @@
     <ProjectReference Include="..\..\src\DroidDeck.Plugins\DroidDeck.Plugins.csproj" />
     <ProjectReference Include="..\..\src\DroidDeck.Plugin.Abstractions\DroidDeck.Plugin.Abstractions.csproj" />
     <ProjectReference Include="..\DroidDeck.PluginSamples\SampleCommandPlugin\SampleCommandPlugin.csproj" />
+    <ProjectReference Include="..\DroidDeck.PluginSamples\SampleRendererPlugin\SampleRendererPlugin.csproj" />
     <ProjectReference Include="..\DroidDeck.PluginSamples\SamplePerfPlugin1\SamplePerfPlugin1.csproj" />
     <ProjectReference Include="..\DroidDeck.PluginSamples\SamplePerfPlugin2\SamplePerfPlugin2.csproj" />
     <ProjectReference Include="..\DroidDeck.PluginSamples\SamplePerfPlugin3\SamplePerfPlugin3.csproj" />

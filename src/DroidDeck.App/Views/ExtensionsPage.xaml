@@ -116,6 +116,64 @@
                     </StackPanel>
                 </Border>
 
+                <Border Style="{StaticResource CardBorderStyle}">
+                    <StackPanel Spacing="8">
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock
+                                Text="Renderers"
+                                Style="{StaticResource SectionHeaderStyle}"
+                                VerticalAlignment="Center" />
+                            <Button
+                                Grid.Column="1"
+                                Content="Reset view choices"
+                                Click="OnResetRendererChoicesClick"
+                                AutomationProperties.AutomationId="ResetRendererChoicesButton" />
+                        </Grid>
+                        <TextBlock
+                            Text="Every View as surface lists these renderers. A renderer that fails three times in a row is disabled for the rest of the session, and the built-in view is used instead. Reset view choices clears the saved View as selection for each item type."
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextWrapping="Wrap" />
+                        <ItemsControl
+                            x:Name="RendererList"
+                            AutomationProperties.AutomationId="RendererList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Padding="0,4" ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+                                            <TextBlock
+                                                Text="{Binding Subtitle}"
+                                                FontSize="12"
+                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <TextBlock
+                                            Grid.Column="1"
+                                            Text="{Binding Health}"
+                                            FontSize="12"
+                                            VerticalAlignment="Center" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock
+                            x:Name="NoRenderersText"
+                            Text="No renderers are registered yet."
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Visibility="Collapsed" />
+                    </StackPanel>
+                </Border>
+
                 <Border Style="{StaticResource CardBorderStyle}" Padding="0">
                     <Grid>
                         <Grid.RowDefinitions>

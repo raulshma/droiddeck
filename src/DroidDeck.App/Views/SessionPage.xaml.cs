@@ -10,6 +10,8 @@ using DroidDeck.Core.Logs;
 using DroidDeck.Core.Runs;
 using DroidDeck.Core.Sessions;
 using DroidDeck.Plugin.Abstractions;
+using DroidDeck.Plugin.Abstractions.Rendering;
+using DroidDeck.Plugin.UI.Rendering;
 using DroidDeck.Plugins;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Dispatching;
@@ -32,6 +34,7 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
     private readonly SessionWorkspace _workspace;
     private readonly IConfigurationService _configuration;
     private readonly PluginHost _plugins;
+    private readonly RendererPane _logRenderer;
     private readonly ILogger<SessionPage> _logger;
     private readonly DispatcherQueue? _dispatcher;
     private readonly BulkObservableCollection<string> _buildLines = [];
@@ -63,6 +66,8 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         SessionWorkspace workspace,
         IConfigurationService configuration,
         PluginHost plugins,
+        IRendererHost renderers,
+        IServiceProvider services,
         ILogger<SessionPage> logger)
     {
         _runs = runs ?? throw new ArgumentNullException(nameof(runs));
@@ -76,6 +81,8 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         _dispatcher = DispatcherQueue.GetForCurrentThread();
 
         InitializeComponent();
+        _logRenderer = new RendererPane(renderers, services);
+        LogRendererHost.Content = _logRenderer;
         LevelCombo.ItemsSource = new LogLevelChoice[]
         {
             new(null, "All levels"),
@@ -148,6 +155,7 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         _workspace.Changed -= OnWorkspaceChanged;
         _plugins.Registry.Changed -= OnPluginRegistryChanged;
         DetachLogcatSession();
+        _logRenderer.Dispose();
     }
 
     private async Task LoadPersistedAsync(string sessionId)
@@ -867,6 +875,30 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         _filter = new LogFilter(filter.Criteria);
         RebuildLogRows();
         ShowAction($"Applied saved filter \"{filter.Name}\".");
+    }
+
+    private void OnLogSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (LogList.SelectedItem is not LogRow row)
+        {
+            LogDetailPanel.Visibility = Visibility.Collapsed;
+            _logRenderer.Clear();
+            return;
+        }
+
+        try
+        {
+            LogDetailPanel.Visibility = Visibility.Visible;
+            _logRenderer.Render(
+                RendererKind.LogDetail,
+                new LogDetailData(row.Text, row.Entry.Tag, row.Entry.Level));
+        }
+        catch (Exception exception) when (
+            exception is InvalidOperationException or ArgumentException)
+        {
+            _logger.LogWarning(exception, "The selected log line could not be rendered.");
+            LogDetailPanel.Visibility = Visibility.Collapsed;
+        }
     }
 
     private async void OnSaveFilterClick(object sender, RoutedEventArgs e)

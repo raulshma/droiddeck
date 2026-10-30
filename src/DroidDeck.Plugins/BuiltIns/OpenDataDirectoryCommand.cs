@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using DroidDeck.Core;
 using DroidDeck.Plugin.Abstractions;
+using DroidDeck.Plugin.UI.Rendering;
 
 namespace DroidDeck.Plugins.BuiltIns;
 
@@ -53,6 +54,11 @@ public static class BuiltInExtensions
         registry.AddCommand(new OpenDataDirectoryCommand(paths));
         registry.AddLogParser(new AndroidCrashLogParser());
         registry.AddHighlightRuleProvider(new BuiltInHighlightRuleProvider());
+        foreach (var rendererType in BuiltInRenderers.Types)
+        {
+            registry.AddRenderer(rendererType);
+        }
+
         foreach (var step in runSteps ?? [])
         {
             registry.AddRunStep(step);

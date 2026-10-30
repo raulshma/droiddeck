@@ -188,6 +188,7 @@
                     <RowDefinition Height="*" />
                     <RowDefinition Height="*" />
                     <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
                 <Border Style="{StaticResource CardBorderStyle}">
@@ -286,6 +287,13 @@
                             Height="96"
                             Stroke="{ThemeResource SystemFillColorAttentionBrush}" />
                     </StackPanel>
+                </Border>
+
+                <Border
+                    Grid.Row="3"
+                    Grid.ColumnSpan="2"
+                    Style="{StaticResource CardBorderStyle}">
+                    <ContentControl x:Name="ChartRendererHost" />
                 </Border>
             </Grid>
 

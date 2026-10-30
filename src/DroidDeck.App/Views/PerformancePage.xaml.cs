@@ -7,6 +7,8 @@ using DroidDeck.Core.Performance;
 using DroidDeck.Core.Processes;
 using DroidDeck.Core.Runs;
 using DroidDeck.Core.Toolbox;
+using DroidDeck.Plugin.Abstractions.Rendering;
+using DroidDeck.Plugin.UI.Rendering;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
@@ -30,6 +32,7 @@ public sealed partial class PerformancePage : Page, IRefreshablePage, IDisposabl
     private readonly IConfigurationService _configuration;
     private readonly IRunSessionService _sessions;
     private readonly PerformanceSampler _sampler;
+    private readonly RendererPane _chartRenderer;
     private readonly DispatcherQueue? _dispatcher;
     private readonly UiOutputBuffer? _outputBuffer;
     private readonly List<PerformanceSample> _samples = [];
@@ -46,7 +49,9 @@ public sealed partial class PerformancePage : Page, IRefreshablePage, IDisposabl
         IDeviceService devices,
         SessionWorkspace workspace,
         IConfigurationService configuration,
-        IRunSessionService sessions)
+        IRunSessionService sessions,
+        IRendererHost renderers,
+        IServiceProvider services)
     {
         _toolbox = toolbox ?? throw new ArgumentNullException(nameof(toolbox));
         _devices = devices ?? throw new ArgumentNullException(nameof(devices));
@@ -58,6 +63,9 @@ public sealed partial class PerformancePage : Page, IRefreshablePage, IDisposabl
         _outputBuffer = _dispatcher is null ? null : new UiOutputBuffer(_dispatcher, AppendOutputText);
 
         InitializeComponent();
+        _chartRenderer = new RendererPane(renderers, services);
+        ChartRendererHost.Content = _chartRenderer;
+        _chartRenderer.Render(RendererKind.Chart, BuildChartData([]));
         _initializing = true;
         IntervalBox.Value = _configuration.Current.Settings.Performance.EffectiveSampleIntervalMs;
         _initializing = false;
@@ -93,6 +101,7 @@ public sealed partial class PerformancePage : Page, IRefreshablePage, IDisposabl
         _cts?.Dispose();
         _sampleCts?.Cancel();
         _sampleCts?.Dispose();
+        _chartRenderer.Dispose();
     }
 
     private DeviceInfo? SelectedDevice => DeviceCombo.SelectedItem as DeviceInfo;
@@ -396,7 +405,18 @@ public sealed partial class PerformancePage : Page, IRefreshablePage, IDisposabl
         BatteryValueText.Text = visible.LastOrDefault()?.BatteryPercent is { } battery
             ? string.Create(CultureInfo.InvariantCulture, $"{battery}%")
             : "--";
+
+        _chartRenderer.Render(RendererKind.Chart, BuildChartData(visible));
     }
+
+    private static ChartData BuildChartData(IReadOnlyList<PerformanceSample> samples) => new(
+        "Live CPU and jank",
+        [
+            new ChartSeries("CPU %", samples.Select(sample => sample.CpuPercent ?? 0).ToArray()),
+            new ChartSeries("Jank %", samples.Select(sample => sample.JankPercent ?? 0).ToArray()),
+        ],
+        Maximum: 100,
+        Unit: "%");
 
     private void UpdateSummary()
     {
@@ -476,6 +496,7 @@ public sealed partial class PerformancePage : Page, IRefreshablePage, IDisposabl
         StatusText.Text = "No samples yet.";
         ExportButton.IsEnabled = false;
         ClearButton.IsEnabled = false;
+        _chartRenderer.Render(RendererKind.Chart, BuildChartData([]));
     }
 
     private void OnClearSamplesClick(object sender, RoutedEventArgs e)

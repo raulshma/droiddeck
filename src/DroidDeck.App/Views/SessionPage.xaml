@@ -363,8 +363,12 @@
                                     <RowDefinition Height="*" />
                                     <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
 
-                                <StackPanel Spacing="6">
+                                <StackPanel Grid.ColumnSpan="2" Spacing="6">
                                     <Grid ColumnSpacing="8">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="130" />
@@ -514,6 +518,7 @@
                                     x:Name="LogList"
                                     Grid.Row="1"
                                     SelectionMode="Single"
+                                    SelectionChanged="OnLogSelectionChanged"
                                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
                                     AutomationProperties.AutomationId="SessionLogList">
                                     <ListView.ItemTemplate>
@@ -534,9 +539,26 @@
                                     </ListView.ItemTemplate>
                                 </ListView>
 
+                                <Border
+                                    x:Name="LogDetailPanel"
+                                    Grid.Row="1"
+                                    Grid.Column="1"
+                                    Width="420"
+                                    Margin="8,0,0,0"
+                                    Padding="8"
+                                    Visibility="Collapsed"
+                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="4"
+                                    AutomationProperties.AutomationId="SessionLogDetailPanel">
+                                    <ContentControl x:Name="LogRendererHost" />
+                                </Border>
+
                                 <TextBlock
                                     x:Name="NoLogsText"
                                     Grid.Row="1"
+                                    Grid.ColumnSpan="2"
                                     Text="No log lines yet. Attach logcat or run the app."
                                     FontSize="12"
                                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"

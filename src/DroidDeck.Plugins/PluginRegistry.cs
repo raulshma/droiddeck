@@ -1,4 +1,5 @@
 using DroidDeck.Plugin.Abstractions;
+using DroidDeck.Plugin.UI.Rendering;
 
 namespace DroidDeck.Plugins;
 
@@ -6,7 +7,7 @@ namespace DroidDeck.Plugins;
 /// The host-wide extension registry. Built-ins register directly; each plugin
 /// receives a scope that attributes its contributions to its plugin id.
 /// </summary>
-public sealed class PluginRegistry : IPluginRegistry
+public sealed class PluginRegistry : IPluginRegistry, IRendererRegistrar
 {
     private readonly List<PluginExtension<ICommand>> _commands = [];
     private readonly List<PluginExtension<IProjectDetector>> _projectDetectors = [];
@@ -17,6 +18,7 @@ public sealed class PluginRegistry : IPluginRegistry
     private readonly List<PluginExtension<ILogParser>> _logParsers = [];
     private readonly List<PluginExtension<IHighlightRuleProvider>> _highlightRuleProviders = [];
     private readonly List<PluginExtension<ITestRunner>> _testRunners = [];
+    private readonly List<RendererRegistration> _renderers = [];
     private readonly Dictionary<Type, string> _owners = [];
     private readonly object _sync = new();
 
@@ -51,12 +53,27 @@ public sealed class PluginRegistry : IPluginRegistry
     /// <inheritdoc />
     public IReadOnlyList<PluginExtension<ITestRunner>> TestRunners => Snapshot(_testRunners);
 
+    /// <inheritdoc />
+    public IReadOnlyList<RendererRegistration> Renderers
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _renderers.ToArray();
+            }
+        }
+    }
+
     /// <summary>Creates a registry view that attributes additions to a plugin.</summary>
     public IPluginRegistry CreateScope(string pluginId)
     {
         ValidatePluginId(pluginId);
         return new ScopedPluginRegistry(this, pluginId);
     }
+
+    /// <inheritdoc />
+    public void AddRenderer(Type rendererType) => AddRenderer(PluginConstants.BuiltInPluginId, rendererType);
 
     /// <inheritdoc />
     public void AddCommand(ICommand command) => AddCommand(PluginConstants.BuiltInPluginId, command);
@@ -117,6 +134,7 @@ public sealed class PluginRegistry : IPluginRegistry
             removed += _logParsers.RemoveAll(extension => extension.PluginId == pluginId);
             removed += _highlightRuleProviders.RemoveAll(extension => extension.PluginId == pluginId);
             removed += _testRunners.RemoveAll(extension => extension.PluginId == pluginId);
+            removed += _renderers.RemoveAll(registration => registration.PluginId == pluginId);
             RebuildOwners();
         }
 
@@ -182,6 +200,29 @@ public sealed class PluginRegistry : IPluginRegistry
         Add(pluginId, runner, _testRunners);
     }
 
+    internal void AddRenderer(string pluginId, Type rendererType)
+    {
+        ArgumentNullException.ThrowIfNull(rendererType);
+        ValidatePluginId(pluginId);
+        if (!typeof(IRenderer).IsAssignableFrom(rendererType) ||
+            rendererType.IsAbstract ||
+            rendererType.IsInterface ||
+            rendererType.GetConstructor(Type.EmptyTypes) is null)
+        {
+            throw new ArgumentException(
+                $"Renderer type {rendererType.FullName} must implement {nameof(IRenderer)} and have a public parameterless constructor.",
+                nameof(rendererType));
+        }
+
+        lock (_sync)
+        {
+            _renderers.Add(new RendererRegistration(pluginId, rendererType));
+            _owners[rendererType] = pluginId;
+        }
+
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+
     private void Add<T>(string pluginId, T value, List<PluginExtension<T>> target)
         where T : class
     {
@@ -242,6 +283,11 @@ public sealed class PluginRegistry : IPluginRegistry
         {
             _owners[extension.Value.GetType()] = extension.PluginId;
         }
+
+        foreach (var registration in _renderers)
+        {
+            _owners[registration.RendererType] = registration.PluginId;
+        }
     }
 
     private PluginExtension<T>[] Snapshot<T>(List<PluginExtension<T>> source)
@@ -258,7 +304,7 @@ public sealed class PluginRegistry : IPluginRegistry
         ArgumentException.ThrowIfNullOrWhiteSpace(pluginId);
     }
 
-    private sealed class ScopedPluginRegistry(PluginRegistry root, string pluginId) : IPluginRegistry
+    private sealed class ScopedPluginRegistry(PluginRegistry root, string pluginId) : IPluginRegistry, IRendererRegistrar
     {
         public IReadOnlyList<PluginExtension<ICommand>> Commands => root.Commands;
 
@@ -278,6 +324,8 @@ public sealed class PluginRegistry : IPluginRegistry
             root.HighlightRuleProviders;
 
         public IReadOnlyList<PluginExtension<ITestRunner>> TestRunners => root.TestRunners;
+
+        public IReadOnlyList<RendererRegistration> Renderers => root.Renderers;
 
         public event EventHandler? Changed
         {
@@ -303,6 +351,8 @@ public sealed class PluginRegistry : IPluginRegistry
             root.AddHighlightRuleProvider(pluginId, provider);
 
         public void AddTestRunner(ITestRunner runner) => root.AddTestRunner(pluginId, runner);
+
+        public void AddRenderer(Type rendererType) => root.AddRenderer(pluginId, rendererType);
 
         public string? GetOwner(Type extensionType) => root.GetOwner(extensionType);
 

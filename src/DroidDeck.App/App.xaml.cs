@@ -34,6 +34,7 @@ using DroidDeck.Core.Wireless;
 using DroidDeck.Plugins;
 using DroidDeck.Plugins.BuiltIns;
 using DroidDeck.Plugins.Catalog;
+using DroidDeck.Plugin.UI.Rendering;
 using DroidDeck.Projects;
 using DroidDeck.Projects.Artifacts;
 using DroidDeck.Projects.Detection;
@@ -275,6 +276,11 @@ public partial class App : Application, IDisposable
         services.AddSingleton<IToolchainService, ToolchainDoctor>();
         services.AddSingleton<PluginRegistry>();
         services.AddSingleton<IPluginRegistry>(provider => provider.GetRequiredService<PluginRegistry>());
+        services.AddSingleton<AppThemeService>();
+        services.AddSingleton<IThemeService>(provider => provider.GetRequiredService<AppThemeService>());
+        services.AddSingleton<IUiDispatcher>(new AppUiDispatcher());
+        services.AddSingleton<RendererService>();
+        services.AddSingleton<IRendererHost>(provider => provider.GetRequiredService<RendererService>());
 
         services.AddSingleton(provider =>
         {
@@ -564,6 +570,15 @@ public partial class App : Application, IDisposable
         // dispatcher after the shell is up and continues off the UI thread.
         _window?.DispatcherQueue.TryEnqueue(() =>
             _ = InitializePluginsAsync(_pluginHost, pluginsDisabled, reason, logger));
+
+        try
+        {
+            await services.GetRequiredService<RendererService>().InitializeAsync();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            logger.LogWarning(exception, "Renderer preferences could not be loaded.");
+        }
 
         try
         {

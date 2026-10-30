@@ -76,6 +76,7 @@ public sealed partial class MainWindow : Window
     private readonly ICommandRegistry _commands;
     private readonly KeybindingMap _keybindings;
     private readonly ShellCommandCatalog _commandCatalog;
+    private readonly AppThemeService _themeService;
     private readonly ILogger<MainWindow> _logger;
     private readonly Dictionary<string, Page> _pages = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<KeyboardAccelerator> _accelerators = [];
@@ -101,6 +102,7 @@ public sealed partial class MainWindow : Window
         IResourceGuard resourceGuard,
         ICommandRegistry commands,
         KeybindingMap keybindings,
+        AppThemeService themeService,
         ILogger<MainWindow> logger)
     {
         _services = services ?? throw new ArgumentNullException(nameof(services));
@@ -114,6 +116,7 @@ public sealed partial class MainWindow : Window
         _resourceGuard = resourceGuard ?? throw new ArgumentNullException(nameof(resourceGuard));
         _commands = commands ?? throw new ArgumentNullException(nameof(commands));
         _keybindings = keybindings ?? throw new ArgumentNullException(nameof(keybindings));
+        _themeService = themeService ?? throw new ArgumentNullException(nameof(themeService));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
         InitializeComponent();
@@ -416,6 +419,7 @@ public sealed partial class MainWindow : Window
     /// <summary>Applies the requested theme to the shell.</summary>
     public void ApplyTheme(AppTheme theme)
     {
+        _themeService.Update(theme);
         RootGrid.RequestedTheme = theme switch
         {
             AppTheme.Dark => ElementTheme.Dark,

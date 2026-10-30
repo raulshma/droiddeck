@@ -7,6 +7,7 @@ using DroidDeck.App.Services;
 using DroidDeck.Core;
 using DroidDeck.Core.Diagnostics;
 using DroidDeck.Plugin.Abstractions;
+using DroidDeck.Plugin.Abstractions.Rendering;
 using DroidDeck.Plugins;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Dispatching;
@@ -21,6 +22,7 @@ namespace DroidDeck.App.Views;
 public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
 {
     private readonly PluginHost _plugins;
+    private readonly RendererService _renderers;
     private readonly IDiagnosticsService _diagnostics;
     private readonly AppPaths _paths;
     private readonly ILogger<ExtensionsPage> _logger;
@@ -31,11 +33,13 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
     /// <summary>Creates the extensions page.</summary>
     public ExtensionsPage(
         PluginHost plugins,
+        RendererService renderers,
         IDiagnosticsService diagnostics,
         AppPaths paths,
         ILogger<ExtensionsPage> logger)
     {
         _plugins = plugins ?? throw new ArgumentNullException(nameof(plugins));
+        _renderers = renderers ?? throw new ArgumentNullException(nameof(renderers));
         _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -46,6 +50,8 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         _plugins.ResultsChanged += OnResultsChanged;
         _plugins.Registry.Changed += OnRegistryChanged;
         _plugins.Health.HealthChanged += OnHealthChanged;
+        _renderers.Changed += OnRenderersChanged;
+        _renderers.Catalog.Changed += OnRenderersChanged;
         Refresh();
     }
 
@@ -54,6 +60,7 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
     {
         UpdateSummary();
         UpdateCommandRows();
+        UpdateRendererRows();
         UpdateRows();
         RestartNotice.IsOpen = _plugins.RestartRequired;
     }
@@ -70,6 +77,8 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         _plugins.ResultsChanged -= OnResultsChanged;
         _plugins.Registry.Changed -= OnRegistryChanged;
         _plugins.Health.HealthChanged -= OnHealthChanged;
+        _renderers.Changed -= OnRenderersChanged;
+        _renderers.Catalog.Changed -= OnRenderersChanged;
     }
 
     private void UpdateSummary()
@@ -104,7 +113,7 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
             $"{registry.Commands.Count} commands · {registry.ProjectDetectors.Count} project detectors · " +
             $"{registry.DeviceActions.Count} device actions · {registry.RunSteps.Count} run steps · " +
             $"{registry.LogParsers.Count} log parsers · {registry.HighlightRuleProviders.Count} highlight rule providers · " +
-            $"{registry.TestRunners.Count} test runners available.";
+            $"{registry.TestRunners.Count} test runners · {registry.Renderers.Count} renderers available.";
     }
 
     private void UpdateRows()
@@ -129,11 +138,35 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         NoCommandsText.Visibility = rows.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    private void UpdateRendererRows()
+    {
+        var rows = _renderers.Catalog.Statuses.Select(RendererRow.From).ToArray();
+        RendererList.ItemsSource = rows;
+        NoRenderersText.Visibility = rows.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     private void OnResultsChanged(object? sender, EventArgs e) => Dispatch(Refresh);
 
     private void OnRegistryChanged(object? sender, EventArgs e) => Dispatch(Refresh);
 
     private void OnHealthChanged(object? sender, EventArgs e) => Dispatch(Refresh);
+
+    private void OnRenderersChanged(object? sender, EventArgs e) => Dispatch(UpdateRendererRows);
+
+    private async void OnResetRendererChoicesClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await _renderers.ResetDefaultsAsync();
+            UpdateRendererRows();
+            ShowAction("View as choices were reset to the highest-priority renderer.");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(exception, "Renderer choices could not be reset.");
+            ShowAction("The renderer choices could not be saved.", isError: true);
+        }
+    }
 
     private async void OnRunCommandClick(object sender, RoutedEventArgs e)
     {
@@ -433,6 +466,41 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         {
             ArgumentNullException.ThrowIfNull(extension);
             return new CommandRow(extension);
+        }
+    }
+
+    /// <summary>One registered renderer shaped for the extensions list.</summary>
+    public sealed class RendererRow
+    {
+        private RendererRow(RendererStatus status)
+        {
+            Title = status.DisplayName;
+            Subtitle = status.Renderer.IsBuiltIn
+                ? $"Built-in · {status.Kind} · priority {status.Renderer.Priority}"
+                : $"{status.Renderer.PluginId} · {status.Kind} · priority {status.Renderer.Priority}";
+            Health = status.Health switch
+            {
+                RendererHealth.Healthy => "Healthy",
+                RendererHealth.Failing => $"Failing ({status.FailureCount})",
+                RendererHealth.Disabled => "Disabled",
+                _ => "Not used yet",
+            };
+        }
+
+        /// <summary>Gets the renderer display name.</summary>
+        public string Title { get; }
+
+        /// <summary>Gets the kind, owner, and priority.</summary>
+        public string Subtitle { get; }
+
+        /// <summary>Gets the health label.</summary>
+        public string Health { get; }
+
+        /// <summary>Creates a row from a renderer status.</summary>
+        public static RendererRow From(RendererStatus status)
+        {
+            ArgumentNullException.ThrowIfNull(status);
+            return new RendererRow(status);
         }
     }
 

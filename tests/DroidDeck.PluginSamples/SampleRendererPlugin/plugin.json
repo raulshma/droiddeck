@@ -1,0 +1,15 @@
+{
+  "id": "com.example.sample.renderers",
+  "name": "Sample Renderer Plugin",
+  "version": "1.0.0",
+  "author": "DroidDeck",
+  "description": "A sample plugin that contributes a log detail renderer and a chart renderer to every View as menu.",
+  "apiVersion": "1.0",
+  "minHostVersion": "0.1.0",
+  "entryAssembly": "SampleRendererPlugin.dll",
+  "entryType": "SampleRendererPlugin.SampleRendererPlugin",
+  "capabilities": [
+    "renderer"
+  ],
+  "license": "MIT"
+}
