@@ -251,7 +251,8 @@ Release assets:
       published to nuget.org; the authoring guide installs them from a local feed.
 - [ ] SBOM covers the portable publish and is attached unmodified.
 - [ ] `SHA256SUMS.txt` lists every attached binary asset and verifies.
-- [ ] License, third-party notices, and privacy/security docs included.
+- [ ] License and third-party notices included in the portable folder; privacy
+      and security docs linked from the release notes.
 - [ ] Release notes (`docs/releases/<tag>.md`) list changes, known issues with
       workarounds, requirements, checksums, the security review outcome, and the
       deferred gates from the [pre-1.0 alpha policy](#pre-10-alpha-policy).
