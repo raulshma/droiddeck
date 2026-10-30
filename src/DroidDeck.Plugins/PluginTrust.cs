@@ -239,7 +239,15 @@ public static class PluginContentHasher
         return Convert.ToHexString(hash.GetHashAndReset());
     }
 
-    private static bool IsIgnored(string relativePath) =>
-        relativePath.Equals("settings.json", StringComparison.OrdinalIgnoreCase) ||
-        relativePath.StartsWith("data/", StringComparison.OrdinalIgnoreCase);
+    private static bool IsIgnored(string relativePath)
+    {
+        // The settings file is runtime data the host writes for the plugin, and
+        // so are the artifacts its atomic writes leave behind (settings.json.bak,
+        // settings.json.tmp-*) and the quarantine copies of corrupt settings.
+        // None of them are installed code, so none may flip the trust hash.
+        return relativePath.Equals("settings.json", StringComparison.OrdinalIgnoreCase) ||
+            relativePath.StartsWith("settings.json.", StringComparison.OrdinalIgnoreCase) ||
+            relativePath.StartsWith("data/", StringComparison.OrdinalIgnoreCase) ||
+            relativePath.StartsWith("quarantine/", StringComparison.OrdinalIgnoreCase);
+    }
 }

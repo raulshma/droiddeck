@@ -173,6 +173,30 @@ public sealed class PluginSettingsSchemaTests
     }
 
     [Fact]
+    public async Task SecretOrPathFormatCombinedWithEnumIsRejected()
+    {
+        using var temp = new TempDirectory();
+        temp.WriteFile(PluginSettingsSchemaReader.FileName, """
+            {
+              "properties": {
+                "apiKey": { "type": "string", "format": "secret", "enum": ["a", "b"] },
+                "sdkPath": { "type": "string", "format": "path", "enum": ["a"] }
+              }
+            }
+            """);
+
+        var result = await PluginSettingsSchemaReader.ReadAsync(temp.Path);
+
+        Assert.Null(result.Schema);
+        Assert.Equal(
+            2,
+            result.Validation.Issues.Count(issue =>
+                issue.Code == "settingsSchema.field.invalid" &&
+                issue.Message.Contains("enum", StringComparison.Ordinal) &&
+                issue.Message.Contains("format", StringComparison.Ordinal)));
+    }
+
+    [Fact]
     public async Task InvalidPatternIsRejected()
     {
         using var temp = new TempDirectory();

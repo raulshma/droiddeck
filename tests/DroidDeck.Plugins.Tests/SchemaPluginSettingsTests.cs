@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using DroidDeck.Core;
 using DroidDeck.Core.Security;
+using DroidDeck.Plugin.Abstractions;
 using DroidDeck.TestSupport;
 
 namespace DroidDeck.Plugins.Tests;
@@ -327,6 +328,61 @@ public sealed class SchemaPluginSettingsTests : IDisposable
     }
 
     [Fact]
+    public async Task RequiredSecretStopsBlockingValidationOnceSet()
+    {
+        using var settings = await CreateStoreAsync("""
+            { "version": 1, "properties": { "apiKey": { "type": "string", "format": "secret" } },
+              "required": ["apiKey"] }
+            """);
+
+        var before = await settings.ValidateAsync();
+        Assert.Contains(before, error => error.Field == "apiKey" && error.Code == "settings.value.required");
+
+        await settings.SetSecretAsync("apiKey", "configured-value-6604");
+
+        Assert.Empty(await settings.ValidateAsync());
+    }
+
+    [Fact]
+    public async Task LegacyPlaintextSecretValuesMigrateIntoTheSecretStore()
+    {
+        var directory = NewPluginDirectory();
+        const string secret = "legacy-plaintext-5508";
+        await File.WriteAllTextAsync(
+            Path.Combine(directory, "settings.json"),
+            """{ "endpoint": "https://legacy.example", "apiKey": "legacy-plaintext-5508" }""");
+        const string schema = """
+            { "version": 1, "properties": {
+                "endpoint": { "type": "string" },
+                "apiKey": { "type": "string", "format": "secret" }
+              } }
+            """;
+
+        using var settings = await CreateStoreAsync(schema, directory);
+
+        // The plaintext moved into the DPAPI store and is readable only there.
+        Assert.True(await settings.IsSecretSetAsync("apiKey"));
+        Assert.Equal(secret, await settings.GetAsync("apiKey"));
+
+        // Saving rewrites the file without the plaintext, including the backup
+        // the atomic write keeps of the previous contents.
+        await settings.SetNodeAsync("endpoint", JsonValue.Create("https://updated.example"));
+        foreach (var file in Directory.EnumerateFiles(directory, "settings.json*", SearchOption.AllDirectories))
+        {
+            var contents = await File.ReadAllTextAsync(file);
+            Assert.DoesNotContain(secret, contents, StringComparison.Ordinal);
+        }
+
+        settings.Dispose();
+        var document = (JsonObject)JsonNode.Parse(
+            await File.ReadAllTextAsync(Path.Combine(directory, "settings.json")))!;
+        Assert.Null(document["values"]!["apiKey"]);
+        Assert.Equal(
+            ["apiKey"],
+            (document["secrets"] as JsonArray)!.Select(static node => node!.GetValue<string>()).ToArray());
+    }
+
+    [Fact]
     public async Task SecretPresenceMarkerIsRecordedButValueStaysOut()
     {
         var directory = NewPluginDirectory();
@@ -456,6 +512,70 @@ public sealed class SchemaPluginSettingsTests : IDisposable
         await settings.SetSecretAsync("apiKey", "configured-value-777");
         Assert.True(await settings.IsSecretSetAsync("apiKey"));
         Assert.Equal("Configured", DescribeSecretForDisplay(await settings.IsSecretSetAsync("apiKey")));
+    }
+
+    [Fact]
+    public async Task GetOrCreateReusesOneStorePerSettingsFile()
+    {
+        var directory = NewPluginDirectory();
+        const string schema = """{ "version": 1, "properties": { "endpoint": { "type": "string" } } }""";
+        var first = SchemaPluginSettings.GetOrCreate(
+            Path.Combine(directory, "settings.json"), await ParseSchemaAsync(schema), PluginId, _secrets);
+        using var second = SchemaPluginSettings.GetOrCreate(
+            Path.Combine(directory, "settings.json"), await ParseSchemaAsync(schema), PluginId, _secrets);
+
+        Assert.Same(first, second);
+
+        var other = SchemaPluginSettings.GetOrCreate(
+            Path.Combine(directory, "other", "settings.json"), await ParseSchemaAsync(schema), PluginId, _secrets);
+        Assert.NotSame(first, other);
+        other.Dispose();
+        first.Dispose();
+    }
+
+    [Fact]
+    public async Task GetOrCreateFindsTheStoreTheLoaderConstructedDirectly()
+    {
+        var directory = NewPluginDirectory();
+        const string schema = """{ "version": 1, "properties": { "endpoint": { "type": "string" } } }""";
+        using var constructed = new SchemaPluginSettings(
+            Path.Combine(directory, "settings.json"),
+            await ParseSchemaAsync(schema),
+            PluginId,
+            _secrets);
+
+        var resolved = SchemaPluginSettings.GetOrCreate(
+            Path.Combine(directory, "settings.json"),
+            await ParseSchemaAsync(schema),
+            PluginId,
+            _secrets);
+
+        Assert.Same(constructed, resolved);
+    }
+
+    [Fact]
+    public async Task GetOrCreateCreatesAFreshStoreAfterDispose()
+    {
+        var directory = NewPluginDirectory();
+        var schema = await ParseSchemaAsync("""{ "version": 1, "properties": { "endpoint": { "type": "string" } } }""");
+        var first = SchemaPluginSettings.GetOrCreate(
+            Path.Combine(directory, "settings.json"), schema, PluginId, _secrets);
+        first.Dispose();
+
+        using var second = SchemaPluginSettings.GetOrCreate(
+            Path.Combine(directory, "settings.json"), schema, PluginId, _secrets);
+
+        Assert.NotSame(first, second);
+        Assert.False(second.IsDisposed);
+    }
+
+    private static async Task<PluginSettingsSchema> ParseSchemaAsync(string schemaJson)
+    {
+        using var directory = new TempDirectory();
+        directory.WriteFile(PluginSettingsSchemaReader.FileName, schemaJson);
+        var read = await PluginSettingsSchemaReader.ReadAsync(directory.Path);
+        Assert.True(read.Validation.IsValid, string.Join(Environment.NewLine, read.Validation.Issues));
+        return read.Schema!;
     }
 
     private static string DescribeSecretForDisplay(bool isSet) => isSet ? "Configured" : "Not set";

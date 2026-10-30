@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -68,6 +69,14 @@ public sealed record PluginSettingsExport(
 /// </summary>
 public sealed class SchemaPluginSettings : IPluginSettings, IDisposable
 {
+    /// <summary>
+    /// The live store per settings file. Every surface that touches a plugin's
+    /// settings file must resolve its store here, because two stores over the
+    /// same file lose updates when both write.
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, SchemaPluginSettings> StoresByPath =
+        new(StringComparer.OrdinalIgnoreCase);
+
     private readonly string _filePath;
     private readonly PluginSettingsSchema _schema;
     private readonly string _pluginId;
@@ -99,10 +108,40 @@ public sealed class SchemaPluginSettings : IPluginSettings, IDisposable
         _secrets = secretStore;
         _logger = logger ?? NullLogger.Instance;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        StoresByPath[_filePath] = this;
     }
 
     /// <summary>Gets the settings file path.</summary>
     public string FilePath => _filePath;
+
+    /// <summary>Gets a value indicating whether the store was disposed.</summary>
+    public bool IsDisposed => _disposed;
+
+    /// <summary>
+    /// Returns the one live store for a settings file, creating it when none is
+    /// registered. Stores register themselves on construction, so the store the
+    /// plugin loader created for a loaded plugin is found here as well: UI
+    /// surfaces must open the same instance instead of a second store that
+    /// races the plugin's writes. Disposing a store lets the next call create
+    /// a fresh one.
+    /// </summary>
+    public static SchemaPluginSettings GetOrCreate(
+        string filePath,
+        PluginSettingsSchema schema,
+        string pluginId,
+        ISecretStore secretStore,
+        ILogger? logger = null,
+        TimeProvider? timeProvider = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
+        var fullPath = Path.GetFullPath(filePath);
+        if (StoresByPath.TryGetValue(fullPath, out var existing) && !existing.IsDisposed)
+        {
+            return existing;
+        }
+
+        return new SchemaPluginSettings(fullPath, schema, pluginId, secretStore, logger, timeProvider);
+    }
 
     /// <summary>Gets the schema the store validates against.</summary>
     public PluginSettingsSchema Schema => _schema;
@@ -363,8 +402,8 @@ public sealed class SchemaPluginSettings : IPluginSettings, IDisposable
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var (values, _) = await LoadCoreAsync(cancellationToken).ConfigureAwait(false);
-            return ValidateCore(values);
+            var (values, markers) = await LoadCoreAsync(cancellationToken).ConfigureAwait(false);
+            return ValidateCore(values, markers);
         }
         finally
         {
@@ -423,14 +462,33 @@ public sealed class SchemaPluginSettings : IPluginSettings, IDisposable
         }
 
         _disposed = true;
+        StoresByPath.TryRemove(new KeyValuePair<string, SchemaPluginSettings>(_filePath, this));
         _gate.Dispose();
     }
 
-    private List<PluginSettingsFieldError> ValidateCore(JsonObject values)
+    private List<PluginSettingsFieldError> ValidateCore(JsonObject values, HashSet<string> secretMarkers)
     {
         var errors = new List<PluginSettingsFieldError>();
         foreach (var field in _schema.Fields)
         {
+            if (field.Type == PluginSettingsFieldType.Secret)
+            {
+                // The plaintext never passes through here, so presence in the
+                // secret store (recorded as a marker) is all validation sees.
+                // Only a leftover legacy plaintext can still appear in values.
+                if (field.Required &&
+                    !secretMarkers.Contains(field.Key) &&
+                    values[field.Key] is null)
+                {
+                    errors.Add(new PluginSettingsFieldError(
+                        field.Key,
+                        "settings.value.required",
+                        $"'{field.DisplayName}' is required."));
+                }
+
+                continue;
+            }
+
             var value = values[field.Key] ?? field.Default?.DeepClone();
             if (value is null)
             {
@@ -548,6 +606,13 @@ public sealed class SchemaPluginSettings : IPluginSettings, IDisposable
         }
 
         var document = await ReadDocumentAsync(cancellationToken).ConfigureAwait(false);
+        if (document is null)
+        {
+            // The file exists but could not be read right now. Serve a scratch
+            // state without caching it: the next access retries the file, so a
+            // good settings.json is never overwritten from an empty view.
+            return (new JsonObject(), new HashSet<string>(StringComparer.Ordinal));
+        }
 
         // Settings written before a plugin shipped a schema are flat key/value
         // objects; their keys move into values so nothing is lost.
@@ -593,17 +658,93 @@ public sealed class SchemaPluginSettings : IPluginSettings, IDisposable
             storedVersion = _schema.Version;
         }
 
+        // Legacy documents can carry a secret field's plaintext in the values.
+        // It moves into the DPAPI secret store once and leaves the values either
+        // way, before migrations so a rename onto a secret key sees the marker.
+        var secretPlaintextMigrated = await ImportLegacySecretValuesAsync(values, markers, cancellationToken)
+            .ConfigureAwait(false);
         var migrated = await MigrateAsync(values, markers, storedVersion, cancellationToken)
             .ConfigureAwait(false);
         _values = values;
         _secretMarkers = markers;
         _storedVersion = migrated;
-        if (migrated != storedVersion)
+        if (migrated != storedVersion || secretPlaintextMigrated)
         {
-            await SaveCoreAsync(cancellationToken).ConfigureAwait(false);
+            await SaveCoreAsync(cancellationToken, keepBackup: !secretPlaintextMigrated)
+                .ConfigureAwait(false);
+            if (secretPlaintextMigrated)
+            {
+                // The backup of the previous contents would preserve the plain
+                // text that was just removed, so it is dropped best-effort.
+                try
+                {
+                    File.Delete(_filePath + ".bak");
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    _logger.LogWarning(
+                        exception,
+                        "The backup of plugin settings file '{Path}' could not be deleted after a secret " +
+                            "value was migrated out of it.",
+                        _filePath);
+                }
+            }
         }
 
         return (_values, _secretMarkers);
+    }
+
+    /// <summary>
+    /// Moves plaintext values of schema-declared secret fields into the DPAPI
+    /// secret store, best-effort, and removes them from the values either way so
+    /// a later save can never re-persist them into the settings file.
+    /// </summary>
+    private async Task<bool> ImportLegacySecretValuesAsync(
+        JsonObject values,
+        HashSet<string> markers,
+        CancellationToken cancellationToken)
+    {
+        var migrated = false;
+        foreach (var field in _schema.Fields)
+        {
+            if (field.Type != PluginSettingsFieldType.Secret ||
+                !values.TryGetPropertyValue(field.Key, out var plaintext))
+            {
+                continue;
+            }
+
+            values.Remove(field.Key);
+            migrated = true;
+            if (plaintext is not JsonValue text || !text.TryGetValue<string>(out var secret) ||
+                secret.Length == 0)
+            {
+                _logger.LogWarning(
+                    "Removed a non-string value for secret field '{Field}' from the plugin settings.",
+                    field.Key);
+                continue;
+            }
+
+            try
+            {
+                await _secrets.SetAsync(SecretName(field.Key), secret, cancellationToken).ConfigureAwait(false);
+                markers.Add(field.Key);
+                if (_logger.IsEnabled(LogLevel.Information))
+                {
+                    _logger.LogInformation(
+                        "Migrated the plaintext value of secret field '{Field}' into the secret store.",
+                        field.Key);
+                }
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                _logger.LogWarning(
+                    exception,
+                    "The plaintext value of secret field '{Field}' could not be moved into the secret store and was dropped.",
+                    field.Key);
+            }
+        }
+
+        return migrated;
     }
 
     /// <summary>
@@ -695,7 +836,12 @@ public sealed class SchemaPluginSettings : IPluginSettings, IDisposable
         return true;
     }
 
-    private async Task<JsonObject> ReadDocumentAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Reads the settings document. Returns <see langword="null"/> when the file
+    /// exists but could not be read right now, which callers must not cache so
+    /// the next access retries instead of saving over the real contents.
+    /// </summary>
+    private async Task<JsonObject?> ReadDocumentAsync(CancellationToken cancellationToken)
     {
         if (!File.Exists(_filePath))
         {
@@ -721,13 +867,13 @@ public sealed class SchemaPluginSettings : IPluginSettings, IDisposable
         {
             _logger.LogWarning(
                 exception,
-                "Plugin settings file '{Path}' could not be read; starting with empty settings.",
+                "Plugin settings file '{Path}' could not be read; the next access will retry.",
                 _filePath);
-            return new JsonObject();
+            return null;
         }
     }
 
-    private async Task SaveCoreAsync(CancellationToken cancellationToken)
+    private async Task SaveCoreAsync(CancellationToken cancellationToken, bool keepBackup = true)
     {
         var secrets = new JsonArray();
         foreach (var name in _secretMarkers!.OrderBy(static candidate => candidate, StringComparer.Ordinal))
@@ -742,7 +888,7 @@ public sealed class SchemaPluginSettings : IPluginSettings, IDisposable
             ["secrets"] = secrets,
         };
         var json = document.ToJsonString(DroidDeckJson.Options);
-        await AtomicFile.WriteAllTextAsync(_filePath, json, keepBackup: true, cancellationToken).ConfigureAwait(false);
+        await AtomicFile.WriteAllTextAsync(_filePath, json, keepBackup, cancellationToken).ConfigureAwait(false);
     }
 
     private void QuarantineCorruptFile()

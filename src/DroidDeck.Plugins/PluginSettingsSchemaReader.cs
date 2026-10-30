@@ -250,7 +250,21 @@ public static class PluginSettingsSchemaReader
         var enumValues = ParseEnum(key, typeName, definition, validation);
         if (enumValues is not null)
         {
-            type = PluginSettingsFieldType.Enum;
+            if (format is not null)
+            {
+                // An enum field with a format would silently lose the format:
+                // a secret enum would fall back to plaintext storage. Reject it
+                // so the plugin author sees the conflict at parse time.
+                validation.Error(
+                    "settingsSchema.field.invalid",
+                    $"The field '{key}' declares both a 'format' and an 'enum', which cannot be combined. " +
+                        "Remove the enum or the format.");
+                enumValues = null;
+            }
+            else
+            {
+                type = PluginSettingsFieldType.Enum;
+            }
         }
 
         var pattern = OptionalString(definition, "pattern");

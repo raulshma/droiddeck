@@ -2181,7 +2181,7 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
             if (_pluginSections.ContainsKey(entry.Section.Id))
             {
                 // Another queued load won the race; drop the duplicate store.
-                (settings as IDisposable)?.Dispose();
+                DropHostSettings(settings);
                 return;
             }
 
@@ -2256,7 +2256,7 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
             {
                 PluginSectionsPanel.Children.Remove(stale.Card);
                 stale.Boundary.Dispose();
-                (stale.Settings as IDisposable)?.Dispose();
+                DropHostSettings(stale.Settings);
             }
         }
 
@@ -2270,10 +2270,23 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         {
             PluginSectionsPanel.Children.Remove(section.Card);
             section.Boundary.Dispose();
-            (section.Settings as IDisposable)?.Dispose();
+            DropHostSettings(section.Settings);
         }
 
         _pluginSections.Clear();
+    }
+
+    /// <summary>
+    /// Disposes a settings store this page owns. Schema stores are shared per
+    /// settings file with the plugin loader and the settings dialog, so they
+    /// stay owned by that registry and are never disposed here.
+    /// </summary>
+    private static void DropHostSettings(IPluginSettings settings)
+    {
+        if (settings is not SchemaPluginSettings)
+        {
+            (settings as IDisposable)?.Dispose();
+        }
     }
 
     /// <summary>Builds the host settings store for one plugin, mirroring the per-plugin settings dialog.</summary>
@@ -2286,20 +2299,21 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
             return null;
         }
 
+        var settingsPath = System.IO.Path.Combine(status.InstallPath, "settings.json");
         if (File.Exists(PluginSettingsSchemaReader.GetSchemaPath(status.InstallPath)))
         {
             var read = await PluginSettingsSchemaReader.ReadAsync(status.InstallPath).ConfigureAwait(true);
             if (read.Schema is not null)
             {
-                return new SchemaPluginSettings(
-                    System.IO.Path.Combine(status.InstallPath, "settings.json"),
-                    read.Schema,
-                    pluginId,
-                    _secrets);
+                // Schema stores are shared per settings file (the plugin loader
+                // and the settings dialog resolve the same instance), so their
+                // writes cannot race or lose updates. Such stores are owned by
+                // that registry and never disposed here.
+                return SchemaPluginSettings.GetOrCreate(settingsPath, read.Schema, pluginId, _secrets);
             }
         }
 
-        return new JsonPluginSettings(System.IO.Path.Combine(status.InstallPath, "settings.json"));
+        return new JsonPluginSettings(settingsPath);
     }
 
     private static string SourceLabel(string pluginId) =>

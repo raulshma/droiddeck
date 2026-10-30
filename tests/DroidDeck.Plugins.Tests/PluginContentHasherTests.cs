@@ -46,6 +46,24 @@ public sealed class PluginContentHasherTests
     }
 
     [Fact]
+    public async Task SettingsBackupsTempFilesAndQuarantineDoNotChangeTheHash()
+    {
+        using var temp = new TempDirectory();
+        var directory = StagePluginDirectory(temp);
+        var before = await PluginContentHasher.ComputeAsync(directory);
+
+        await File.WriteAllTextAsync(Path.Combine(directory, "settings.json.bak"), "{\"theme\":\"dark\"}");
+        await File.WriteAllTextAsync(Path.Combine(directory, "settings.json.tmp-4f3d2c"), "{\"theme\":\"dark\"}");
+        var quarantine = Directory.CreateDirectory(Path.Combine(directory, "quarantine"));
+        await File.WriteAllTextAsync(
+            Path.Combine(quarantine.FullName, "settings.json.20260101-000000-000.corrupt"), "{ broken");
+
+        var after = await PluginContentHasher.ComputeAsync(directory);
+
+        Assert.Equal(before, after);
+    }
+
+    [Fact]
     public async Task RenamingAPluginFileChangesTheHash()
     {
         using var temp = new TempDirectory();

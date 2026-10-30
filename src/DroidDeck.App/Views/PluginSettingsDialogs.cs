@@ -47,44 +47,49 @@ internal static class PluginSettingsDialogs
             return;
         }
 
-        var settings = new SchemaPluginSettings(
+        // The dialog opens the same store instance the plugin loader created, so
+        // its writes cannot race a second store over the same settings file. The
+        // per-path registry owns the store; the dialog never disposes it.
+        var settings = SchemaPluginSettings.GetOrCreate(
             Path.Combine(row.InstallPath, "settings.json"),
             read.Schema,
             row.PluginId,
             secrets);
-        try
+        var editor = await PluginSettingsEditor.LoadAsync(settings);
+        var dialog = new ContentDialog
         {
-            var editor = await PluginSettingsEditor.LoadAsync(settings);
-            var dialog = new ContentDialog
+            XamlRoot = xamlRoot,
+            Title = $"{row.Title} settings",
+            Content = new ScrollViewer
             {
-                XamlRoot = xamlRoot,
-                Title = $"{row.Title} settings",
-                Content = new ScrollViewer
-                {
-                    Content = editor.Root,
-                    MaxHeight = 480,
-                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                },
-                PrimaryButtonText = "Save",
-                CloseButtonText = "Cancel",
-                DefaultButton = ContentDialogButton.Close,
-            };
-            dialog.PrimaryButtonClick += async (sender, args) =>
+                Content = editor.Root,
+                MaxHeight = 480,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            },
+            PrimaryButtonText = "Save",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        dialog.PrimaryButtonClick += async (sender, args) =>
+        {
+            // Saving is asynchronous; invalid values keep the dialog open and
+            // show the field errors inline instead of closing. The catch keeps
+            // an IO failure of the save from crashing the process: the dialog
+            // stays open and shows the error instead.
+            args.Cancel = true;
+            try
             {
-                // Saving is asynchronous; invalid values keep the dialog open and
-                // show the field errors inline instead of closing.
-                args.Cancel = true;
                 if (await editor.SaveAsync())
                 {
                     sender.Hide();
                 }
-            };
-            await dialog.ShowAsync();
-        }
-        finally
-        {
-            settings.Dispose();
-        }
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                editor.ShowSaveFailure("The settings could not be saved: " + exception.Message);
+            }
+        };
+        await dialog.ShowAsync();
     }
 
     private static async Task ShowNoticeAsync(XamlRoot xamlRoot, string title, string message)
@@ -223,9 +228,31 @@ internal static class PluginSettingsDialogs
 
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
             var setButton = new Button { Content = "Set" };
-            setButton.Click += (_, _) => _ = ApplySecretAsync();
+            setButton.Click += async (_, _) =>
+            {
+                // Applied immediately, so a store failure must surface here
+                // instead of escaping the click handler and crashing.
+                try
+                {
+                    await ApplySecretAsync();
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    ShowOwnError("The secret could not be set: " + exception.Message);
+                }
+            };
             var clearButton = new Button { Content = "Clear" };
-            clearButton.Click += (_, _) => _ = ClearSecretAsync();
+            clearButton.Click += async (_, _) =>
+            {
+                try
+                {
+                    await ClearSecretAsync();
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    ShowOwnError("The secret could not be cleared: " + exception.Message);
+                }
+            };
             buttons.Children.Add(setButton);
             buttons.Children.Add(clearButton);
 
@@ -525,23 +552,32 @@ internal static class PluginSettingsDialogs
             panel.Children.Add(_errorText);
             return panel;
         }
-
-        private static Brush ResolveBrush(string key)
-            => Application.Current.Resources.TryGetValue(key, out var resource) && resource is Brush brush
-                ? brush
-                : new SolidColorBrush(Microsoft.UI.Colors.Gray);
     }
+
+    private static Brush ResolveBrush(string key)
+        => Application.Current.Resources.TryGetValue(key, out var resource) && resource is Brush brush
+            ? brush
+            : new SolidColorBrush(Microsoft.UI.Colors.Gray);
 
     /// <summary>Builds the rows for a schema and saves them back to the store.</summary>
     private sealed class PluginSettingsEditor
     {
         private readonly SchemaPluginSettings _settings;
         private readonly List<PluginSettingsRow> _rows = [];
+        private readonly TextBlock _saveError;
 
         private PluginSettingsEditor(SchemaPluginSettings settings)
         {
             _settings = settings;
+            _saveError = new TextBlock
+            {
+                FontSize = 12,
+                Foreground = ResolveBrush("SystemFillColorCriticalBrush"),
+                TextWrapping = TextWrapping.Wrap,
+                Visibility = Visibility.Collapsed,
+            };
             Root = new StackPanel { Spacing = 16 };
+            Root.Children.Add(_saveError);
         }
 
         public StackPanel Root { get; }
@@ -564,11 +600,22 @@ internal static class PluginSettingsDialogs
         }
 
         /// <summary>
+        /// Shows a save failure that is not tied to one field, such as the
+        /// settings file being locked, so it is still visible in the dialog.
+        /// </summary>
+        public void ShowSaveFailure(string message)
+        {
+            _saveError.Text = message;
+            _saveError.Visibility = Visibility.Visible;
+        }
+
+        /// <summary>
         /// Writes every changed value. Any field error keeps the dialog open and
         /// shows inline errors, so saving is blocked until the values are valid.
         /// </summary>
         public async Task<bool> SaveAsync()
         {
+            _saveError.Visibility = Visibility.Collapsed;
             foreach (var row in _rows)
             {
                 row.ClearError();
