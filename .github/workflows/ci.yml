@@ -73,11 +73,12 @@ jobs:
           --results-directory TestResults
 
       - name: Pack plugin SDK
+        # PackageOutputPath resolves against each project directory, so anchor it to the workspace.
         run: |
-          dotnet pack src/DroidDeck.Plugin.Abstractions/DroidDeck.Plugin.Abstractions.csproj -c Release --no-build -p:PackageOutputPath=artifacts/nuget
-          dotnet pack src/DroidDeck.Plugin.UI/DroidDeck.Plugin.UI.csproj -c Release --no-build -p:PackageOutputPath=artifacts/nuget
-          dotnet pack templates/DroidDeck.Plugin.Templates/DroidDeck.Plugin.Templates.csproj -c Release --no-build -p:PackageOutputPath=artifacts/nuget
-          dotnet pack tools/DroidDeck.PluginPack/DroidDeck.PluginPack.csproj -c Release --no-build -p:PackageOutputPath=artifacts/nuget
+          dotnet pack src/DroidDeck.Plugin.Abstractions/DroidDeck.Plugin.Abstractions.csproj -c Release --no-build -p:PackageOutputPath="${{ github.workspace }}/artifacts/nuget"
+          dotnet pack src/DroidDeck.Plugin.UI/DroidDeck.Plugin.UI.csproj -c Release --no-build -p:PackageOutputPath="${{ github.workspace }}/artifacts/nuget"
+          dotnet pack templates/DroidDeck.Plugin.Templates/DroidDeck.Plugin.Templates.csproj -c Release --no-build -p:PackageOutputPath="${{ github.workspace }}/artifacts/nuget"
+          dotnet pack tools/DroidDeck.PluginPack/DroidDeck.PluginPack.csproj -c Release --no-build -p:PackageOutputPath="${{ github.workspace }}/artifacts/nuget"
 
       - name: Publish portable app
         run: >-
