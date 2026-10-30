@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 env:
@@ -77,6 +77,9 @@ jobs:
           "RELEASE_VERSION=$expected" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           $prerelease = if ($env:TAG.Contains('-')) { 'true' } else { 'false' }
           "RELEASE_IS_PRERELEASE=$prerelease" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+          $notes = "docs/releases/$env:TAG.md"
+          if (-not (Test-Path -LiteralPath $notes)) { throw "Missing release notes '$notes'." }
 
       - name: Restore
         run: dotnet restore DroidDeck.slnx
