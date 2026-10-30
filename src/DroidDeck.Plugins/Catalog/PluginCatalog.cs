@@ -534,7 +534,8 @@ public sealed record CatalogEntry
 
 /// <summary>
 /// Selects the best version for this host and applies catalog search filters.
-/// Nothing here downloads or installs a package.
+/// Browsing only; downloading and installing happen in <see cref="CatalogInstaller"/>
+/// after an explicit user request.
 /// </summary>
 public static class CatalogBrowser
 {

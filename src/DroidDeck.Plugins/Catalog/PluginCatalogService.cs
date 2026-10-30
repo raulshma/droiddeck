@@ -32,8 +32,9 @@ public sealed record CatalogSourceStatus(
 /// <summary>
 /// Aggregates the user's catalog sources for the catalog page: it loads cached
 /// catalogs on startup so browsing works offline, refreshes sources on request,
-/// and exposes search over the merged results. It never downloads a package,
-/// installs a plugin, or records a trust decision.
+/// and exposes search over the merged results. This service stays read-only;
+/// downloading, installing, and updates live in <see cref="CatalogInstaller"/>,
+/// which is driven by explicit user actions only.
 /// </summary>
 public sealed class PluginCatalogService
 {

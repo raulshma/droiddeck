@@ -21,7 +21,7 @@
             <StackPanel Spacing="2">
                 <TextBlock Text="Catalog" Style="{StaticResource TitleTextBlockStyle}" />
                 <TextBlock
-                    Text="Browse plugin catalogs you add. Browsing never installs or trusts a plugin."
+                    Text="Browse plugin catalogs you add. Installing always asks for a trust decision first; nothing installs or updates by itself."
                     FontSize="12"
                     Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
             </StackPanel>
@@ -242,11 +242,24 @@
                                         Text="{Binding Tags}"
                                         FontSize="12"
                                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        VerticalAlignment="Center"
                                         Visibility="{Binding HasTags, Converter={StaticResource BoolToVisibility}}" />
                                     <TextBlock
                                         Text="{Binding SourceLabel}"
                                         FontSize="12"
-                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        VerticalAlignment="Center" />
+                                    <TextBlock
+                                        Text="{Binding InstalledLabel}"
+                                        FontSize="12"
+                                        Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                        VerticalAlignment="Center"
+                                        Visibility="{Binding HasInstalledLabel, Converter={StaticResource BoolToVisibility}}" />
+                                    <Button
+                                        Content="{Binding InstallLabel}"
+                                        IsEnabled="{Binding CanInstall}"
+                                        Click="OnInstallClick"
+                                        AutomationProperties.AutomationId="{Binding InstallId}" />
                                 </StackPanel>
                             </Grid>
                         </DataTemplate>

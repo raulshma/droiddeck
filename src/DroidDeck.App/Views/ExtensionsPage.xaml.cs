@@ -9,6 +9,7 @@ using DroidDeck.Core.Diagnostics;
 using DroidDeck.Plugin.Abstractions;
 using DroidDeck.Plugin.Abstractions.Rendering;
 using DroidDeck.Plugins;
+using DroidDeck.Plugins.Catalog;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
@@ -25,9 +26,14 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
     private readonly RendererService _renderers;
     private readonly IDiagnosticsService _diagnostics;
     private readonly AppPaths _paths;
+    private readonly PluginCatalogService _catalog;
+    private readonly CatalogInstaller _installer;
+    private readonly PluginAuditLog _audit;
     private readonly ILogger<ExtensionsPage> _logger;
     private readonly DispatcherQueue? _dispatcher;
     private readonly ObservableCollection<PluginRow> _rows = [];
+    private Dictionary<string, string> _updateVersions = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, string> _rollbackVersions = new(StringComparer.OrdinalIgnoreCase);
     private bool _disposed;
 
     /// <summary>Creates the extensions page.</summary>
@@ -36,12 +42,18 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         RendererService renderers,
         IDiagnosticsService diagnostics,
         AppPaths paths,
+        PluginCatalogService catalog,
+        CatalogInstaller installer,
+        PluginAuditLog audit,
         ILogger<ExtensionsPage> logger)
     {
         _plugins = plugins ?? throw new ArgumentNullException(nameof(plugins));
         _renderers = renderers ?? throw new ArgumentNullException(nameof(renderers));
         _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
+        _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
+        _installer = installer ?? throw new ArgumentNullException(nameof(installer));
+        _audit = audit ?? throw new ArgumentNullException(nameof(audit));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _dispatcher = DispatcherQueue.GetForCurrentThread();
 
@@ -63,6 +75,55 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         UpdateRendererRows();
         UpdateRows();
         RestartNotice.IsOpen = _plugins.RestartRequired;
+        _ = RefreshInstallStateAsync();
+    }
+
+    /// <summary>
+    /// Computes which plugins have a catalog update or a rollback backup, then
+    /// re-renders the rows. Manual only: this runs when the page refreshes, never
+    /// on a timer, and nothing is downloaded or installed by it.
+    /// </summary>
+    private async Task RefreshInstallStateAsync()
+    {
+        try
+        {
+            if (!_catalog.IsInitialized)
+            {
+                await _catalog.InitializeAsync();
+            }
+
+            var rollback = await _installer.GetRollbackVersionsAsync();
+            var installed = await _installer.GetInstalledAsync();
+            var installedVersions = installed.ToDictionary(
+                plugin => plugin.PluginId,
+                plugin => plugin.Version,
+                StringComparer.OrdinalIgnoreCase);
+            var updates = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var entry in _catalog.Browse(new CatalogQuery()))
+            {
+                if (entry.Compatibility == CatalogCompatibility.Incompatible ||
+                    !installedVersions.TryGetValue(entry.Plugin.Id, out var current))
+                {
+                    continue;
+                }
+
+                if (SemanticVersion.TryParse(entry.Version.Version, out var candidate) &&
+                    SemanticVersion.TryParse(current, out var parsedCurrent) &&
+                    candidate > parsedCurrent)
+                {
+                    updates[entry.Plugin.Id] = entry.Version.Version;
+                }
+            }
+
+            _rollbackVersions = new Dictionary<string, string>(rollback, StringComparer.OrdinalIgnoreCase);
+            _updateVersions = updates;
+            Dispatch(UpdateRows);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            _logger.LogWarning(exception, "Catalog update detection for the extensions page failed.");
+        }
     }
 
     /// <inheritdoc />
@@ -122,7 +183,9 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         foreach (var status in _plugins.Statuses)
         {
             var health = _plugins.Health.Get(status.Id);
-            _rows.Add(new PluginRow(status, health));
+            _updateVersions.TryGetValue(status.Id, out var updateVersion);
+            _rollbackVersions.TryGetValue(status.Id, out var rollbackVersion);
+            _rows.Add(new PluginRow(status, health, updateVersion, rollbackVersion));
         }
 
         EmptyText.Text = _plugins.PluginsDisabled
@@ -278,9 +341,15 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
             }
 
             var trusted = await _plugins.TrustAsync(row.PluginId);
-            ShowAction(trusted
-                ? $"Approved {row.Title}. Restart DroidDeck to load it."
-                : $"{row.Title} no longer needs approval.");
+            if (trusted)
+            {
+                await RecordTrustAuditAsync(row.PluginId, row.Version);
+                ShowAction($"Approved {row.Title}. Restart DroidDeck to load it.");
+            }
+            else
+            {
+                ShowAction($"{row.Title} no longer needs approval.");
+            }
         }
         catch (Exception exception)
         {
@@ -330,6 +399,197 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
             {
                 current.IsEnabled = true;
             }
+        }
+    }
+
+    private async void OnUpdatePluginClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not PluginRow { CanUpdate: true } row ||
+            sender is not Button button)
+        {
+            return;
+        }
+
+        var entry = _catalog.Browse(new CatalogQuery()).FirstOrDefault(candidate =>
+            string.Equals(candidate.Plugin.Id, row.PluginId, StringComparison.OrdinalIgnoreCase) &&
+            candidate.Compatibility != CatalogCompatibility.Incompatible);
+        if (entry is null)
+        {
+            ShowAction($"No catalog entry for {row.Title} is available right now. Refresh the Catalog page.", isError: true);
+            return;
+        }
+
+        button.IsEnabled = false;
+        ShowAction($"Downloading and verifying {row.Title} v{entry.Version.Version} from {entry.Source.Name}…");
+        try
+        {
+            var result = await _installer.UpdateAsync(entry, ShowTrustDecisionAsync);
+            if (result.Succeeded)
+            {
+                ShowAction($"Updated {row.Title} to v{result.ToVersion}. The previous version " +
+                    $"{result.FromVersion} is kept for rollback. Approve the new files and restart " +
+                    "DroidDeck to load them.");
+            }
+            else
+            {
+                ShowAction(result.Error ?? "The update failed.", isError: true);
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning(exception, "Updating {PluginId} failed.", row.PluginId);
+            ShowAction($"Updating {row.Title} failed: {exception.Message} (Diagnostics ID {_diagnostics.DiagnosticsId}).",
+                isError: true);
+        }
+        finally
+        {
+            button.IsEnabled = true;
+            _ = RefreshInstallStateAsync();
+        }
+    }
+
+    private async void OnRollbackPluginClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not PluginRow { CanRollback: true } row ||
+            sender is not Button button)
+        {
+            return;
+        }
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = $"Roll back {row.Title} to v{_rollbackVersions[row.PluginId]}?",
+            Content = new TextBlock
+            {
+                TextWrapping = TextWrapping.Wrap,
+                Text = $"This replaces version {row.Version} with the kept version " +
+                    $"{_rollbackVersions[row.PluginId]}. The restored files match the hash you approved " +
+                    "before, so no new approval is needed. Restart DroidDeck to load the restored version." +
+                    (row.State == PluginState.Loaded
+                        ? " Restart DroidDeck first if the plugin is loaded; its files are in use."
+                        : string.Empty),
+            },
+            PrimaryButtonText = "Roll back",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        button.IsEnabled = false;
+        try
+        {
+            var result = await _installer.RollbackAsync(row.PluginId);
+            ShowAction(result.Succeeded
+                ? $"Rolled back {row.Title} to v{result.ToVersion}. Restart DroidDeck to load it."
+                : result.Error ?? "The rollback failed.", isError: !result.Succeeded);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning(exception, "Rolling back {PluginId} failed.", row.PluginId);
+            ShowAction($"Rolling back {row.Title} failed: {exception.Message} (Diagnostics ID {_diagnostics.DiagnosticsId}).",
+                isError: true);
+        }
+        finally
+        {
+            button.IsEnabled = true;
+            _ = RefreshInstallStateAsync();
+        }
+    }
+
+    private async void OnUninstallPluginClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not PluginRow row || sender is not Button button)
+        {
+            return;
+        }
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = $"Uninstall {row.Title}?",
+            Content = new TextBlock
+            {
+                TextWrapping = TextWrapping.Wrap,
+                Text = $"This removes the plugin files of version {row.Version} from disk, including its " +
+                    "data folder. The catalog source it came from is not changed, and the removal is " +
+                    "recorded in the plugin audit log." +
+                    (row.State == PluginState.Loaded
+                        ? " Restart DroidDeck first if the plugin is loaded; its files are in use."
+                        : string.Empty),
+            },
+            PrimaryButtonText = "Uninstall",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        button.IsEnabled = false;
+        try
+        {
+            var result = await _installer.UninstallAsync(row.PluginId);
+            ShowAction(result.Succeeded
+                ? $"Uninstalled {row.Title}. The plugin list updates after DroidDeck restarts."
+                : result.Error ?? "The uninstall failed.", isError: !result.Succeeded);
+            _ = RefreshInstallStateAsync();
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning(exception, "Uninstalling {PluginId} failed.", row.PluginId);
+            ShowAction($"Uninstalling {row.Title} failed: {exception.Message} (Diagnostics ID {_diagnostics.DiagnosticsId}).",
+                isError: true);
+        }
+        finally
+        {
+            button.IsEnabled = true;
+        }
+    }
+
+    private async Task<bool> ShowTrustDecisionAsync(CatalogInstallPlan plan)
+    {
+        if (_dispatcher is null || _dispatcher.HasThreadAccess)
+        {
+            return await CatalogInstallDialogs.ShowTrustAsync(XamlRoot, plan);
+        }
+
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _dispatcher.TryEnqueue(async () =>
+        {
+            try
+            {
+                completion.SetResult(await CatalogInstallDialogs.ShowTrustAsync(XamlRoot, plan));
+            }
+            catch (Exception exception)
+            {
+                completion.SetException(exception);
+            }
+        });
+        return await completion.Task;
+    }
+
+    private async Task RecordTrustAuditAsync(string pluginId, string version)
+    {
+        try
+        {
+            await _audit.AppendAsync(new PluginAuditEntry(
+                DateTimeOffset.UtcNow,
+                "trust",
+                pluginId,
+                FromVersion: version,
+                ToVersion: version,
+                Result: "success",
+                Reason: null,
+                SourceId: null));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(exception, "The trust audit entry for {PluginId} could not be written.", pluginId);
         }
     }
 
@@ -507,8 +767,12 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
     /// <summary>One installed plugin shaped for the extensions list.</summary>
     public sealed class PluginRow
     {
-        /// <summary>Creates a row from a plugin status and its health.</summary>
-        public PluginRow(PluginStatus status, PluginHealthSnapshot? health)
+        /// <summary>Creates a row from a plugin status, its health, and its catalog install state.</summary>
+        public PluginRow(
+            PluginStatus status,
+            PluginHealthSnapshot? health,
+            string? updateVersion,
+            string? rollbackVersion)
         {
             ArgumentNullException.ThrowIfNull(status);
             PluginId = status.Id;
@@ -519,10 +783,18 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
             TrustId = $"TrustPlugin_{status.Id}";
             FolderId = $"PluginFolder_{status.Id}";
             LogsId = $"PluginLogs_{status.Id}";
+            UpdateId = $"UpdatePlugin_{status.Id}";
+            RollbackId = $"RollbackPlugin_{status.Id}";
+            UninstallId = $"UninstallPlugin_{status.Id}";
             Title = status.Name;
+            Version = status.Version;
             Subtitle = string.IsNullOrWhiteSpace(status.Author)
                 ? $"{status.Id} · version {status.Version} · API {status.ApiVersion}"
                 : $"{status.Id} · version {status.Version} · API {status.ApiVersion} · by {status.Author}";
+            CanUpdate = updateVersion is not null;
+            UpdateLabel = updateVersion is null ? string.Empty : $"Update to v{updateVersion}";
+            CanRollback = rollbackVersion is not null;
+            RollbackLabel = rollbackVersion is null ? string.Empty : $"Roll back to v{rollbackVersion}";
             var capabilities = PluginCapabilities.Parse(status.Capabilities);
             CapabilitiesLabel = capabilities.Known == PluginCapability.None && !capabilities.HasUnknown
                 ? "Declared capabilities: none."
@@ -603,8 +875,32 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         /// <summary>Gets the view-logs button automation id.</summary>
         public string LogsId { get; }
 
+        /// <summary>Gets the update button automation id.</summary>
+        public string UpdateId { get; }
+
+        /// <summary>Gets the rollback button automation id.</summary>
+        public string RollbackId { get; }
+
+        /// <summary>Gets the uninstall button automation id.</summary>
+        public string UninstallId { get; }
+
+        /// <summary>Gets whether a newer catalog version is available for this plugin.</summary>
+        public bool CanUpdate { get; }
+
+        /// <summary>Gets the update button label, when an update is available.</summary>
+        public string UpdateLabel { get; }
+
+        /// <summary>Gets whether a rollback backup exists for this plugin.</summary>
+        public bool CanRollback { get; }
+
+        /// <summary>Gets the rollback button label, when a backup exists.</summary>
+        public string RollbackLabel { get; }
+
         /// <summary>Gets the plugin name or failure title.</summary>
         public string Title { get; }
+
+        /// <summary>Gets the plugin version.</summary>
+        public string Version { get; }
 
         /// <summary>Gets the plugin identity line.</summary>
         public string Subtitle { get; }

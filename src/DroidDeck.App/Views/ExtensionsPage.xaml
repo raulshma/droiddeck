@@ -253,6 +253,16 @@
                                                 Click="OnDisablePluginClick"
                                                 AutomationProperties.AutomationId="{Binding DisableId}" />
                                             <Button
+                                                Content="{Binding UpdateLabel}"
+                                                Visibility="{Binding CanUpdate, Converter={StaticResource BoolToVisibility}}"
+                                                Click="OnUpdatePluginClick"
+                                                AutomationProperties.AutomationId="{Binding UpdateId}" />
+                                            <Button
+                                                Content="{Binding RollbackLabel}"
+                                                Visibility="{Binding CanRollback, Converter={StaticResource BoolToVisibility}}"
+                                                Click="OnRollbackPluginClick"
+                                                AutomationProperties.AutomationId="{Binding RollbackId}" />
+                                            <Button
                                                 Content="Folder"
                                                 Click="OnOpenPluginFolderClick"
                                                 AutomationProperties.AutomationId="{Binding FolderId}" />
@@ -260,6 +270,10 @@
                                                 Content="Logs"
                                                 Click="OnViewPluginLogsClick"
                                                 AutomationProperties.AutomationId="{Binding LogsId}" />
+                                            <Button
+                                                Content="Uninstall"
+                                                Click="OnUninstallPluginClick"
+                                                AutomationProperties.AutomationId="{Binding UninstallId}" />
                                         </StackPanel>
                                     </Grid>
                                 </DataTemplate>

@@ -324,6 +324,24 @@ public partial class App : Application, IDisposable
                 loggerFactory.CreateLogger<PluginCatalogService>());
         });
 
+        services.AddSingleton(new PluginAuditLog(_paths.PluginAuditFile));
+        services.AddSingleton(provider => new CatalogInstaller(
+            new HttpClient(new SocketsHttpHandler
+            {
+                AutomaticDecompression = DecompressionMethods.All,
+                AllowAutoRedirect = true,
+                MaxAutomaticRedirections = 3,
+            })
+            {
+                // Packages are larger than catalogs, so the download gets a
+                // longer budget than the 20 second catalog client.
+                Timeout = TimeSpan.FromSeconds(120),
+            },
+            _paths,
+            provider.GetRequiredService<PluginAuditLog>(),
+            userAgent: $"DroidDeck/{AppInfo.Version}",
+            logger: loggerFactory.CreateLogger<CatalogInstaller>()));
+
         services.AddSingleton<IDeviceService>(provider =>
         {
             var adbPath = configuration.Current.Settings.Tools.AdbPath;

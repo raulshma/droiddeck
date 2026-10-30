@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using DroidDeck.Plugin.Abstractions;
 using DroidDeck.Plugins.Catalog;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Dispatching;
@@ -10,27 +11,32 @@ using Microsoft.UI.Xaml.Media;
 namespace DroidDeck.App.Views;
 
 /// <summary>
-/// Browses the plugin catalogs the user added. Catalogs are fetched only when
-/// the user refreshes, cached for offline browsing, and never installed or
-/// trusted from here.
+/// Browses the plugin catalogs the user added, and installs or updates a
+/// plugin when the user asks for it. Catalogs are fetched only when the user
+/// refreshes; installing always runs the trust dialog before any file is
+/// extracted, and nothing here installs or updates on its own.
 /// </summary>
 public sealed partial class CatalogPage : Page, IRefreshablePage, IDisposable
 {
     private const string AllTagsLabel = "All tags";
 
     private readonly PluginCatalogService _catalog;
+    private readonly CatalogInstaller _installer;
     private readonly ILogger<CatalogPage> _logger;
     private readonly DispatcherQueue? _dispatcher;
     private readonly ObservableCollection<CatalogEntryRow> _rows = [];
     private readonly ObservableCollection<CatalogSourceRow> _sourceRows = [];
+    private readonly Dictionary<string, CatalogEntry> _entries = new(StringComparer.Ordinal);
+    private Dictionary<string, string> _installedVersions = new(StringComparer.OrdinalIgnoreCase);
     private bool _initialized;
     private bool _updatingFilters;
     private bool _disposed;
 
     /// <summary>Creates the catalog page.</summary>
-    public CatalogPage(PluginCatalogService catalog, ILogger<CatalogPage> logger)
+    public CatalogPage(PluginCatalogService catalog, CatalogInstaller installer, ILogger<CatalogPage> logger)
     {
         _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
+        _installer = installer ?? throw new ArgumentNullException(nameof(installer));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _dispatcher = DispatcherQueue.GetForCurrentThread();
 
@@ -78,6 +84,19 @@ public sealed partial class CatalogPage : Page, IRefreshablePage, IDisposable
             Dispatch(() => ShowAction(
                 $"Catalog sources could not be loaded: {exception.Message}",
                 isError: true));
+        }
+
+        try
+        {
+            var installed = await _installer.GetInstalledAsync();
+            _installedVersions = installed.ToDictionary(
+                plugin => plugin.PluginId,
+                plugin => plugin.Version,
+                StringComparer.OrdinalIgnoreCase);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(exception, "The installed plugins could not be scanned for the catalog page.");
         }
 
         Dispatch(() =>
@@ -156,15 +175,85 @@ public sealed partial class CatalogPage : Page, IRefreshablePage, IDisposable
         });
 
         _rows.Clear();
+        _entries.Clear();
         foreach (var entry in entries)
         {
-            _rows.Add(new CatalogEntryRow(entry));
+            _installedVersions.TryGetValue(entry.Plugin.Id, out var installedVersion);
+            var row = new CatalogEntryRow(entry, installedVersion);
+            _rows.Add(row);
+            _entries[row.EntryId] = entry;
         }
 
         ResultsText.Text = entries.Count == 1
             ? "1 plugin matches."
             : $"{entries.Count} plugins match.";
         EmptyText.Visibility = entries.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private async void OnInstallClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not CatalogEntryRow row || sender is not Button button)
+        {
+            return;
+        }
+
+        if (!_entries.TryGetValue(row.EntryId, out var entry))
+        {
+            return;
+        }
+
+        button.IsEnabled = false;
+        ShowAction($"Downloading and verifying {row.Title} from {row.SourceName}…");
+        try
+        {
+            var result = await _installer.InstallAsync(entry, ShowTrustDecisionAsync);
+            if (result.Succeeded)
+            {
+                _installedVersions[entry.Plugin.Id] = result.ToVersion ?? entry.Version.Version;
+                ShowAction(result.Action == CatalogInstallAction.Update
+                    ? $"Updated {row.Title} to v{result.ToVersion}. The previous version " +
+                        $"{result.FromVersion} is kept for rollback in Extensions. " +
+                        "Approve the new files there and restart DroidDeck to load them."
+                    : $"Installed {row.Title} v{result.ToVersion}. Review and approve it in Extensions; " +
+                        "restart DroidDeck to load it.");
+            }
+            else
+            {
+                ShowAction(result.Error ?? "The install failed.", isError: true);
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning(exception, "Installing {PluginId} failed.", entry.Plugin.Id);
+            ShowAction($"Installing {row.Title} failed: {exception.Message}", isError: true);
+        }
+        finally
+        {
+            button.IsEnabled = true;
+            Render();
+        }
+    }
+
+    private async Task<bool> ShowTrustDecisionAsync(CatalogInstallPlan plan)
+    {
+        if (_dispatcher is null || _dispatcher.HasThreadAccess)
+        {
+            return await CatalogInstallDialogs.ShowTrustAsync(XamlRoot, plan);
+        }
+
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _dispatcher.TryEnqueue(async () =>
+        {
+            try
+            {
+                completion.SetResult(await CatalogInstallDialogs.ShowTrustAsync(XamlRoot, plan));
+            }
+            catch (Exception exception)
+            {
+                completion.SetException(exception);
+            }
+        });
+        return await completion.Task;
     }
 
     private async void OnRefreshClick(object sender, RoutedEventArgs e)
@@ -309,7 +398,9 @@ public sealed partial class CatalogPage : Page, IRefreshablePage, IDisposable
             Content = new TextBlock
             {
                 TextWrapping = TextWrapping.Wrap,
-                Text = "This only removes the source from DroidDeck. Installed plugins and cached catalog files stay on disk.",
+                Text = "This only removes the source from DroidDeck. Plugins you installed stay installed " +
+                    "and keep working, but they can no longer be browsed, updated, or reinstalled from " +
+                    "this source. Cached catalog files stay on disk.",
             },
             PrimaryButtonText = "Remove",
             CloseButtonText = "Cancel",
@@ -446,8 +537,8 @@ public sealed partial class CatalogPage : Page, IRefreshablePage, IDisposable
     /// <summary>One catalog entry shaped for the browse list.</summary>
     public sealed class CatalogEntryRow
     {
-        /// <summary>Creates a row from a catalog entry.</summary>
-        public CatalogEntryRow(CatalogEntry entry)
+        /// <summary>Creates a row from a catalog entry and the installed version, when present.</summary>
+        public CatalogEntryRow(CatalogEntry entry, string? installedVersion)
         {
             ArgumentNullException.ThrowIfNull(entry);
             EntryId = $"CatalogEntry_{entry.Plugin.Id}_{entry.Source.Id}";
@@ -478,6 +569,21 @@ public sealed partial class CatalogPage : Page, IRefreshablePage, IDisposable
             Tags = entry.Plugin.Tags is { Count: > 0 } tags ? string.Join(" · ", tags) : string.Empty;
             HasTags = Tags.Length > 0;
             SourceLabel = $"Source: {entry.Source.Name}";
+            SourceName = entry.Source.Name;
+            var updateAvailable = installedVersion is not null &&
+                SemanticVersion.TryParse(entry.Version.Version, out var candidate) &&
+                SemanticVersion.TryParse(installedVersion, out var current) &&
+                candidate > current;
+            CanInstall = entry.Compatibility != CatalogCompatibility.Incompatible &&
+                (installedVersion is null || updateAvailable);
+            InstallLabel = installedVersion is null
+                ? "Install"
+                : updateAvailable ? "Update" : "Up to date";
+            InstallId = $"CatalogInstall_{entry.Plugin.Id}_{entry.Source.Id}";
+            InstalledLabel = installedVersion is null
+                ? string.Empty
+                : updateAvailable ? $"Installed v{installedVersion} · update available" : $"Installed v{installedVersion}";
+            HasInstalledLabel = InstalledLabel.Length > 0;
         }
 
         /// <summary>Gets the entry automation id.</summary>
@@ -521,6 +627,24 @@ public sealed partial class CatalogPage : Page, IRefreshablePage, IDisposable
 
         /// <summary>Gets the source label.</summary>
         public string SourceLabel { get; }
+
+        /// <summary>Gets the source display name used in install progress messages.</summary>
+        public string SourceName { get; }
+
+        /// <summary>Gets whether the install or update action is offered.</summary>
+        public bool CanInstall { get; }
+
+        /// <summary>Gets the install button label: Install, Update, or Up to date.</summary>
+        public string InstallLabel { get; }
+
+        /// <summary>Gets the install button automation id.</summary>
+        public string InstallId { get; }
+
+        /// <summary>Gets the installed-state label, when the plugin is installed.</summary>
+        public string InstalledLabel { get; }
+
+        /// <summary>Gets whether the installed-state label should be shown.</summary>
+        public bool HasInstalledLabel { get; }
 
         private static Brush ResolveBrush(string key) =>
             Application.Current.Resources.TryGetValue(key, out var resource) && resource is Brush brush

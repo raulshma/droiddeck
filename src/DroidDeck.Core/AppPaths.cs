@@ -66,6 +66,12 @@ public sealed class AppPaths
     /// <summary>Gets the installed plugin directory.</summary>
     public string PluginsDirectory => Path.Combine(DataDirectory, "plugins");
 
+    /// <summary>Gets the directory that keeps the previous version of an updated plugin for rollback.</summary>
+    public string PluginBackupsDirectory => Path.Combine(DataDirectory, "plugin-backups");
+
+    /// <summary>Gets the append-only plugin audit log file.</summary>
+    public string PluginAuditFile => Path.Combine(LogsDirectory, "plugin-audit.jsonl");
+
     /// <summary>Gets the plugin catalog directory.</summary>
     public string CatalogDirectory => Path.Combine(DataDirectory, "catalog");
 
@@ -116,6 +122,7 @@ public sealed class AppPaths
         Directory.CreateDirectory(ScreenshotsDirectory);
         Directory.CreateDirectory(RecordingsDirectory);
         Directory.CreateDirectory(PluginsDirectory);
+        Directory.CreateDirectory(PluginBackupsDirectory);
         Directory.CreateDirectory(CatalogDirectory);
         Directory.CreateDirectory(CatalogCacheDirectory);
         Directory.CreateDirectory(QuarantineDirectory);
