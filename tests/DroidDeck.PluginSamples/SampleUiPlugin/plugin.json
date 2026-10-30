@@ -5,7 +5,7 @@
   "author": "DroidDeck",
   "description": "A sample plugin that contributes every host-managed UI surface: a navigation page, a project tab, a home widget, a session panel, a settings section, a status bar item, a toolbar action, a command, and a dialog.",
   "apiVersion": "1.0",
-  "minHostVersion": "0.1.0",
+  "minHostVersion": "0.0.1-alpha",
   "entryAssembly": "SampleUiPlugin.dll",
   "entryType": "SampleUiPlugin.SampleUiPlugin",
   "capabilities": [

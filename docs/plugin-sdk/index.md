@@ -29,16 +29,22 @@ Plugin API version: **1.0**. The ABI is stable within a major version.
 - Never reference `DroidDeck.App`; the shell is not part of the plugin contract.
 
 The contracts live in `src/DroidDeck.Plugin.Abstractions` (plain .NET) and
-`src/DroidDeck.Plugin.UI` (WinUI component kit). Both are published as NuGet
-packages. `DroidDeck.Architecture.Tests` enforces that plugin contracts stay
-free of shell references.
+`src/DroidDeck.Plugin.UI` (WinUI component kit). Both ship as NuGet packages.
+The 0.0.1-alpha packages are attached to the
+[release](https://github.com/raulshma/droiddeck/releases/tag/v0.0.1-alpha), not
+NuGet.org; download them into one folder and add it as a package source.
+`DroidDeck.Architecture.Tests` enforces that plugin contracts stay free of shell
+references.
 
 ## Quick start
 
-Install the templates and create a plugin:
+Download the four `.nupkg` assets into `<sdk-folder>`, install the template
+package, and create a plugin. Add `<sdk-folder>` to `NuGet.config` (see
+[adding the SDK](authoring.md#adding-the-sdk-to-an-existing-project)) before
+building:
 
 ```text
-dotnet new install DroidDeck.Plugin.Templates
+dotnet new install <sdk-folder>\DroidDeck.Plugin.Templates.0.0.1-alpha.nupkg
 dotnet new droiddeck-plugin-command -n HelloPlugin -o HelloPlugin --pluginId com.example.hello
 dotnet build HelloPlugin -c Release
 ```
@@ -50,7 +56,7 @@ edits.
 Package the build output:
 
 ```text
-dotnet tool install --global DroidDeck.PluginPack
+dotnet tool install --global DroidDeck.PluginPack --add-source <sdk-folder> --version 0.0.1-alpha
 droiddeck-plugin-pack HelloPlugin/bin/Release/net10.0 --output artifacts
 ```
 

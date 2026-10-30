@@ -5,7 +5,7 @@
   "author": "DroidDeck",
   "description": "A sample plugin that detects Ionic projects and explains the files that justified the detection.",
   "apiVersion": "1.0",
-  "minHostVersion": "0.1.0",
+  "minHostVersion": "0.0.1-alpha",
   "entryAssembly": "SampleDetectorPlugin.dll",
   "entryType": "SampleDetectorPlugin.SampleDetectorPlugin",
   "capabilities": [
