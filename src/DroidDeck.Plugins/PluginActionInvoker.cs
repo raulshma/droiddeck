@@ -208,6 +208,106 @@ public sealed class PluginActionInvoker
         }
     }
 
+    /// <summary>
+    /// Delivers a session panel update on the caller's thread with failure
+    /// isolation: a throwing panel is recorded unhealthy and returned as a
+    /// failed result, so the host can fall back without disturbing siblings.
+    /// Updates are synchronous UI-thread mutations, so no timeout applies.
+    /// </summary>
+    public PluginInvocationResult UpdateSessionPanel(
+        string pluginId,
+        ISessionPanel panel,
+        SessionPanelSnapshot snapshot)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pluginId);
+        ArgumentNullException.ThrowIfNull(panel);
+        ArgumentNullException.ThrowIfNull(snapshot);
+
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            panel.UpdateSession(snapshot);
+            stopwatch.Stop();
+            _health.RecordSuccess(pluginId);
+            return PluginInvocationResult.Success(stopwatch.Elapsed);
+        }
+        catch (Exception exception)
+        {
+            stopwatch.Stop();
+            _health.RecordFailure(pluginId, exception.Message);
+            _logger.LogWarning(
+                exception,
+                "Plugin {PluginId} failed to update session panel {PanelId}.",
+                pluginId,
+                panel.Id);
+            return new PluginInvocationResult(false, false, false, exception.Message, stopwatch.Elapsed);
+        }
+    }
+
+    /// <summary>
+    /// Prepares a plugin dialog for display: the content is created with the
+    /// usual timeout isolation, and the result carries the error so the host
+    /// can show a fallback message instead of the plugin content.
+    /// </summary>
+    public Task<PluginDialogPresentation> CreateDialogAsync(
+        PluginExtension<IPluginDialog> extension,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(extension);
+        return CreateDialogAsync(extension.PluginId, extension.Value, cancellationToken);
+    }
+
+    /// <summary>
+    /// Prepares a plugin dialog for display: the content is created with the
+    /// usual timeout isolation, and the result carries the error so the host
+    /// can show a fallback message instead of the plugin content.
+    /// </summary>
+    public async Task<PluginDialogPresentation> CreateDialogAsync(
+        string pluginId,
+        IPluginDialog dialog,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pluginId);
+        ArgumentNullException.ThrowIfNull(dialog);
+        var content = await CreateViewAsync(
+            pluginId,
+            $"dialog {dialog.Id}",
+            token => dialog.CreateContentAsync(token),
+            cancellationToken).ConfigureAwait(false);
+        return new PluginDialogPresentation(pluginId, dialog, content);
+    }
+
+    /// <summary>
+    /// Delivers the dialog outcome to the plugin with timeout and failure
+    /// isolation; a throwing handler is recorded as a plugin fault.
+    /// </summary>
+    public Task<PluginInvocationResult> InvokeDialogClosedAsync(
+        PluginExtension<IPluginDialog> extension,
+        string? buttonId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(extension);
+        return InvokeDialogClosedAsync(extension.PluginId, extension.Value, buttonId, cancellationToken);
+    }
+
+    /// <summary>
+    /// Delivers the dialog outcome to the plugin with timeout and failure
+    /// isolation; a throwing handler is recorded as a plugin fault.
+    /// </summary>
+    public Task<PluginInvocationResult> InvokeDialogClosedAsync(
+        string pluginId,
+        IPluginDialog dialog,
+        string? buttonId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pluginId);
+        ArgumentNullException.ThrowIfNull(dialog);
+        return InvokeAsync(
+            pluginId,
+            token => dialog.OnClosedAsync(buttonId, token),
+            cancellationToken);
+    }
+
     /// <summary>Invokes a plugin callback with timeout and failure isolation.</summary>
     public async Task<PluginInvocationResult> InvokeAsync(
         string pluginId,
@@ -291,4 +391,21 @@ public sealed record PluginViewResult(
 {
     /// <summary>Gets whether content was created.</summary>
     public bool Succeeded => Error is null;
+}
+
+/// <summary>
+/// A plugin dialog prepared for host display. When the plugin content failed to
+/// create, <see cref="Content"/> carries the error and the host shows its
+/// fallback message instead of the plugin content.
+/// </summary>
+/// <param name="PluginId">The contributing plugin identifier.</param>
+/// <param name="Dialog">The dialog contribution.</param>
+/// <param name="Content">The isolated content-creation outcome.</param>
+public sealed record PluginDialogPresentation(
+    string PluginId,
+    IPluginDialog Dialog,
+    PluginViewResult Content)
+{
+    /// <summary>Gets whether the dialog content was created.</summary>
+    public bool Succeeded => Content.Succeeded;
 }

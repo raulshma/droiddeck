@@ -68,6 +68,12 @@ public enum PluginCapability
 
     /// <summary>Reads and writes plugin-private data.</summary>
     PluginData = 1 << 19,
+
+    /// <summary>Contributes a status bar item.</summary>
+    StatusBarItem = 1 << 20,
+
+    /// <summary>Contributes a host-shown dialog.</summary>
+    PluginDialog = 1 << 21,
 }
 
 /// <summary>
@@ -111,6 +117,8 @@ public static class PluginCapabilities
             ["highlight-rule-provider"] = PluginCapability.HighlightRuleProvider,
             ["shell-commands"] = PluginCapability.ShellCommands,
             ["plugin-data"] = PluginCapability.PluginData,
+            ["status-bar-item"] = PluginCapability.StatusBarItem,
+            ["plugin-dialog"] = PluginCapability.PluginDialog,
         };
 
     /// <summary>

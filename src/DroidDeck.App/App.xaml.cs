@@ -42,6 +42,7 @@ using DroidDeck.Projects.Storage;
 using DroidDeck.Screen;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Windows.ApplicationModel.DataTransfer;
@@ -288,7 +289,8 @@ public partial class App : Application, IDisposable
             var loader = new PluginLoader(
                 registry,
                 loggerFactory,
-                secretStore: provider.GetRequiredService<ISecretStore>());
+                secretStore: provider.GetRequiredService<ISecretStore>(),
+                dialogs: provider.GetRequiredService<PluginDialogService>());
             return new PluginHost(
                 registry,
                 loader,
@@ -299,6 +301,14 @@ public partial class App : Application, IDisposable
                     provider.GetRequiredService<IProcessRunner>(),
                     () => GetAdbPath(provider))]);
         });
+
+        services.AddSingleton(provider => new PluginDialogService(
+            () => provider.GetRequiredService<PluginHost>(),
+            () => (provider.GetRequiredService<MainWindow>().Content as FrameworkElement)?.XamlRoot,
+            DispatcherQueue.GetForCurrentThread()));
+
+        services.AddSingleton(_ => new PluginUiOrderStore(
+            System.IO.Path.Combine(_paths.DataDirectory, "ui-order.json")));
 
         services.AddSingleton(provider => new PluginUiFaultReporter(
             provider.GetRequiredService<PluginHost>().Health));

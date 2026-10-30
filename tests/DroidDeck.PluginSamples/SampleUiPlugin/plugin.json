@@ -3,7 +3,7 @@
   "name": "Sample UI Plugin",
   "version": "1.0.0",
   "author": "DroidDeck",
-  "description": "A sample plugin that contributes a navigation page, a project tab, and a home widget built from the host UI component kit.",
+  "description": "A sample plugin that contributes every host-managed UI surface: a navigation page, a project tab, a home widget, a session panel, a settings section, a status bar item, a toolbar action, a command, and a dialog.",
   "apiVersion": "1.0",
   "minHostVersion": "0.1.0",
   "entryAssembly": "SampleUiPlugin.dll",
@@ -11,7 +11,13 @@
   "capabilities": [
     "ui-page",
     "project-tab",
-    "home-widget"
+    "home-widget",
+    "session-panel",
+    "settings-section",
+    "status-bar-item",
+    "toolbar-action",
+    "command",
+    "plugin-dialog"
   ],
   "license": "MIT"
 }

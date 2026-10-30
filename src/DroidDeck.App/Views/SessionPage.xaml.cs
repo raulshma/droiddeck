@@ -11,6 +11,7 @@ using DroidDeck.Core.Runs;
 using DroidDeck.Core.Sessions;
 using DroidDeck.Plugin.Abstractions;
 using DroidDeck.Plugin.Abstractions.Rendering;
+using DroidDeck.Plugin.UI.Kit;
 using DroidDeck.Plugin.UI.Rendering;
 using DroidDeck.Plugins;
 using Microsoft.Extensions.Logging;
@@ -27,6 +28,7 @@ namespace DroidDeck.App.Views;
 public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
 {
     private const int MaxBuildLines = 100_000;
+    private const int PanelRecentLogLines = 20;
     private readonly IRunSessionService _runs;
     private readonly ILogcatService _logcat;
     private readonly ISessionStore _store;
@@ -34,6 +36,8 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
     private readonly SessionWorkspace _workspace;
     private readonly IConfigurationService _configuration;
     private readonly PluginHost _plugins;
+    private readonly PluginUiOrderStore _uiOrder;
+    private readonly PluginUiFaultReporter _faultReporter;
     private readonly RendererPane _logRenderer;
     private readonly ILogger<SessionPage> _logger;
     private readonly DispatcherQueue? _dispatcher;
@@ -43,7 +47,9 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
     private readonly List<LogEntry> _allEntries = [];
     private readonly List<LogRow> _searchRows = [];
     private readonly DispatcherTimer _buildTimer;
+    private readonly DispatcherTimer _panelTimer;
     private readonly List<HighlightRuleRow> _highlightRules = [];
+    private readonly Dictionary<string, PluginPanelHost> _pluginPanels = new(StringComparer.Ordinal);
     private HighlightEngine _highlightEngine = new([]);
     private RunSession? _session;
     private RunSession? _boundReadOnly;
@@ -55,6 +61,7 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
     private int _logRebuildGeneration;
     private bool _initializingFilters;
     private bool _reloading;
+    private bool _panelsDirty;
     private bool _disposed;
 
     /// <summary>Creates the session page.</summary>
@@ -66,6 +73,8 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         SessionWorkspace workspace,
         IConfigurationService configuration,
         PluginHost plugins,
+        PluginUiOrderStore uiOrder,
+        PluginUiFaultReporter faultReporter,
         IRendererHost renderers,
         IServiceProvider services,
         ILogger<SessionPage> logger)
@@ -77,6 +86,8 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         _workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         _plugins = plugins ?? throw new ArgumentNullException(nameof(plugins));
+        _uiOrder = uiOrder ?? throw new ArgumentNullException(nameof(uiOrder));
+        _faultReporter = faultReporter ?? throw new ArgumentNullException(nameof(faultReporter));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _dispatcher = DispatcherQueue.GetForCurrentThread();
 
@@ -103,10 +114,13 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         _workspace.Changed += OnWorkspaceChanged;
         _plugins.Registry.Changed += OnPluginRegistryChanged;
         RebuildPluginToolbar();
+        RebuildPluginPanels();
 
         _buildTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
         _buildTimer.Tick += OnBuildTimerTick;
         _buildTimer.Start();
+        _panelTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+        _panelTimer.Tick += OnPanelTimerTick;
 
         Refresh();
     }
@@ -150,6 +164,9 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         _disposed = true;
         _buildTimer.Stop();
         _buildTimer.Tick -= OnBuildTimerTick;
+        _panelTimer.Stop();
+        _panelTimer.Tick -= OnPanelTimerTick;
+        DisposePluginPanels();
         _runs.SessionChanged -= OnSessionChanged;
         _runs.OutputReceived -= OnOutputReceived;
         _workspace.Changed -= OnWorkspaceChanged;
@@ -221,6 +238,7 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         UpdateButtons();
         UpdateBuildErrors();
         UpdateLogStatus();
+        QueuePluginPanelUpdates();
         _ = LoadSavedFiltersAsync();
     }
 
@@ -245,6 +263,7 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         SearchCountText.Text = string.Empty;
         BuildErrorList.ItemsSource = null;
         UpdateButtons();
+        QueuePluginPanelUpdates();
     }
 
     private void UpdateHeader()
@@ -367,7 +386,14 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
     private void RebuildPluginToolbar()
     {
         PluginToolbarPanel.Children.Clear();
-        foreach (var entry in _plugins.Extensions.ToolbarActions)
+
+        // The catalog's declared order applies until the persisted sequence the
+        // user last saw takes over, keeping the toolbar stable across restarts.
+        var entries = _uiOrder.Sort(
+            PluginUiOrderStore.ToolbarSurface,
+            _plugins.Extensions.ToolbarActions,
+            static entry => entry.Action.Id);
+        foreach (var entry in entries)
         {
             var button = new Button
             {
@@ -386,11 +412,16 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
             button.Click += OnPluginToolbarClick;
             PluginToolbarPanel.Children.Add(button);
         }
+
+        PersistUiOrderIfChanged(
+            PluginUiOrderStore.ToolbarSurface,
+            entries.Select(static entry => entry.Action.Id));
     }
 
     private void OnPluginRegistryChanged(object? sender, EventArgs e) => Dispatch(() =>
     {
         RebuildPluginToolbar();
+        RebuildPluginPanels();
         ResetHighlightRules();
         RebuildLogRows();
     });
@@ -438,6 +469,167 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         }
     }
 
+    /// <summary>
+    /// Rebuilds the plugin panel region. Every panel lives in its own fault
+    /// boundary, and stale panels are disposed, so a disabled or crashed
+    /// plugin's panels disappear cleanly without touching their siblings.
+    /// </summary>
+    private void RebuildPluginPanels()
+    {
+        var entries = _plugins.Extensions.SessionPanels;
+        foreach (var staleId in _pluginPanels.Keys
+            .Where(id => entries.All(entry => !string.Equals(entry.Panel.Id, id, StringComparison.Ordinal)))
+            .ToArray())
+        {
+            if (_pluginPanels.Remove(staleId, out var stale))
+            {
+                PluginPanelsPanel.Children.Remove(stale.Card);
+                stale.Boundary.Dispose();
+            }
+        }
+
+        foreach (var entry in entries)
+        {
+            if (_pluginPanels.ContainsKey(entry.Panel.Id))
+            {
+                continue;
+            }
+
+            var boundary = new PluginFaultBoundary(
+                entry.PluginId,
+                $"session panel {entry.Panel.Id}",
+                _faultReporter);
+            var card = new PluginCard($"{entry.Panel.Title} · {entry.SourceLabel}") { Content = boundary };
+            PluginPanelsPanel.Children.Add(card);
+            var host = new PluginPanelHost(entry, boundary, card);
+            _pluginPanels[entry.Panel.Id] = host;
+            _ = LoadPluginPanelAsync(entry, boundary);
+        }
+
+        PluginPanelsPanel.Visibility =
+            PluginPanelsPanel.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        QueuePluginPanelUpdates();
+    }
+
+    private void DisposePluginPanels()
+    {
+        foreach (var panel in _pluginPanels.Values)
+        {
+            PluginPanelsPanel.Children.Remove(panel.Card);
+            panel.Boundary.Dispose();
+        }
+
+        _pluginPanels.Clear();
+        PluginPanelsPanel.Visibility = Visibility.Collapsed;
+    }
+
+    private async Task LoadPluginPanelAsync(SessionPanelEntry entry, PluginFaultBoundary boundary)
+    {
+        try
+        {
+            var result = await _plugins.Invoker.CreateViewAsync(
+                entry.PluginId,
+                $"session panel {entry.Panel.Id}",
+                token => entry.Panel.CreateViewAsync(BuildPanelContext(), token),
+                CancellationToken.None).ConfigureAwait(true);
+            if (!_pluginPanels.TryGetValue(entry.Panel.Id, out var host))
+            {
+                return;
+            }
+
+            boundary.Show(result.Content, result.Error);
+            if (result.Succeeded)
+            {
+                host.Loaded = true;
+                QueuePluginPanelUpdates();
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Plugin session panel {PanelId} from {PluginId} could not load: {Error}",
+                    entry.Panel.Id,
+                    entry.PluginId,
+                    result.Error);
+            }
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Loading session panel {PanelId} failed.", entry.Panel.Id);
+            boundary.Show(null, exception.Message);
+        }
+    }
+
+    /// <summary>Marks the panel snapshots stale; the coalescing timer delivers them shortly.</summary>
+    private void QueuePluginPanelUpdates()
+    {
+        if (_pluginPanels.Count == 0)
+        {
+            return;
+        }
+
+        _panelsDirty = true;
+        _panelTimer.Start();
+    }
+
+    private void OnPanelTimerTick(object? sender, object e)
+    {
+        _panelTimer.Stop();
+        if (!_panelsDirty || _pluginPanels.Count == 0)
+        {
+            return;
+        }
+
+        _panelsDirty = false;
+        var snapshot = BuildPanelSnapshot();
+        foreach (var panel in _pluginPanels.Values)
+        {
+            if (!panel.Loaded)
+            {
+                continue;
+            }
+
+            var result = _plugins.Invoker.UpdateSessionPanel(
+                panel.Entry.PluginId,
+                panel.Entry.Panel,
+                snapshot);
+            if (!result.Succeeded)
+            {
+                // One panel's failure swaps only its own boundary to the
+                // fallback card; the other panels keep receiving updates.
+                panel.Boundary.Show(null, result.Error);
+            }
+        }
+    }
+
+    private SessionPanelContext BuildPanelContext() => new(
+        _session?.Id,
+        _session?.DeviceSerial is { Length: > 0 } serial ? serial : _workspace.DeviceSerial,
+        _session?.DeviceName);
+
+    private SessionPanelSnapshot BuildPanelSnapshot()
+    {
+        string[] recent;
+        var entries = _allEntries;
+        var start = Math.Max(0, entries.Count - PanelRecentLogLines);
+        recent = new string[entries.Count - start];
+        for (var index = start; index < entries.Count; index++)
+        {
+            var logEntry = entries[index];
+            recent[index - start] = string.IsNullOrEmpty(logEntry.Tag)
+                ? logEntry.Message
+                : $"{logEntry.LevelLabel}/{logEntry.Tag}: {logEntry.Message}";
+        }
+
+        return new SessionPanelSnapshot(
+            _session?.Id,
+            _session?.DeviceSerial is { Length: > 0 } serial ? serial : _workspace.DeviceSerial,
+            _session?.DeviceName,
+            _session?.State.ToString() ?? "Idle",
+            _session?.IsFinished ?? true,
+            entries.Count,
+            recent);
+    }
+
     private async Task<bool> ConfirmAsync(string title, string message)
     {
         var dialog = new ContentDialog
@@ -450,6 +642,46 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
             XamlRoot = XamlRoot,
         };
         return await dialog.ShowAsync() == ContentDialogResult.Primary;
+    }
+
+    private void PersistUiOrderIfChanged(string surface, IEnumerable<string> orderedIds)
+    {
+        var ids = orderedIds.ToArray();
+        var persisted = _uiOrder.Load(surface);
+        if (persisted.SequenceEqual(ids, StringComparer.Ordinal))
+        {
+            return;
+        }
+
+        _ = SafeSaveAsync(surface, ids);
+    }
+
+    private async Task SafeSaveAsync(string surface, string[] ids)
+    {
+        try
+        {
+            await _uiOrder.SaveAsync(surface, ids).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(exception, "The {Surface} order could not be persisted.", surface);
+        }
+    }
+
+    /// <summary>One session panel and its host chrome.</summary>
+    private sealed class PluginPanelHost(
+        SessionPanelEntry entry,
+        PluginFaultBoundary boundary,
+        PluginCard card)
+    {
+        public SessionPanelEntry Entry { get; } = entry;
+
+        public PluginFaultBoundary Boundary { get; } = boundary;
+
+        public PluginCard Card { get; } = card;
+
+        public bool Loaded { get; set; }
     }
 
     private void UpdateBuildErrors()
@@ -567,6 +799,7 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
             }
 
             UpdateLogStatus();
+            QueuePluginPanelUpdates();
         });
     }
 
@@ -617,6 +850,7 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
 
             AddEntries(e.Entries);
             UpdateLogStatus(e.DroppedLines);
+            QueuePluginPanelUpdates();
         });
     }
 

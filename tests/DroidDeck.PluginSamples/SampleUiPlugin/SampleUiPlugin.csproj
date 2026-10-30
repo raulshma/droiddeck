@@ -17,5 +17,6 @@
 
   <ItemGroup>
     <None Update="plugin.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="settings.schema.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

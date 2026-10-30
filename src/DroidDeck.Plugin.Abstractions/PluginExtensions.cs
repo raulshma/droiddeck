@@ -50,6 +50,18 @@ public interface IPluginRegistry
     /// <summary>Registers a home widget.</summary>
     void AddHomeWidget(IHomeWidget widget);
 
+    /// <summary>Registers a session panel.</summary>
+    void AddSessionPanel(ISessionPanel panel);
+
+    /// <summary>Registers a settings section.</summary>
+    void AddSettingsSection(ISettingsSection section);
+
+    /// <summary>Registers a status bar item.</summary>
+    void AddStatusBarItem(IStatusBarItem item);
+
+    /// <summary>Registers a dialog the plugin shows through <see cref="IPluginDialogService"/>.</summary>
+    void AddDialog(IPluginDialog dialog);
+
     /// <summary>Gets all registered commands.</summary>
     IReadOnlyList<PluginExtension<ICommand>> Commands { get; }
 
@@ -85,6 +97,18 @@ public interface IPluginRegistry
 
     /// <summary>Gets all registered home widgets.</summary>
     IReadOnlyList<PluginExtension<IHomeWidget>> HomeWidgets { get; }
+
+    /// <summary>Gets all registered session panels.</summary>
+    IReadOnlyList<PluginExtension<ISessionPanel>> SessionPanels { get; }
+
+    /// <summary>Gets all registered settings sections.</summary>
+    IReadOnlyList<PluginExtension<ISettingsSection>> SettingsSections { get; }
+
+    /// <summary>Gets all registered status bar items.</summary>
+    IReadOnlyList<PluginExtension<IStatusBarItem>> StatusBarItems { get; }
+
+    /// <summary>Gets all registered dialogs.</summary>
+    IReadOnlyList<PluginExtension<IPluginDialog>> Dialogs { get; }
 
     /// <summary>Gets the plugin identifier that owns an extension type.</summary>
     string? GetOwner(Type extensionType);

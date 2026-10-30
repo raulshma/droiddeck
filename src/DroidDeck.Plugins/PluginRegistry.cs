@@ -21,6 +21,10 @@ public sealed class PluginRegistry : IPluginRegistry, IRendererRegistrar
     private readonly List<PluginExtension<INavigationPage>> _navigationPages = [];
     private readonly List<PluginExtension<IProjectTab>> _projectTabs = [];
     private readonly List<PluginExtension<IHomeWidget>> _homeWidgets = [];
+    private readonly List<PluginExtension<ISessionPanel>> _sessionPanels = [];
+    private readonly List<PluginExtension<ISettingsSection>> _settingsSections = [];
+    private readonly List<PluginExtension<IStatusBarItem>> _statusBarItems = [];
+    private readonly List<PluginExtension<IPluginDialog>> _dialogs = [];
     private readonly List<RendererRegistration> _renderers = [];
     private readonly Dictionary<Type, string> _owners = [];
     private readonly object _sync = new();
@@ -64,6 +68,18 @@ public sealed class PluginRegistry : IPluginRegistry, IRendererRegistrar
 
     /// <inheritdoc />
     public IReadOnlyList<PluginExtension<IHomeWidget>> HomeWidgets => Snapshot(_homeWidgets);
+
+    /// <inheritdoc />
+    public IReadOnlyList<PluginExtension<ISessionPanel>> SessionPanels => Snapshot(_sessionPanels);
+
+    /// <inheritdoc />
+    public IReadOnlyList<PluginExtension<ISettingsSection>> SettingsSections => Snapshot(_settingsSections);
+
+    /// <inheritdoc />
+    public IReadOnlyList<PluginExtension<IStatusBarItem>> StatusBarItems => Snapshot(_statusBarItems);
+
+    /// <inheritdoc />
+    public IReadOnlyList<PluginExtension<IPluginDialog>> Dialogs => Snapshot(_dialogs);
 
     /// <inheritdoc />
     public IReadOnlyList<RendererRegistration> Renderers
@@ -130,6 +146,19 @@ public sealed class PluginRegistry : IPluginRegistry, IRendererRegistrar
     public void AddHomeWidget(IHomeWidget widget) => AddHomeWidget(PluginConstants.BuiltInPluginId, widget);
 
     /// <inheritdoc />
+    public void AddSessionPanel(ISessionPanel panel) => AddSessionPanel(PluginConstants.BuiltInPluginId, panel);
+
+    /// <inheritdoc />
+    public void AddSettingsSection(ISettingsSection section) =>
+        AddSettingsSection(PluginConstants.BuiltInPluginId, section);
+
+    /// <inheritdoc />
+    public void AddStatusBarItem(IStatusBarItem item) => AddStatusBarItem(PluginConstants.BuiltInPluginId, item);
+
+    /// <inheritdoc />
+    public void AddDialog(IPluginDialog dialog) => AddDialog(PluginConstants.BuiltInPluginId, dialog);
+
+    /// <inheritdoc />
     public string? GetOwner(Type extensionType)
     {
         ArgumentNullException.ThrowIfNull(extensionType);
@@ -159,6 +188,10 @@ public sealed class PluginRegistry : IPluginRegistry, IRendererRegistrar
             removed += _navigationPages.RemoveAll(extension => extension.PluginId == pluginId);
             removed += _projectTabs.RemoveAll(extension => extension.PluginId == pluginId);
             removed += _homeWidgets.RemoveAll(extension => extension.PluginId == pluginId);
+            removed += _sessionPanels.RemoveAll(extension => extension.PluginId == pluginId);
+            removed += _settingsSections.RemoveAll(extension => extension.PluginId == pluginId);
+            removed += _statusBarItems.RemoveAll(extension => extension.PluginId == pluginId);
+            removed += _dialogs.RemoveAll(extension => extension.PluginId == pluginId);
             removed += _renderers.RemoveAll(registration => registration.PluginId == pluginId);
             RebuildOwners();
         }
@@ -241,6 +274,30 @@ public sealed class PluginRegistry : IPluginRegistry, IRendererRegistrar
     {
         ArgumentNullException.ThrowIfNull(widget);
         Add(pluginId, widget, _homeWidgets);
+    }
+
+    internal void AddSessionPanel(string pluginId, ISessionPanel panel)
+    {
+        ArgumentNullException.ThrowIfNull(panel);
+        Add(pluginId, panel, _sessionPanels);
+    }
+
+    internal void AddSettingsSection(string pluginId, ISettingsSection section)
+    {
+        ArgumentNullException.ThrowIfNull(section);
+        Add(pluginId, section, _settingsSections);
+    }
+
+    internal void AddStatusBarItem(string pluginId, IStatusBarItem item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        Add(pluginId, item, _statusBarItems);
+    }
+
+    internal void AddDialog(string pluginId, IPluginDialog dialog)
+    {
+        ArgumentNullException.ThrowIfNull(dialog);
+        Add(pluginId, dialog, _dialogs);
     }
 
     internal void AddRenderer(string pluginId, Type rendererType)
@@ -342,10 +399,40 @@ public sealed class PluginRegistry : IPluginRegistry, IRendererRegistrar
             _owners[extension.Value.GetType()] = extension.PluginId;
         }
 
+        foreach (var extension in _sessionPanels)
+        {
+            _owners[extension.Value.GetType()] = extension.PluginId;
+        }
+
+        foreach (var extension in _settingsSections)
+        {
+            _owners[extension.Value.GetType()] = extension.PluginId;
+        }
+
+        foreach (var extension in _statusBarItems)
+        {
+            _owners[extension.Value.GetType()] = extension.PluginId;
+        }
+
+        foreach (var extension in _dialogs)
+        {
+            _owners[extension.Value.GetType()] = extension.PluginId;
+        }
+
         foreach (var registration in _renderers)
         {
             _owners[registration.RendererType] = registration.PluginId;
         }
+    }
+
+    /// <summary>Finds a plugin's dialog by its stable identifier.</summary>
+    public PluginExtension<IPluginDialog>? FindDialog(string pluginId, string dialogId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pluginId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(dialogId);
+        return Dialogs.FirstOrDefault(extension =>
+            string.Equals(extension.PluginId, pluginId, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(extension.Value.Id, dialogId, StringComparison.Ordinal));
     }
 
     private PluginExtension<T>[] Snapshot<T>(List<PluginExtension<T>> source)
@@ -389,6 +476,14 @@ public sealed class PluginRegistry : IPluginRegistry, IRendererRegistrar
 
         public IReadOnlyList<PluginExtension<IHomeWidget>> HomeWidgets => root.HomeWidgets;
 
+        public IReadOnlyList<PluginExtension<ISessionPanel>> SessionPanels => root.SessionPanels;
+
+        public IReadOnlyList<PluginExtension<ISettingsSection>> SettingsSections => root.SettingsSections;
+
+        public IReadOnlyList<PluginExtension<IStatusBarItem>> StatusBarItems => root.StatusBarItems;
+
+        public IReadOnlyList<PluginExtension<IPluginDialog>> Dialogs => root.Dialogs;
+
         public IReadOnlyList<RendererRegistration> Renderers => root.Renderers;
 
         public event EventHandler? Changed
@@ -421,6 +516,14 @@ public sealed class PluginRegistry : IPluginRegistry, IRendererRegistrar
         public void AddProjectTab(IProjectTab tab) => root.AddProjectTab(pluginId, tab);
 
         public void AddHomeWidget(IHomeWidget widget) => root.AddHomeWidget(pluginId, widget);
+
+        public void AddSessionPanel(ISessionPanel panel) => root.AddSessionPanel(pluginId, panel);
+
+        public void AddSettingsSection(ISettingsSection section) => root.AddSettingsSection(pluginId, section);
+
+        public void AddStatusBarItem(IStatusBarItem item) => root.AddStatusBarItem(pluginId, item);
+
+        public void AddDialog(IPluginDialog dialog) => root.AddDialog(pluginId, dialog);
 
         public void AddRenderer(Type rendererType) => root.AddRenderer(pluginId, rendererType);
 

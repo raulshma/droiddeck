@@ -11,9 +11,13 @@ using DroidDeck.Core.Diagnostics;
 using DroidDeck.Core.Features;
 using DroidDeck.Core.Infrastructure;
 using DroidDeck.Core.Profiles;
+using DroidDeck.Core.Security;
 using DroidDeck.Core.Sessions;
 using DroidDeck.Core.Themes;
 using DroidDeck.Core.Toolchain;
+using DroidDeck.Plugins;
+using DroidDeck.Plugin.Abstractions;
+using DroidDeck.Plugin.UI.Kit;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Dispatching;
@@ -39,10 +43,13 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
     private readonly ThemeManager _themes;
     private readonly ProfileService _profiles;
     private readonly FeatureVisibilityService _features;
+    private readonly ISecretStore _secrets;
+    private readonly PluginUiFaultReporter _faultReporter;
     private readonly ILogger<SettingsPage> _logger;
     private readonly DispatcherQueue _dispatcher;
     private readonly ConfigurationHealthService _health;
     private readonly ToolPathRow[] _toolPaths = ToolPathRow.CreateAll();
+    private readonly Dictionary<string, PluginSectionHost> _pluginSections = new(StringComparer.Ordinal);
     private SettingsResetSnapshot? _lastReset;
     private bool _initializing;
     private bool _uiReady;
@@ -61,6 +68,8 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         ThemeManager themes,
         ProfileService profiles,
         FeatureVisibilityService features,
+        ISecretStore secrets,
+        PluginUiFaultReporter faultReporter,
         ILogger<SettingsPage> logger)
     {
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
@@ -74,6 +83,8 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         _themes = themes ?? throw new ArgumentNullException(nameof(themes));
         _profiles = profiles ?? throw new ArgumentNullException(nameof(profiles));
         _features = features ?? throw new ArgumentNullException(nameof(features));
+        _secrets = secrets ?? throw new ArgumentNullException(nameof(secrets));
+        _faultReporter = faultReporter ?? throw new ArgumentNullException(nameof(faultReporter));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         _health = new ConfigurationHealthService(configuration, toolchain);
@@ -87,6 +98,8 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         _commands.Changed += OnCommandsChanged;
         _keybindings.Changed += OnKeybindingsChanged;
         _configuration.Changed += OnConfigurationChanged;
+        _plugins.Registry.Changed += OnPluginRegistryChanged;
+        QueuePluginSectionLoad();
         Refresh();
     }
 
@@ -104,6 +117,8 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         _commands.Changed -= OnCommandsChanged;
         _keybindings.Changed -= OnKeybindingsChanged;
         _configuration.Changed -= OnConfigurationChanged;
+        _plugins.Registry.Changed -= OnPluginRegistryChanged;
+        DisposePluginSections();
     }
 
     /// <inheritdoc />
@@ -2103,5 +2118,211 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         ShowAction(
             $"{action} failed: {exception.Message} (Diagnostics ID {_diagnostics.DiagnosticsId}).",
             isError: true);
+    }
+
+    private void OnPluginRegistryChanged(object? sender, EventArgs e) => _dispatcher.TryEnqueue(() =>
+    {
+        RemoveStalePluginSections();
+        QueuePluginSectionLoad();
+    });
+
+    /// <summary>Loads each plugin section after the first frame, one at a time, so a slow section cannot block Settings.</summary>
+    private void QueuePluginSectionLoad()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        var afterFirstFrame = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var queued = _dispatcher.TryEnqueue(
+            DispatcherQueuePriority.Low,
+            () => afterFirstFrame.TrySetResult());
+        if (!queued)
+        {
+            afterFirstFrame.TrySetResult();
+        }
+
+        foreach (var entry in _plugins.Extensions.SettingsSections)
+        {
+            if (_pluginSections.ContainsKey(entry.Section.Id))
+            {
+                continue;
+            }
+
+            _ = LoadPluginSectionAsync(entry, afterFirstFrame.Task);
+        }
+
+        NoPluginSectionsText.Visibility = _pluginSections.Count == 0 && _plugins.Extensions.SettingsSections.Count == 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    private async Task LoadPluginSectionAsync(SettingsSectionEntry entry, Task afterFirstFrame)
+    {
+        try
+        {
+            await afterFirstFrame.ConfigureAwait(true);
+            if (_disposed || _pluginSections.ContainsKey(entry.Section.Id))
+            {
+                return;
+            }
+
+            var settings = await CreatePluginSettingsAsync(entry.PluginId).ConfigureAwait(true);
+            if (settings is null)
+            {
+                _logger.LogWarning(
+                    "The settings section {SectionId} from {PluginId} was skipped because the plugin is not installed.",
+                    entry.Section.Id,
+                    entry.PluginId);
+                return;
+            }
+
+            if (_pluginSections.ContainsKey(entry.Section.Id))
+            {
+                // Another queued load won the race; drop the duplicate store.
+                (settings as IDisposable)?.Dispose();
+                return;
+            }
+
+            var boundary = new PluginFaultBoundary(
+                entry.PluginId,
+                $"settings section {entry.Section.Id}",
+                _faultReporter);
+            var header = new StackPanel { Spacing = 2 };
+            header.Children.Add(new TextBlock
+            {
+                Text = $"{entry.Section.Title} · {SourceLabel(entry.PluginId)}",
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            });
+            if (!string.IsNullOrWhiteSpace(entry.Section.Description))
+            {
+                header.Children.Add(new TextBlock
+                {
+                    Text = entry.Section.Description,
+                    FontSize = 12,
+                    Foreground = ResolveBrush("TextFillColorSecondaryBrush"),
+                    TextWrapping = TextWrapping.Wrap,
+                });
+            }
+
+            var card = new StackPanel { Spacing = 8 };
+            card.Children.Add(header);
+            card.Children.Add(boundary);
+            PluginSectionsPanel.Children.Add(card);
+
+            var host = new PluginSectionHost(entry, boundary, card, settings);
+            _pluginSections[entry.Section.Id] = host;
+
+            NoPluginSectionsText.Visibility = Visibility.Collapsed;
+
+            // The section context hands the plugin its host-managed settings
+            // store, so every write is validated by the host before persisting.
+            var context = new PluginSettingsSectionContext(settings);
+            var result = await _plugins.Invoker.CreateViewAsync(
+                entry.PluginId,
+                $"settings section {entry.Section.Id}",
+                token => entry.Section.CreateViewAsync(context, token),
+                CancellationToken.None).ConfigureAwait(true);
+            if (!_pluginSections.ContainsKey(entry.Section.Id))
+            {
+                return;
+            }
+
+            boundary.Show(result.Content, result.Error);
+            if (!result.Succeeded)
+            {
+                _logger.LogWarning(
+                    "Plugin settings section {SectionId} from {PluginId} could not load: {Error}",
+                    entry.Section.Id,
+                    entry.PluginId,
+                    result.Error);
+            }
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Loading the settings section {SectionId} failed.", entry.Section.Id);
+        }
+    }
+
+    private void RemoveStalePluginSections()
+    {
+        var entries = _plugins.Extensions.SettingsSections;
+        foreach (var staleId in _pluginSections.Keys
+            .Where(id => entries.All(entry => !string.Equals(entry.Section.Id, id, StringComparison.Ordinal)))
+            .ToArray())
+        {
+            if (_pluginSections.Remove(staleId, out var stale))
+            {
+                PluginSectionsPanel.Children.Remove(stale.Card);
+                stale.Boundary.Dispose();
+                (stale.Settings as IDisposable)?.Dispose();
+            }
+        }
+
+        NoPluginSectionsText.Visibility =
+            PluginSectionsPanel.Children.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void DisposePluginSections()
+    {
+        foreach (var section in _pluginSections.Values)
+        {
+            PluginSectionsPanel.Children.Remove(section.Card);
+            section.Boundary.Dispose();
+            (section.Settings as IDisposable)?.Dispose();
+        }
+
+        _pluginSections.Clear();
+    }
+
+    /// <summary>Builds the host settings store for one plugin, mirroring the per-plugin settings dialog.</summary>
+    private async Task<IPluginSettings?> CreatePluginSettingsAsync(string pluginId)
+    {
+        var status = _plugins.Statuses.FirstOrDefault(candidate =>
+            string.Equals(candidate.Id, pluginId, StringComparison.OrdinalIgnoreCase));
+        if (status is null || string.IsNullOrWhiteSpace(status.InstallPath))
+        {
+            return null;
+        }
+
+        if (File.Exists(PluginSettingsSchemaReader.GetSchemaPath(status.InstallPath)))
+        {
+            var read = await PluginSettingsSchemaReader.ReadAsync(status.InstallPath).ConfigureAwait(true);
+            if (read.Schema is not null)
+            {
+                return new SchemaPluginSettings(
+                    System.IO.Path.Combine(status.InstallPath, "settings.json"),
+                    read.Schema,
+                    pluginId,
+                    _secrets);
+            }
+        }
+
+        return new JsonPluginSettings(System.IO.Path.Combine(status.InstallPath, "settings.json"));
+    }
+
+    private static string SourceLabel(string pluginId) =>
+        pluginId == PluginConstants.BuiltInPluginId ? "Built-in" : pluginId;
+
+    private static Brush ResolveBrush(string key) =>
+        Application.Current.Resources.TryGetValue(key, out var resource) && resource is Brush brush
+            ? brush
+            : new SolidColorBrush(Microsoft.UI.Colors.Gray);
+
+    /// <summary>One plugin settings section and its host chrome.</summary>
+    private sealed class PluginSectionHost(
+        SettingsSectionEntry entry,
+        PluginFaultBoundary boundary,
+        StackPanel card,
+        IPluginSettings settings)
+    {
+        public SettingsSectionEntry Entry { get; } = entry;
+
+        public PluginFaultBoundary Boundary { get; } = boundary;
+
+        public StackPanel Card { get; } = card;
+
+        public IPluginSettings Settings { get; } = settings;
     }
 }

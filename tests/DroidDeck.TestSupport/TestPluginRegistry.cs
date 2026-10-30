@@ -20,6 +20,10 @@ public sealed class TestPluginRegistry : IPluginRegistry
     private readonly List<PluginExtension<INavigationPage>> _navigationPages = [];
     private readonly List<PluginExtension<IProjectTab>> _projectTabs = [];
     private readonly List<PluginExtension<IHomeWidget>> _homeWidgets = [];
+    private readonly List<PluginExtension<ISessionPanel>> _sessionPanels = [];
+    private readonly List<PluginExtension<ISettingsSection>> _settingsSections = [];
+    private readonly List<PluginExtension<IStatusBarItem>> _statusBarItems = [];
+    private readonly List<PluginExtension<IPluginDialog>> _dialogs = [];
     private readonly Dictionary<Type, string> _owners = [];
     private readonly object _sync = new();
 
@@ -64,6 +68,18 @@ public sealed class TestPluginRegistry : IPluginRegistry
     public IReadOnlyList<PluginExtension<IHomeWidget>> HomeWidgets => Snapshot(_homeWidgets);
 
     /// <inheritdoc />
+    public IReadOnlyList<PluginExtension<ISessionPanel>> SessionPanels => Snapshot(_sessionPanels);
+
+    /// <inheritdoc />
+    public IReadOnlyList<PluginExtension<ISettingsSection>> SettingsSections => Snapshot(_settingsSections);
+
+    /// <inheritdoc />
+    public IReadOnlyList<PluginExtension<IStatusBarItem>> StatusBarItems => Snapshot(_statusBarItems);
+
+    /// <inheritdoc />
+    public IReadOnlyList<PluginExtension<IPluginDialog>> Dialogs => Snapshot(_dialogs);
+
+    /// <inheritdoc />
     public void AddCommand(ICommand command) => Add(PluginConstants.BuiltInPluginId, command, _commands);
 
     /// <inheritdoc />
@@ -104,6 +120,19 @@ public sealed class TestPluginRegistry : IPluginRegistry
     public void AddHomeWidget(IHomeWidget widget) => Add(PluginConstants.BuiltInPluginId, widget, _homeWidgets);
 
     /// <inheritdoc />
+    public void AddSessionPanel(ISessionPanel panel) => Add(PluginConstants.BuiltInPluginId, panel, _sessionPanels);
+
+    /// <inheritdoc />
+    public void AddSettingsSection(ISettingsSection section) =>
+        Add(PluginConstants.BuiltInPluginId, section, _settingsSections);
+
+    /// <inheritdoc />
+    public void AddStatusBarItem(IStatusBarItem item) => Add(PluginConstants.BuiltInPluginId, item, _statusBarItems);
+
+    /// <inheritdoc />
+    public void AddDialog(IPluginDialog dialog) => Add(PluginConstants.BuiltInPluginId, dialog, _dialogs);
+
+    /// <inheritdoc />
     public string? GetOwner(Type extensionType)
     {
         ArgumentNullException.ThrowIfNull(extensionType);
@@ -132,6 +161,10 @@ public sealed class TestPluginRegistry : IPluginRegistry
             removed += _navigationPages.RemoveAll(extension => extension.PluginId == pluginId);
             removed += _projectTabs.RemoveAll(extension => extension.PluginId == pluginId);
             removed += _homeWidgets.RemoveAll(extension => extension.PluginId == pluginId);
+            removed += _sessionPanels.RemoveAll(extension => extension.PluginId == pluginId);
+            removed += _settingsSections.RemoveAll(extension => extension.PluginId == pluginId);
+            removed += _statusBarItems.RemoveAll(extension => extension.PluginId == pluginId);
+            removed += _dialogs.RemoveAll(extension => extension.PluginId == pluginId);
             RebuildOwners();
         }
 
@@ -214,6 +247,26 @@ public sealed class TestPluginRegistry : IPluginRegistry
         }
 
         foreach (var extension in _homeWidgets)
+        {
+            _owners[extension.Value.GetType()] = extension.PluginId;
+        }
+
+        foreach (var extension in _sessionPanels)
+        {
+            _owners[extension.Value.GetType()] = extension.PluginId;
+        }
+
+        foreach (var extension in _settingsSections)
+        {
+            _owners[extension.Value.GetType()] = extension.PluginId;
+        }
+
+        foreach (var extension in _statusBarItems)
+        {
+            _owners[extension.Value.GetType()] = extension.PluginId;
+        }
+
+        foreach (var extension in _dialogs)
         {
             _owners[extension.Value.GetType()] = extension.PluginId;
         }

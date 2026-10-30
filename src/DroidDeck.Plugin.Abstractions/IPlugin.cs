@@ -51,6 +51,12 @@ public interface IPluginContext
     /// <summary>Gets the extension registry shared with built-in features.</summary>
     IPluginRegistry Extensions { get; }
 
+    /// <summary>
+    /// Shows this plugin's registered dialogs on the host's UI thread. The host
+    /// isolates plugin faults; the plugin never hosts its own window.
+    /// </summary>
+    IPluginDialogService Dialogs { get; }
+
     /// <summary>Gets the plugin's private settings store.</summary>
     IPluginSettings Settings { get; }
 

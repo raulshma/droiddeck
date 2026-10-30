@@ -56,6 +56,33 @@ public sealed record HomeWidgetEntry(string PluginId, IHomeWidget Widget)
     public string SourceLabel => PluginId == PluginConstants.BuiltInPluginId ? "Built-in" : PluginId;
 }
 
+/// <summary>A session panel with its contributing source.</summary>
+/// <param name="PluginId">The contributing plugin identifier.</param>
+/// <param name="Panel">The session panel.</param>
+public sealed record SessionPanelEntry(string PluginId, ISessionPanel Panel)
+{
+    /// <summary>Gets the source label shown in the UI.</summary>
+    public string SourceLabel => PluginId == PluginConstants.BuiltInPluginId ? "Built-in" : PluginId;
+}
+
+/// <summary>A settings section with its contributing source.</summary>
+/// <param name="PluginId">The contributing plugin identifier.</param>
+/// <param name="Section">The settings section.</param>
+public sealed record SettingsSectionEntry(string PluginId, ISettingsSection Section)
+{
+    /// <summary>Gets the source label shown in the UI.</summary>
+    public string SourceLabel => PluginId == PluginConstants.BuiltInPluginId ? "Built-in" : PluginId;
+}
+
+/// <summary>A status bar item with its contributing source.</summary>
+/// <param name="PluginId">The contributing plugin identifier.</param>
+/// <param name="Item">The status bar item.</param>
+public sealed record StatusBarItemEntry(string PluginId, IStatusBarItem Item)
+{
+    /// <summary>Gets the source label shown in the UI.</summary>
+    public string SourceLabel => PluginId == PluginConstants.BuiltInPluginId ? "Built-in" : PluginId;
+}
+
 /// <summary>
 /// Presents plugin extensions in a predictable order and keeps the plugin id
 /// attached so the host can show where each extension came from.
@@ -120,5 +147,29 @@ public sealed class PluginExtensionCatalog
         .ThenBy(static extension => extension.Value.Title, StringComparer.OrdinalIgnoreCase)
         .ThenBy(static extension => extension.Value.Id, StringComparer.OrdinalIgnoreCase)
         .Select(static extension => new HomeWidgetEntry(extension.PluginId, extension.Value))
+        .ToArray();
+
+    /// <summary>Gets session panels ordered by weight, source, and title.</summary>
+    public IReadOnlyList<SessionPanelEntry> SessionPanels => _registry.SessionPanels
+        .OrderBy(static extension => extension.Value.Order)
+        .ThenBy(static extension => extension.PluginId, StringComparer.OrdinalIgnoreCase)
+        .ThenBy(static extension => extension.Value.Title, StringComparer.OrdinalIgnoreCase)
+        .Select(static extension => new SessionPanelEntry(extension.PluginId, extension.Value))
+        .ToArray();
+
+    /// <summary>Gets settings sections ordered by weight, source, and title.</summary>
+    public IReadOnlyList<SettingsSectionEntry> SettingsSections => _registry.SettingsSections
+        .OrderBy(static extension => extension.Value.Order)
+        .ThenBy(static extension => extension.PluginId, StringComparer.OrdinalIgnoreCase)
+        .ThenBy(static extension => extension.Value.Title, StringComparer.OrdinalIgnoreCase)
+        .Select(static extension => new SettingsSectionEntry(extension.PluginId, extension.Value))
+        .ToArray();
+
+    /// <summary>Gets status bar items ordered by weight, source, and title.</summary>
+    public IReadOnlyList<StatusBarItemEntry> StatusBarItems => _registry.StatusBarItems
+        .OrderBy(static extension => extension.Value.Order)
+        .ThenBy(static extension => extension.PluginId, StringComparer.OrdinalIgnoreCase)
+        .ThenBy(static extension => extension.Value.Title, StringComparer.OrdinalIgnoreCase)
+        .Select(static extension => new StatusBarItemEntry(extension.PluginId, extension.Value))
         .ToArray();
 }

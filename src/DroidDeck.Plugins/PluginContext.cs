@@ -11,7 +11,8 @@ internal sealed class PluginContext(
     ILogger logger,
     IPluginRegistry extensions,
     IPluginSettings settings,
-    string dataDirectory) : IPluginContext
+    string dataDirectory,
+    IPluginDialogService dialogs) : IPluginContext
 {
     public IPluginInfo Info { get; } = info;
 
@@ -22,4 +23,6 @@ internal sealed class PluginContext(
     public IPluginSettings Settings { get; } = settings;
 
     public string DataDirectory { get; } = dataDirectory;
+
+    public IPluginDialogService Dialogs { get; } = dialogs;
 }

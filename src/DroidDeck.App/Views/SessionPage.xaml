@@ -116,6 +116,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -212,9 +213,16 @@
             </StackPanel>
         </Grid>
 
+        <StackPanel
+            x:Name="PluginPanelsPanel"
+            Grid.Row="1"
+            Orientation="Horizontal"
+            Spacing="12"
+            Visibility="Collapsed" />
+
         <InfoBar
             x:Name="ActionBar"
-            Grid.Row="1"
+            Grid.Row="2"
             Severity="Success"
             IsOpen="False"
             IsClosable="True"
@@ -222,7 +230,7 @@
 
         <InfoBar
             x:Name="CrashBar"
-            Grid.Row="2"
+            Grid.Row="3"
             Severity="Error"
             Title="Crash or ANR detected"
             IsOpen="False"
@@ -251,7 +259,7 @@
             </InfoBar.ActionButton>
         </InfoBar>
 
-        <Grid Grid.Row="3" ColumnSpacing="16">
+        <Grid Grid.Row="4" ColumnSpacing="16">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="340" />
                 <ColumnDefinition Width="*" />

@@ -16,6 +16,7 @@ using DroidDeck.Core.Runs;
 using DroidDeck.Core.Screen;
 using DroidDeck.Core.Themes;
 using DroidDeck.Plugins;
+using DroidDeck.Plugin.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI;
@@ -99,12 +100,14 @@ public sealed partial class MainWindow : Window
     private readonly AppThemeService _themeService;
     private readonly ThemeManager _themeManager;
     private readonly FeatureVisibilityService _features;
+    private readonly PluginUiOrderStore _uiOrder;
     private readonly ChordRouter _chords = new();
     private readonly ILogger<MainWindow> _logger;
     private readonly Dictionary<string, Page> _pages = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, NavigationPageEntry> _pluginPages = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<NavigationViewItem> _pluginNavItems = [];
     private readonly List<KeyboardAccelerator> _accelerators = [];
+    private readonly Dictionary<string, StatusItemHost> _statusItems = new(StringComparer.Ordinal);
     private readonly DispatcherTimer _statusTimer;
     private readonly DispatcherTimer _messageTimer;
     private CommandPaletteOverlay? _palette;
@@ -131,6 +134,7 @@ public sealed partial class MainWindow : Window
         AppThemeService themeService,
         ThemeManager themeManager,
         FeatureVisibilityService features,
+        PluginUiOrderStore uiOrder,
         ILogger<MainWindow> logger)
     {
         _services = services ?? throw new ArgumentNullException(nameof(services));
@@ -148,6 +152,7 @@ public sealed partial class MainWindow : Window
         _themeService = themeService ?? throw new ArgumentNullException(nameof(themeService));
         _themeManager = themeManager ?? throw new ArgumentNullException(nameof(themeManager));
         _features = features ?? throw new ArgumentNullException(nameof(features));
+        _uiOrder = uiOrder ?? throw new ArgumentNullException(nameof(uiOrder));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
         InitializeComponent();
@@ -173,7 +178,9 @@ public sealed partial class MainWindow : Window
         RebuildMenu();
         RegisterAccelerators();
         _pluginHost.ResultsChanged += OnPluginResultsChanged;
+        _pluginHost.Registry.Changed += OnPluginRegistryChanged;
         RebuildPluginNavItems();
+        RebuildPluginStatusBar();
         _commands.Changed += OnCommandSetChanged;
         _keybindings.Changed += OnCommandSetChanged;
         _themeManager.Changed += OnThemeManagerChanged;
@@ -346,13 +353,21 @@ public sealed partial class MainWindow : Window
             .GroupBy(command => command.Category, StringComparer.OrdinalIgnoreCase)
             .OrderBy(group => MenuCategoryRank(group.Key))
             .ThenBy(group => group.Key, StringComparer.OrdinalIgnoreCase);
+        var renderedIds = new List<string>();
         foreach (var group in groups)
         {
             var menu = new MenuBarItem { Title = group.Key };
             AutomationProperties.SetAutomationId(menu, $"Menu_{group.Key}");
-            foreach (var command in group.OrderBy(
-                command => command.Title, StringComparer.OrdinalIgnoreCase))
+
+            // The command registry orders by title; the persisted sequence the
+            // user last saw wins so the menu order is stable across restarts.
+            var ordered = _uiOrder.Sort(
+                PluginUiOrderStore.CommandsSurface,
+                group.OrderBy(command => command.Title, StringComparer.OrdinalIgnoreCase),
+                static command => command.Id);
+            foreach (var command in ordered)
             {
+                renderedIds.Add(command.Id);
                 var item = new MenuFlyoutItem
                 {
                     Text = command.Title,
@@ -371,6 +386,8 @@ public sealed partial class MainWindow : Window
 
             ShellMenuBar.Items.Add(menu);
         }
+
+        PersistUiOrderIfChanged(PluginUiOrderStore.CommandsSurface, renderedIds);
     }
 
     private static int MenuCategoryRank(string category)
@@ -688,6 +705,140 @@ public sealed partial class MainWindow : Window
     private void OnPluginResultsChanged(object? sender, EventArgs e) =>
         DispatcherQueue.TryEnqueue(RebuildPluginNavItems);
 
+    private void OnPluginRegistryChanged(object? sender, EventArgs e) =>
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            RebuildPluginNavItems();
+            RebuildPluginStatusBar();
+        });
+
+    /// <summary>
+    /// Rebuilds the status bar's plugin items in host-managed order: the
+    /// persisted sequence first, then the catalog order for new items. The
+    /// rendered sequence is persisted so it survives restarts, and identifiers
+    /// of removed items are pruned silently on that save.
+    /// </summary>
+    private void RebuildPluginStatusBar()
+    {
+        PluginStatusBarPanel.Children.Clear();
+        _statusItems.Clear();
+        var entries = _uiOrder.Sort(
+            PluginUiOrderStore.StatusBarSurface,
+            _pluginHost.Extensions.StatusBarItems,
+            static entry => entry.Item.Id);
+        foreach (var entry in entries)
+        {
+            var text = new TextBlock
+            {
+                FontSize = 12,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(
+                text,
+                $"PluginStatusBar_{entry.Item.Id}");
+            ToolTipService.SetToolTip(
+                text,
+                $"{entry.Item.Title} (plugin: {entry.SourceLabel})");
+            UIElement host = entry.Item is IStatusBarClickableItem
+                ? WrapInButton(entry, text)
+                : text;
+            PluginStatusBarPanel.Children.Add(host);
+            _statusItems[entry.Item.Id] = new StatusItemHost(entry, text);
+        }
+
+        PersistUiOrderIfChanged(
+            PluginUiOrderStore.StatusBarSurface,
+            entries.Select(static entry => entry.Item.Id));
+        UpdatePluginStatusTexts();
+    }
+
+    private Button WrapInButton(StatusBarItemEntry entry, TextBlock text)
+    {
+        var button = new Button
+        {
+            Content = text,
+            FontSize = 12,
+            Padding = new Thickness(8, 1, 8, 2),
+            Margin = new Thickness(0, -3, 0, -3),
+        };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(
+            button,
+            $"PluginStatusBarButton_{entry.Item.Id}");
+        button.Click += async (sender, _) =>
+        {
+            if (sender is not Button { Tag: IStatusBarClickableItem clickable })
+            {
+                return;
+            }
+
+            // The invoker gives the click the plugin timeout and feeds the
+            // health tracker, so a stuck or crashing click cannot wedge the
+            // status bar.
+            var result = await _pluginHost.Invoker.InvokeAsync(
+                entry.PluginId,
+                token => clickable.InvokeClickAsync(token),
+                CancellationToken.None);
+            if (!result.Succeeded)
+            {
+                ShowStatusMessage($"{entry.Item.Title} failed: {result.Error}");
+            }
+        };
+        button.Tag = entry.Item;
+        return button;
+    }
+
+    /// <summary>Refreshes status item texts; a throwing item shows a placeholder and feeds the fault reporter.</summary>
+    private void UpdatePluginStatusTexts()
+    {
+        foreach (var host in _statusItems.Values)
+        {
+            string text;
+            try
+            {
+                text = host.Entry.Item.GetText();
+            }
+            catch (Exception exception)
+            {
+                _faultReporter.Report(
+                    host.Entry.PluginId,
+                    $"status bar item {host.Entry.Item.Id}",
+                    exception);
+                text = "\u2026";
+            }
+
+            host.Text.Text = text;
+            host.Text.Visibility = string.IsNullOrEmpty(text) ? Visibility.Collapsed : Visibility.Visible;
+        }
+    }
+
+    private void PersistUiOrderIfChanged(string surface, IEnumerable<string> orderedIds)
+    {
+        var ids = orderedIds.ToArray();
+        var persisted = _uiOrder.Load(surface);
+        if (persisted.SequenceEqual(ids, StringComparer.Ordinal))
+        {
+            return;
+        }
+
+        _ = SafeSaveAsync(surface, ids);
+    }
+
+    private async Task SafeSaveAsync(string surface, string[] ids)
+    {
+        try
+        {
+            await _uiOrder.SaveAsync(surface, ids).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(
+                exception,
+                "The {Surface} order could not be persisted.",
+                surface);
+        }
+    }
+
     private bool SelectNavigationItem(string key)
     {
         foreach (var item in EnumerateNavigationItems())
@@ -759,6 +910,7 @@ public sealed partial class MainWindow : Window
             : count == 1
                 ? "1 device connected"
                 : $"{count} devices connected";
+        UpdatePluginStatusTexts();
         ToolTipService.SetToolTip(
             AdbStatusText,
             string.IsNullOrWhiteSpace(_devices.LastError)
@@ -1119,6 +1271,7 @@ public sealed partial class MainWindow : Window
         _statusTimer.Stop();
         _messageTimer.Stop();
         _pluginHost.ResultsChanged -= OnPluginResultsChanged;
+        _pluginHost.Registry.Changed -= OnPluginRegistryChanged;
         _devices.DevicesChanged -= OnDevicesChanged;
         _notifications.NotificationRaised -= OnNotificationRaised;
         _resourceGuard.WarningRaised -= OnResourceWarningRaised;
@@ -1145,4 +1298,12 @@ public sealed partial class MainWindow : Window
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
 #pragma warning restore SYSLIB1054
+
+    /// <summary>One status bar item and the text block that displays it.</summary>
+    private sealed class StatusItemHost(StatusBarItemEntry entry, TextBlock text)
+    {
+        public StatusBarItemEntry Entry { get; } = entry;
+
+        public TextBlock Text { get; } = text;
+    }
 }

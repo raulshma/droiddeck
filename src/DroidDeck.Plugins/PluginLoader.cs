@@ -35,6 +35,7 @@ public sealed class PluginLoader : IAsyncDisposable
     private readonly ILogger _logger;
     private readonly string _hostVersion;
     private readonly ISecretStore? _secretStore;
+    private readonly IPluginDialogServiceProvider? _dialogs;
     private readonly List<LoadedPlugin> _plugins = [];
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly object _sync = new();
@@ -45,11 +46,13 @@ public sealed class PluginLoader : IAsyncDisposable
     /// <param name="loggerFactory">The factory for host and plugin-scoped loggers.</param>
     /// <param name="hostVersion">The host version to validate against; defaults to the running version.</param>
     /// <param name="secretStore">The DPAPI secret store that backs plugin secret settings.</param>
+    /// <param name="dialogs">The provider that gives each plugin its scoped dialog service.</param>
     public PluginLoader(
         PluginRegistry registry,
         ILoggerFactory loggerFactory,
         string? hostVersion = null,
-        ISecretStore? secretStore = null)
+        ISecretStore? secretStore = null,
+        IPluginDialogServiceProvider? dialogs = null)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(loggerFactory);
@@ -58,6 +61,7 @@ public sealed class PluginLoader : IAsyncDisposable
         _logger = loggerFactory.CreateLogger("DroidDeck.Plugins");
         _hostVersion = hostVersion ?? AppInfo.Version;
         _secretStore = secretStore;
+        _dialogs = dialogs;
     }
 
     /// <summary>Gets the loaded plugins in load order.</summary>
@@ -348,7 +352,8 @@ public sealed class PluginLoader : IAsyncDisposable
                 logger,
                 _registry.CreateScope(manifest.Id),
                 settings,
-                dataDirectory);
+                dataDirectory,
+                _dialogs?.CreateScope(manifest.Id) ?? NullPluginDialogService.Instance);
 
             await instance.InitializeAsync(context, cancellationToken).ConfigureAwait(false);
 

@@ -193,6 +193,11 @@
                     FontSize="12"
                     Foreground="{ThemeResource SystemFillColorSuccessBrush}"
                     VerticalAlignment="Center" />
+                <StackPanel
+                    x:Name="PluginStatusBarPanel"
+                    Orientation="Horizontal"
+                    Spacing="16"
+                    VerticalAlignment="Center" />
             </StackPanel>
             <StackPanel
                 Orientation="Horizontal"

@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "title": "Sample UI plugin settings",
+  "description": "Values the sample settings section writes through the host.",
+  "properties": {
+    "retries": {
+      "type": "integer",
+      "title": "Retries",
+      "description": "How many times the sample repeats an operation.",
+      "default": 3,
+      "minimum": 0,
+      "maximum": 10
+    }
+  }
+}
