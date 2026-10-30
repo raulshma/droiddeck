@@ -93,6 +93,18 @@ public static class PluginSettingsSchemaReader
         return new PluginSettingsSchemaReadResult(schema, validation);
     }
 
+    /// <summary>
+    /// Maps a scalar schema type name to its settings field type; unknown
+    /// names fall back to text, with unsupported names reported by the caller.
+    /// </summary>
+    private static PluginSettingsFieldType ScalarFieldType(string typeName) => typeName switch
+    {
+        "number" => PluginSettingsFieldType.Number,
+        "integer" => PluginSettingsFieldType.WholeNumber,
+        "boolean" => PluginSettingsFieldType.Boolean,
+        _ => PluginSettingsFieldType.Text,
+    };
+
     private static PluginSettingsSchema? Parse(JsonObject document, PluginValidationResult validation)
     {
         foreach (var key in document.Select(static property => property.Key))
@@ -214,13 +226,9 @@ public static class PluginSettingsSchemaReader
                 PluginSettingsFieldType.Secret,
             "string" when string.Equals(format, "path", StringComparison.OrdinalIgnoreCase) =>
                 PluginSettingsFieldType.Path,
-            "string" => PluginSettingsFieldType.Text,
-            "number" => PluginSettingsFieldType.Number,
-            "integer" => PluginSettingsFieldType.WholeNumber,
-            "boolean" => PluginSettingsFieldType.Boolean,
             "array" => PluginSettingsFieldType.List,
             "object" => PluginSettingsFieldType.Group,
-            _ => PluginSettingsFieldType.Text,
+            _ => ScalarFieldType(typeName),
         };
 
         if (typeName is not ("string" or "number" or "integer" or "boolean" or "array" or "object"))
@@ -311,13 +319,7 @@ public static class PluginSettingsSchemaReader
                 itemTypeValue.TryGetValue<string>(out var itemTypeName) &&
                 ScalarItemTypes.Contains(itemTypeName, StringComparer.Ordinal))
             {
-                itemType = itemTypeName switch
-                {
-                    "number" => PluginSettingsFieldType.Number,
-                    "integer" => PluginSettingsFieldType.WholeNumber,
-                    "boolean" => PluginSettingsFieldType.Boolean,
-                    _ => PluginSettingsFieldType.Text,
-                };
+                itemType = ScalarFieldType(itemTypeName);
             }
             else
             {

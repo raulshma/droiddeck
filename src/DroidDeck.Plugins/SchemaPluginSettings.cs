@@ -108,6 +108,14 @@ public sealed class SchemaPluginSettings : IPluginSettings, IDisposable
         _secrets = secretStore;
         _logger = logger ?? NullLogger.Instance;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        if (StoresByPath.TryGetValue(_filePath, out var existing) && !existing.IsDisposed)
+        {
+            throw new InvalidOperationException(
+                $"A live settings store for '{_filePath}' is already registered. " +
+                "Resolve stores through SchemaPluginSettings.GetOrCreate so every surface shares one " +
+                "instance: two stores over the same file lose updates when both write.");
+        }
+
         StoresByPath[_filePath] = this;
     }
 
@@ -332,10 +340,7 @@ public sealed class SchemaPluginSettings : IPluginSettings, IDisposable
                 ]);
             }
 
-            await _secrets.SetAsync(SecretName(key), value, cancellationToken).ConfigureAwait(false);
-            var (_, markers) = await LoadCoreAsync(cancellationToken).ConfigureAwait(false);
-            markers.Add(key);
-            await SaveCoreAsync(cancellationToken).ConfigureAwait(false);
+            await WriteSecretAsync(key, value, cancellationToken).ConfigureAwait(false);
             return PluginSettingsWriteResult.Ok;
         }
         finally
@@ -359,12 +364,7 @@ public sealed class SchemaPluginSettings : IPluginSettings, IDisposable
                 return;
             }
 
-            await _secrets.RemoveAsync(SecretName(key), cancellationToken).ConfigureAwait(false);
-            var (_, markers) = await LoadCoreAsync(cancellationToken).ConfigureAwait(false);
-            if (markers.Remove(key))
-            {
-                await SaveCoreAsync(cancellationToken).ConfigureAwait(false);
-            }
+            await WriteSecretAsync(key, null, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -520,28 +520,8 @@ public sealed class SchemaPluginSettings : IPluginSettings, IDisposable
             var field = _schema.Find(key);
             if (field is { Type: PluginSettingsFieldType.Secret })
             {
-                PluginSettingsWriteResult result;
-                if (value is null)
-                {
-                    await _secrets.RemoveAsync(SecretName(key), cancellationToken).ConfigureAwait(false);
-                    var (_, markers) = await LoadCoreAsync(cancellationToken).ConfigureAwait(false);
-                    if (markers.Remove(key))
-                    {
-                        await SaveCoreAsync(cancellationToken).ConfigureAwait(false);
-                    }
-
-                    result = PluginSettingsWriteResult.Ok;
-                }
-                else
-                {
-                    await _secrets.SetAsync(SecretName(key), value, cancellationToken).ConfigureAwait(false);
-                    var (_, markers) = await LoadCoreAsync(cancellationToken).ConfigureAwait(false);
-                    markers.Add(key);
-                    await SaveCoreAsync(cancellationToken).ConfigureAwait(false);
-                    result = PluginSettingsWriteResult.Ok;
-                }
-
-                return result;
+                await WriteSecretAsync(key, value, cancellationToken).ConfigureAwait(false);
+                return PluginSettingsWriteResult.Ok;
             }
         }
         finally
@@ -550,6 +530,31 @@ public sealed class SchemaPluginSettings : IPluginSettings, IDisposable
         }
 
         return await SetNodeAsync(key, ParseText(key, value), cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Writes a secret field: stores or removes the value in the DPAPI secret
+    /// store and mirrors its presence marker, saving the settings file only
+    /// when the marker set changed. Callers must hold <see cref="_gate"/>.
+    /// </summary>
+    private async Task WriteSecretAsync(string key, string? value, CancellationToken cancellationToken)
+    {
+        if (value is null)
+        {
+            await _secrets.RemoveAsync(SecretName(key), cancellationToken).ConfigureAwait(false);
+            var (_, markers) = await LoadCoreAsync(cancellationToken).ConfigureAwait(false);
+            if (markers.Remove(key))
+            {
+                await SaveCoreAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+        else
+        {
+            await _secrets.SetAsync(SecretName(key), value, cancellationToken).ConfigureAwait(false);
+            var (_, markers) = await LoadCoreAsync(cancellationToken).ConfigureAwait(false);
+            markers.Add(key);
+            await SaveCoreAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private JsonNode? ParseText(string key, string? value)

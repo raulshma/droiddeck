@@ -419,9 +419,9 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
             PluginToolbarPanel.Children.Add(button);
         }
 
-        PersistUiOrderIfChanged(
+        _ = SafeSaveAsync(
             PluginUiOrderStore.ToolbarSurface,
-            entries.Select(static entry => entry.Action.Id));
+            entries.Select(static entry => entry.Action.Id).ToArray());
     }
 
     private void OnPluginRegistryChanged(object? sender, EventArgs e) => Dispatch(() =>
@@ -683,23 +683,12 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         return await dialog.ShowAsync() == ContentDialogResult.Primary;
     }
 
-    private void PersistUiOrderIfChanged(string surface, IEnumerable<string> orderedIds)
-    {
-        var ids = orderedIds.ToArray();
-        var persisted = _uiOrder.Load(surface);
-        if (persisted.SequenceEqual(ids, StringComparer.Ordinal))
-        {
-            return;
-        }
-
-        _ = SafeSaveAsync(surface, ids);
-    }
-
+    /// <summary>Persists a surface order when it changed; IO failures are logged and retried on the next render.</summary>
     private async Task SafeSaveAsync(string surface, string[] ids)
     {
         try
         {
-            await _uiOrder.SaveAsync(surface, ids).ConfigureAwait(false);
+            await _uiOrder.SaveIfChangedAsync(surface, ids).ConfigureAwait(false);
         }
         catch (Exception exception) when (
             exception is IOException or UnauthorizedAccessException)

@@ -1,5 +1,7 @@
+using DroidDeck.Core.Infrastructure;
 using DroidDeck.Plugin.Abstractions;
 using DroidDeck.Plugins.Catalog;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
@@ -12,6 +14,39 @@ namespace DroidDeck.App.Views;
 /// </summary>
 internal static class CatalogInstallDialogs
 {
+    /// <summary>
+    /// Shows the trust decision for an install or update and returns whether
+    /// the user approved it. Callers on a background thread are marshalled to
+    /// the UI thread through <paramref name="dispatcher"/>; the result and any
+    /// failure of the dialog are carried back to the awaiting caller.
+    /// </summary>
+    public static async Task<bool> ShowTrustDecisionAsync(
+        DispatcherQueue? dispatcher,
+        XamlRoot xamlRoot,
+        CatalogInstallPlan plan)
+    {
+        ArgumentNullException.ThrowIfNull(xamlRoot);
+        ArgumentNullException.ThrowIfNull(plan);
+        if (dispatcher is null || dispatcher.HasThreadAccess)
+        {
+            return await ShowTrustAsync(xamlRoot, plan);
+        }
+
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        dispatcher.TryEnqueue(async () =>
+        {
+            try
+            {
+                completion.SetResult(await ShowTrustAsync(xamlRoot, plan));
+            }
+            catch (Exception exception)
+            {
+                completion.SetException(exception);
+            }
+        });
+        return await completion.Task;
+    }
+
     /// <summary>
     /// Shows the trust decision for an install or update and returns whether the
     /// user approved it. Must be called on the UI thread.
@@ -46,7 +81,7 @@ internal static class CatalogInstallDialogs
         content.Children.Add(new TextBlock
         {
             TextWrapping = TextWrapping.Wrap,
-            Text = $"Package SHA-256 {ShortHash(plan.Sha256)} · Source: {plan.SourceName} · " +
+            Text = $"Package SHA-256 {HashText.ShortHash(plan.Sha256)} · Source: {plan.SourceName} · " +
                 (string.IsNullOrWhiteSpace(plan.Signature)
                     ? "Unsigned package (signatures are optional and display-only)."
                     : "Signature: " + Trimmed(plan.Signature, 64)),
@@ -84,9 +119,6 @@ internal static class CatalogInstallDialogs
 
         return await dialog.ShowAsync() == ContentDialogResult.Primary;
     }
-
-    private static string ShortHash(string hash) =>
-        hash.Length <= 12 ? hash : hash[..12] + "…";
 
     private static string Trimmed(string value, int maxLength) =>
         value.Length <= maxLength ? value : value[..maxLength] + "…";

@@ -389,7 +389,7 @@ public sealed partial class MainWindow : Window
             ShellMenuBar.Items.Add(menu);
         }
 
-        PersistUiOrderIfChanged(PluginUiOrderStore.CommandsSurface, renderedIds);
+        _ = SafeSaveAsync(PluginUiOrderStore.CommandsSurface, renderedIds.ToArray());
     }
 
     private static int MenuCategoryRank(string category)
@@ -767,9 +767,9 @@ public sealed partial class MainWindow : Window
             _statusItems[entry.Item.Id] = new StatusItemHost(entry, text);
         }
 
-        PersistUiOrderIfChanged(
+        _ = SafeSaveAsync(
             PluginUiOrderStore.StatusBarSurface,
-            entries.Select(static entry => entry.Item.Id));
+            entries.Select(static entry => entry.Item.Id).ToArray());
         UpdatePluginStatusTexts();
     }
 
@@ -862,23 +862,12 @@ public sealed partial class MainWindow : Window
         host.Text.Visibility = string.IsNullOrEmpty(text) ? Visibility.Collapsed : Visibility.Visible;
     }
 
-    private void PersistUiOrderIfChanged(string surface, IEnumerable<string> orderedIds)
-    {
-        var ids = orderedIds.ToArray();
-        var persisted = _uiOrder.Load(surface);
-        if (persisted.SequenceEqual(ids, StringComparer.Ordinal))
-        {
-            return;
-        }
-
-        _ = SafeSaveAsync(surface, ids);
-    }
-
+    /// <summary>Persists a surface order when it changed; IO failures are logged and retried on the next render.</summary>
     private async Task SafeSaveAsync(string surface, string[] ids)
     {
         try
         {
-            await _uiOrder.SaveAsync(surface, ids).ConfigureAwait(false);
+            await _uiOrder.SaveIfChangedAsync(surface, ids).ConfigureAwait(false);
         }
         catch (Exception exception) when (
             exception is IOException or UnauthorizedAccessException)

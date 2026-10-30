@@ -250,27 +250,8 @@ public sealed partial class CatalogPage : Page, IRefreshablePage, IDisposable
         }
     }
 
-    private async Task<bool> ShowTrustDecisionAsync(CatalogInstallPlan plan)
-    {
-        if (_dispatcher is null || _dispatcher.HasThreadAccess)
-        {
-            return await CatalogInstallDialogs.ShowTrustAsync(XamlRoot, plan);
-        }
-
-        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _dispatcher.TryEnqueue(async () =>
-        {
-            try
-            {
-                completion.SetResult(await CatalogInstallDialogs.ShowTrustAsync(XamlRoot, plan));
-            }
-            catch (Exception exception)
-            {
-                completion.SetException(exception);
-            }
-        });
-        return await completion.Task;
-    }
+    private Task<bool> ShowTrustDecisionAsync(CatalogInstallPlan plan) =>
+        CatalogInstallDialogs.ShowTrustDecisionAsync(_dispatcher, XamlRoot, plan);
 
     private async void OnRefreshClick(object sender, RoutedEventArgs e)
     {

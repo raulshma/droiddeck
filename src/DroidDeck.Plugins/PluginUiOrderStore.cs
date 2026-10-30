@@ -141,6 +141,34 @@ public sealed class PluginUiOrderStore : IDisposable
         }
     }
 
+    /// <summary>
+    /// Persists the identifier sequence of a surface only when it differs from
+    /// the sequence recorded before, so re-rendering an unchanged surface never
+    /// rewrites the file. Unknown surfaces compare against an empty sequence;
+    /// IO failures surface to the caller, as with <see cref="SaveAsync"/>.
+    /// </summary>
+    public async Task SaveIfChangedAsync(
+        string surface,
+        IEnumerable<string> orderedIds,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(surface);
+        ArgumentNullException.ThrowIfNull(orderedIds);
+
+        var ids = orderedIds.ToArray();
+        lock (_sync)
+        {
+            EnsureLoaded();
+            var persisted = _surfaces.TryGetValue(surface, out var stored) ? stored : [];
+            if (persisted.SequenceEqual(ids, StringComparer.Ordinal))
+            {
+                return;
+            }
+        }
+
+        await SaveAsync(surface, ids, cancellationToken).ConfigureAwait(false);
+    }
+
     /// <inheritdoc />
     public void Dispose()
     {

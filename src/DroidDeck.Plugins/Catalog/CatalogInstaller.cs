@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text.Json;
 using DroidDeck.Core;
+using DroidDeck.Core.Infrastructure;
 using DroidDeck.Plugin.Abstractions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -771,7 +772,7 @@ public sealed class CatalogInstaller
         return string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase)
             ? null
             : $"The package hash does not match the catalog for '{entry.Plugin.Id}': " +
-                $"expected {ShortHash(expected)}, got {ShortHash(actual)}.";
+                $"expected {HashText.ShortHash(expected)}, got {HashText.ShortHash(actual)}.";
     }
 
     private static string? FindUnsafeEntryName(ZipArchive archive)
@@ -1183,9 +1184,6 @@ public sealed class CatalogInstaller
                 entry.TimestampUtc);
         }
     }
-
-    private static string ShortHash(string hash) =>
-        hash.Length <= 12 ? hash : hash[..12] + "…";
 
     private static bool DeleteFileIfExists(string? path)
     {
