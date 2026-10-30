@@ -110,6 +110,20 @@ public sealed class PluginManifestValidatorTests
     }
 
     [Fact]
+    public void AppVersionDoesNotAffectPluginApiCompatibility()
+    {
+        using var temp = new TempDirectory();
+        var manifest = CreateManifest();
+
+        var result = PluginManifestValidator.Validate(manifest, CreatePluginDirectory(temp), "0.0.1-alpha");
+
+        Assert.True(result.IsValid, Describe(result));
+        Assert.DoesNotContain(
+            result.Issues,
+            issue => issue.Code.StartsWith("manifest.apiVersion.", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void MinimumHostVersionNewerThanHostBlocksLoading()
     {
         using var temp = new TempDirectory();

@@ -73,7 +73,8 @@ public static partial class PluginManifestValidator
         string hostVersion,
         PluginValidationResult result)
     {
-        var compatibility = PluginApi.CheckCompatibility(manifest.ApiVersion, hostVersion);
+        // The plugin ABI is versioned independently of the app; min/maxHostVersion cover app versions.
+        var compatibility = PluginApi.CheckCompatibility(manifest.ApiVersion);
         switch (compatibility)
         {
             case ApiCompatibility.Compatible:
