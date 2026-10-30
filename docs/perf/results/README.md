@@ -22,9 +22,12 @@ Command-specific fields:
 
 - `size`: `extractedBytes`, `zipBytes`, and the budgets in bytes. A release
   report must include a non-null `zipBytes`.
-- `startup`: per-run samples in milliseconds, timed-out runs, median, p95, max,
-  and the budgets. The measurement is process start to the first main window with
-  plugins disabled and an isolated data directory.
+- `startup`: per-run samples in milliseconds, timed-out runs, failed startup
+  runs, median, p95, max, and the budgets. The measurement is process start to
+  the first main window with plugins disabled and an isolated data directory.
+  The startup failure window is also a main window, so a run that shows it is
+  recorded under `failedStartupRuns` and fails the check instead of counting as
+  a sample.
 - `soak`: process id and name, duration, interval, warmup, memory and handle
   growth, the baseline and final medians, every raw sample, and `releaseEligible`.
   Only a run of at least eight hours is release evidence; a short smoke run has

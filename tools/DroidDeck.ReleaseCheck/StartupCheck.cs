@@ -11,6 +11,7 @@ internal sealed record StartupSummary(
     double MaxMilliseconds,
     IReadOnlyList<double> Samples,
     IReadOnlyList<int> TimedOutRuns,
+    IReadOnlyList<int> FailedStartupRuns,
     IReadOnlyList<string> Failures)
 {
     public bool Passed => Failures.Count == 0;
@@ -21,6 +22,7 @@ internal static class StartupAnalyzer
     public static StartupSummary Analyze(
         IReadOnlyList<double> samples,
         IReadOnlyList<int> timedOutRuns,
+        IReadOnlyList<int> failedStartupRuns,
         int runs,
         int warmupRuns,
         double medianBudgetMilliseconds,
@@ -28,12 +30,20 @@ internal static class StartupAnalyzer
     {
         ArgumentNullException.ThrowIfNull(samples);
         ArgumentNullException.ThrowIfNull(timedOutRuns);
+        ArgumentNullException.ThrowIfNull(failedStartupRuns);
         var failures = new List<string>();
         if (timedOutRuns.Count > 0)
         {
             failures.Add(
                 $"{timedOutRuns.Count} run(s) did not show the main window before the timeout: " +
                 string.Join(", ", timedOutRuns.Select(run => run.ToString(CultureInfo.InvariantCulture))) + ".");
+        }
+
+        if (failedStartupRuns.Count > 0)
+        {
+            failures.Add(
+                $"{failedStartupRuns.Count} run(s) showed the startup failure window: " +
+                string.Join(", ", failedStartupRuns.Select(run => run.ToString(CultureInfo.InvariantCulture))) + ".");
         }
 
         var median = 0d;
@@ -73,6 +83,7 @@ internal static class StartupAnalyzer
             max,
             samples,
             timedOutRuns,
+            failedStartupRuns,
             failures);
     }
 }
@@ -110,9 +121,10 @@ internal static class StartupCheck
             "Measuring process start to main window, with plugins disabled and an isolated data directory.");
         var samples = new List<double>();
         var timedOutRuns = new List<int>();
+        var failedStartupRuns = new List<int>();
         for (var run = 1; run <= runs; run++)
         {
-            var (milliseconds, appeared) = await MeasureAsync(
+            var (milliseconds, appeared, startupFailed) = await MeasureAsync(
                 executable,
                 timeout,
                 cancellationToken).ConfigureAwait(false);
@@ -121,6 +133,14 @@ internal static class StartupCheck
             {
                 timedOutRuns.Add(run);
                 Console.Out.WriteLine($"Run {run}: no window within {timeout.TotalSeconds:F0} s.");
+                continue;
+            }
+
+            if (startupFailed)
+            {
+                failedStartupRuns.Add(run);
+                Console.Out.WriteLine(
+                    $"Run {run}: the startup failure window appeared instead of the main window.");
                 continue;
             }
 
@@ -138,6 +158,7 @@ internal static class StartupCheck
         var summary = StartupAnalyzer.Analyze(
             samples,
             timedOutRuns,
+            failedStartupRuns,
             runs,
             warmupRuns,
             medianBudget,
@@ -168,6 +189,7 @@ internal static class StartupCheck
                 timeoutSeconds = timeout.TotalSeconds,
                 samplesMilliseconds = summary.Samples,
                 timedOutRuns = summary.TimedOutRuns,
+                failedStartupRuns = summary.FailedStartupRuns,
                 medianMilliseconds = summary.MedianMilliseconds,
                 p95Milliseconds = summary.P95Milliseconds,
                 maxMilliseconds = summary.MaxMilliseconds,
@@ -178,7 +200,7 @@ internal static class StartupCheck
         return summary.Passed ? 0 : 1;
     }
 
-    private static async Task<(double Milliseconds, bool Appeared)> MeasureAsync(
+    private static async Task<(double Milliseconds, bool Appeared, bool StartupFailed)> MeasureAsync(
         string executable,
         TimeSpan timeout,
         CancellationToken cancellationToken)
@@ -205,13 +227,42 @@ internal static class StartupCheck
             var appeared = await WaitForMainWindowAsync(process, timeout, cancellationToken)
                 .ConfigureAwait(false);
             stopwatch.Stop();
-            return (stopwatch.Elapsed.TotalMilliseconds, appeared);
+            return (stopwatch.Elapsed.TotalMilliseconds, appeared, appeared && StartupFailureLogged(dataDirectory));
         }
         finally
         {
             await CloseAsync(process, cancellationToken).ConfigureAwait(false);
             DeleteDataDirectory(dataDirectory);
         }
+    }
+
+    // The startup failure window is itself a main window, so its presence cannot
+    // distinguish success from failure; LaunchAsync logs this marker before showing it.
+    private static bool StartupFailureLogged(string dataDirectory)
+    {
+        var logs = Path.Combine(dataDirectory, "logs");
+        if (!Directory.Exists(logs))
+        {
+            return false;
+        }
+
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(logs, "*.log"))
+            {
+                if (File.ReadLines(file).Any(
+                        line => line.Contains("DroidDeck failed to start.", StringComparison.Ordinal)))
+                {
+                    return true;
+                }
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+
+        return false;
     }
 
     private static async Task<bool> WaitForMainWindowAsync(
