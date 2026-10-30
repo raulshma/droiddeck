@@ -342,8 +342,9 @@ public partial class App : Application, IDisposable
             new HttpClient(new SocketsHttpHandler
             {
                 AutomaticDecompression = DecompressionMethods.All,
-                AllowAutoRedirect = true,
-                MaxAutomaticRedirections = 3,
+                // The installer follows redirects by hand so every hop is
+                // checked against the HTTPS requirement before it is sent.
+                AllowAutoRedirect = false,
             })
             {
                 // Packages are larger than catalogs, so the download gets a

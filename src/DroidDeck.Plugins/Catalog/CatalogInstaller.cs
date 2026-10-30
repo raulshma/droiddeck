@@ -671,11 +671,11 @@ public sealed class CatalogInstaller
 
         // Redirects are followed by hand, one hop at a time, so every address in
         // the chain is checked against the HTTPS requirement before anything is
-        // sent to it. (The host should also build this client with
-        // AllowAutoRedirect = false; when the handler follows redirects itself,
-        // this loop never sees them and only the final-address check below
-        // still applies.) The PluginCatalogClient keeps the same final-address
-        // precedent for the catalogs it fetches.
+        // sent to it. (The host builds this client with AllowAutoRedirect =
+        // false; if a host ever left auto-follow on, this loop would never see
+        // the hops and only the final-address check below would still apply.)
+        // The PluginCatalogClient keeps the same final-address precedent for
+        // the catalogs it fetches.
         var address = new Uri(entry.Version.DownloadUrl, UriKind.Absolute);
         for (var hop = 0; hop <= MaxRedirectHops; hop++)
         {
