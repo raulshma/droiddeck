@@ -8,6 +8,7 @@ sync: settings, logs, diagnostics, and plugin data stay on the computer.
 ## Start here
 
 - [User guide](user-guide.md) — install, connect a device, add a project, run, mirror, and troubleshoot.
+- [0.0.1-alpha release notes](releases/v0.0.1-alpha.md) — highlights, install, checksums, and known limitations.
 - [Settings reference](settings.md) — every setting, its scope, and its default.
 - [Accessibility and languages](accessibility.md) — keyboard, Narrator, scaling, contrast, motion, and language options.
 - [Catalog schema](catalog.md) — how to publish a plugin catalog.
@@ -29,9 +30,17 @@ sync: settings, logs, diagnostics, and plugin data stay on the computer.
 
 ## Install
 
-Portable builds are unpackaged and self-contained. Download or publish the
-`win-x64` folder and run `DroidDeck.exe`. To keep settings and logs beside the
-executable, create an empty file named `portable.marker` in that folder.
+Portable builds are unpackaged and self-contained. Download
+`DroidDeck-<version>-win-x64.zip` from the
+[releases page](https://github.com/raulshma/droiddeck/releases), verify it against
+`SHA256SUMS.txt`, extract the folder, and run `DroidDeck.exe`. To keep settings
+and logs beside the executable, create an empty file named `portable.marker` in
+that folder.
+
+Release binaries are unsigned, so Windows SmartScreen may warn; verify the
+checksum before running. The current
+[0.0.1-alpha release notes](releases/v0.0.1-alpha.md) list the alpha limitations
+and the bundled plugin SDK packages.
 
 Build and test commands live in the [repository README](https://github.com/raulshma/droiddeck#build-and-run).
 

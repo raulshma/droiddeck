@@ -4,6 +4,17 @@ A local Windows control deck for Android devices: live ADB device tracking, tool
 diagnostics, settings, and an extensible plugin host. DroidDeck never uploads data;
 diagnostics reports are generated locally and redacted.
 
+## Download the alpha
+
+`0.0.1-alpha` is published on the
+[releases page](https://github.com/raulshma/droiddeck/releases/tag/v0.0.1-alpha).
+Download `DroidDeck-0.0.1-alpha-win-x64.zip`, verify it against
+`SHA256SUMS.txt`, extract the folder, and run `DroidDeck.exe`. The portable build
+is self-contained and needs no .NET SDK or Windows App SDK runtime. It is
+unsigned, so Windows SmartScreen may warn; see the
+[release notes](docs/releases/v0.0.1-alpha.md) for limitations and checksum
+steps. The same release carries the plugin SDK packages and the SBOM.
+
 ## Documentation
 
 - [User guide](docs/user-guide.md)
@@ -19,7 +30,10 @@ The same pages build as a GitHub Pages site from `docs/` (see
 
 ## Requirements
 
-- Windows 11 (or Windows 10 1809+)
+For the portable download: Windows 11 (or Windows 10 1809+), x64.
+
+To build from source:
+
 - [.NET 10 SDK](https://dotnet.microsoft.com/download) 10.0.403 or newer
 - Android SDK platform-tools (`adb`) for real devices — optional for tests
 
@@ -109,6 +123,12 @@ GitHub Actions builds Debug and Release on Windows, runs the non-UI unit suite
 in both configurations, builds and loads a plugin from every template, packs the
 plugin SDK packages and packaging tool, and uploads the portable `win-x64`
 artifact. A separate workflow publishes the documentation to GitHub Pages.
+
+A tag matching `v<DroidDeckVersion>` triggers the release workflow, which rebuilds
+from the tag, runs the suites and the size budget, generates the SBOM and
+SHA-256 checksums, and creates a draft GitHub release with the portable zip and
+the four SDK packages. Publishing the draft is manual. The release procedure and
+gates are in the [release checklist](docs/release.md).
 
 ## License
 

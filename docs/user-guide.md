@@ -7,8 +7,18 @@ feature described in [Privacy](privacy.md).
 
 ## Install and start
 
-Releases are unpackaged, self-contained `win-x64` folders. Unzip the folder and run
-`DroidDeck.exe`. No installer or Windows App SDK runtime is required.
+Download `DroidDeck-<version>-win-x64.zip` from the
+[releases page](https://github.com/raulshma/droiddeck/releases), verify it against
+the attached `SHA256SUMS.txt`, then unzip the folder and run `DroidDeck.exe`. No
+installer or Windows App SDK runtime is required.
+
+Release binaries are currently unsigned, so Windows SmartScreen may show an
+unknown-publisher or "Windows protected your PC" warning. Only continue after
+`Get-FileHash <zip> -Algorithm SHA256` matches the published checksum.
+
+The in-app update check reads the latest stable GitHub release. Prereleases such
+as `0.0.1-alpha` do not appear there, so the check reports no update while only
+prereleases exist; upgrade by replacing the portable folder.
 
 By default DroidDeck stores data in `%LocalAppData%\DroidDeck`. Two portable options
 move it:

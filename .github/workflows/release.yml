@@ -1,0 +1,247 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and draft
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  release:
+    name: Build, gate, and draft release
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+          cache: true
+          cache-dependency-path: |
+            global.json
+            Directory.Packages.props
+
+      - name: Verify tag, version, and source
+        shell: pwsh
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:TAG -notmatch '^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') {
+            throw "Tag '$env:TAG' is not a release tag."
+          }
+
+          $expected = $env:TAG.Substring(1)
+          [xml]$props = Get-Content -Raw Directory.Build.props
+          $declared = @($props.Project.PropertyGroup.DroidDeckVersion)[0]
+          if ($declared -ne $expected) {
+            throw "Tag version '$expected' does not match DroidDeckVersion '$declared'."
+          }
+
+          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          $head = (git rev-parse HEAD).Trim()
+          $tagCommit = (git rev-list -n 1 $env:TAG).Trim()
+          if ($head -ne $tagCommit) {
+            throw "HEAD is not the '$env:TAG' tag commit."
+          }
+
+          git merge-base --is-ancestor $head origin/main
+          if ($LASTEXITCODE -ne 0) {
+            throw "The release tag must point to a commit on main."
+          }
+
+          "RELEASE_TAG=$env:TAG" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "RELEASE_VERSION=$expected" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $prerelease = if ($env:TAG.Contains('-')) { 'true' } else { 'false' }
+          "RELEASE_IS_PRERELEASE=$prerelease" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Restore
+        run: dotnet restore DroidDeck.slnx
+
+      - name: Build Release
+        run: dotnet build DroidDeck.slnx -c Release --no-restore
+
+      - name: Test Release
+        run: >-
+          dotnet test DroidDeck.slnx
+          -c Release
+          --no-build
+          --filter "Category!=UI&Category!=Template"
+          --logger "trx;LogFileName=test-results-release.trx"
+          --results-directory TestResults
+
+      - name: Test plugin templates
+        run: >-
+          dotnet test tests/DroidDeck.Plugins.Tests/DroidDeck.Plugins.Tests.csproj
+          -c Release
+          --no-build
+          --filter "Category=Template"
+          --logger "trx;LogFileName=test-results-templates.trx"
+          --results-directory TestResults
+
+      - name: Pack plugin SDK
+        shell: pwsh
+        run: |
+          $output = "$env:GITHUB_WORKSPACE/artifacts/nuget"
+          dotnet pack src/DroidDeck.Plugin.Abstractions/DroidDeck.Plugin.Abstractions.csproj -c Release --no-build -p:PackageOutputPath="$output"
+          if ($LASTEXITCODE -ne 0) { throw "Packing DroidDeck.Plugin.Abstractions failed." }
+          dotnet pack src/DroidDeck.Plugin.UI/DroidDeck.Plugin.UI.csproj -c Release --no-build -p:PackageOutputPath="$output"
+          if ($LASTEXITCODE -ne 0) { throw "Packing DroidDeck.Plugin.UI failed." }
+          dotnet pack templates/DroidDeck.Plugin.Templates/DroidDeck.Plugin.Templates.csproj -c Release --no-build -p:PackageOutputPath="$output"
+          if ($LASTEXITCODE -ne 0) { throw "Packing DroidDeck.Plugin.Templates failed." }
+          dotnet pack tools/DroidDeck.PluginPack/DroidDeck.PluginPack.csproj -c Release --no-build -p:PackageOutputPath="$output"
+          if ($LASTEXITCODE -ne 0) { throw "Packing DroidDeck.PluginPack failed." }
+
+      - name: Publish portable app
+        shell: pwsh
+        run: |
+          dotnet publish src/DroidDeck.App/DroidDeck.App.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:WindowsPackageType=None `
+            -p:PublishReadyToRun=false `
+            -o "artifacts/publish/DroidDeck-$env:RELEASE_VERSION-win-x64"
+          if ($LASTEXITCODE -ne 0) { throw "Publishing the portable app failed." }
+
+      - name: Create portable zip
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $source = "artifacts/publish/DroidDeck-$env:RELEASE_VERSION-win-x64"
+          $zip = "artifacts/DroidDeck-$env:RELEASE_VERSION-win-x64.zip"
+          if (-not (Test-Path -LiteralPath $source)) { throw "Publish output '$source' is missing." }
+          if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip }
+          [System.IO.Compression.ZipFile]::CreateFromDirectory(
+            (Resolve-Path $source).Path,
+            (Join-Path $env:GITHUB_WORKSPACE $zip),
+            [System.IO.Compression.CompressionLevel]::Optimal,
+            $true)
+
+      - name: Enforce size budget
+        shell: pwsh
+        run: |
+          dotnet run --project tools/DroidDeck.ReleaseCheck/DroidDeck.ReleaseCheck.csproj -c Release --no-build -- `
+            size --directory "artifacts/publish/DroidDeck-$env:RELEASE_VERSION-win-x64" `
+            --zip "artifacts/DroidDeck-$env:RELEASE_VERSION-win-x64.zip" `
+            --label "$env:RELEASE_VERSION $env:GITHUB_SHA no-r2r" `
+            --json artifacts/release/size.json
+          if ($LASTEXITCODE -ne 0) { throw "The portable size budget failed." }
+
+      - name: Install SBOM tool
+        run: dotnet tool install --global Microsoft.Sbom.DotNetTool --version 4.1.13
+
+      - name: Generate SBOM
+        shell: pwsh
+        run: |
+          $manifestDirectory = "artifacts/sbom"
+          New-Item -ItemType Directory -Force -Path $manifestDirectory | Out-Null
+          $sbomTool = Join-Path $env:USERPROFILE ".dotnet/tools/sbom-tool.exe"
+          if (-not (Test-Path -LiteralPath $sbomTool)) { throw "sbom-tool was not installed." }
+          & $sbomTool generate `
+            -b "artifacts/publish/DroidDeck-$env:RELEASE_VERSION-win-x64" `
+            -bc . `
+            -pn DroidDeck `
+            -pv $env:RELEASE_VERSION `
+            -ps "DroidDeck contributors" `
+            -nsb "https://github.com/raulshma/droiddeck" `
+            -m $manifestDirectory
+          if ($LASTEXITCODE -ne 0) { throw "SBOM generation failed." }
+          Copy-Item `
+            -LiteralPath "$manifestDirectory/_manifest/spdx_2.2/manifest.spdx.json" `
+            -Destination "artifacts/DroidDeck-$env:RELEASE_VERSION.spdx.json"
+
+      - name: Generate checksums and verify assets
+        shell: pwsh
+        run: |
+          $packages = @(Get-ChildItem -Path artifacts/nuget/*.nupkg | ForEach-Object FullName)
+          if ($packages.Count -ne 4) { throw "Expected four SDK packages, found $($packages.Count)." }
+
+          $assets = @(
+            "artifacts/DroidDeck-$env:RELEASE_VERSION-win-x64.zip",
+            "artifacts/DroidDeck-$env:RELEASE_VERSION.spdx.json"
+          ) + $packages
+
+          foreach ($asset in $assets) {
+            if (-not (Test-Path -LiteralPath $asset)) { throw "Missing release asset '$asset'." }
+            if ((Get-Item -LiteralPath $asset).Length -eq 0) { throw "Release asset '$asset' is empty." }
+          }
+
+          $lines = foreach ($asset in $assets) {
+            $hash = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $(Split-Path -Leaf $asset)"
+          }
+          $lines | Set-Content -LiteralPath artifacts/SHA256SUMS.txt -Encoding ascii
+          Get-Content -LiteralPath artifacts/SHA256SUMS.txt
+
+      - name: Create or update draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = $env:RELEASE_TAG
+          $notes = "docs/releases/$tag.md"
+          if (-not (Test-Path -LiteralPath $notes)) { throw "Missing release notes '$notes'." }
+
+          $assets = @(
+            "artifacts/DroidDeck-$env:RELEASE_VERSION-win-x64.zip",
+            "artifacts/DroidDeck-$env:RELEASE_VERSION.spdx.json",
+            "artifacts/SHA256SUMS.txt"
+          ) + @(Get-ChildItem -Path artifacts/nuget/*.nupkg | ForEach-Object FullName)
+
+          $existingJson = gh release view $tag --json isDraft 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            $existing = $existingJson | ConvertFrom-Json
+            if (-not $existing.isDraft) {
+              throw "Release '$tag' is already published; tags and releases are immutable."
+            }
+            gh release upload $tag $assets --clobber
+            if ($LASTEXITCODE -ne 0) { throw "Uploading assets to draft '$tag' failed." }
+          } else {
+            $arguments = @('release', 'create', $tag) + $assets + @(
+              '--draft',
+              '--verify-tag',
+              '--title', "DroidDeck $tag",
+              '--notes-file', $notes
+            )
+            if ($env:RELEASE_IS_PRERELEASE -eq 'true') { $arguments += '--prerelease' }
+            gh @arguments
+            if ($LASTEXITCODE -ne 0) { throw "Creating draft release '$tag' failed." }
+          }
+          Write-Host "Draft release: https://github.com/$env:GITHUB_REPOSITORY/releases/tag/$tag"
+
+      - name: Upload release evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-evidence
+          path: |
+            artifacts/release/*.json
+            artifacts/SHA256SUMS.txt
+            artifacts/*.spdx.json
+            TestResults/*.trx
+          if-no-files-found: ignore

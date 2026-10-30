@@ -28,7 +28,8 @@ so the size gate decides the trade-off.
 ## Decision
 
 Publish the portable release with `PublishReadyToRun=false`. The size budget is a
-release gate; the startup budget still passes comfortably without R2R.
+release gate; the startup budget still passes comfortably without R2R. The
+`0.0.1-alpha` release ships with R2R disabled on this basis.
 
 ## Consequences
 

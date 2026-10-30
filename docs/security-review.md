@@ -1,7 +1,7 @@
 # Release security review
 
-**Version reviewed:** 1.0.0 release candidate (`21d5ff4` and later hardening
-changes)
+**Version reviewed:** `0.0.1-alpha` (the candidate reviewed as the 1.0.0 release
+candidate at `21d5ff4`, plus later hardening changes)
 **Review date:** 2026-10-31
 **Scope:** process execution, plugins, catalog and package downloads, secrets and
 redaction, update checking, and the portable distribution.
@@ -14,7 +14,7 @@ No remediable high or medium severity finding remains open in the release
 candidate. The controls described in [Security](security.md) are implemented at
 the boundaries reviewed below. Six residual risks are accepted with the
 mitigations recorded in this document; R-01 has high impact but is an explicit
-trust-boundary decision, and none is a blocker for the portable 1.0.0 release.
+trust-boundary decision, and none is a blocker for the portable `0.0.1-alpha` release.
 
 ## Controls verified
 

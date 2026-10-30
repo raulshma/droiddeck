@@ -5,10 +5,28 @@ under [`docs/perf/results`](perf/results/README.md) and link it from the release
 notes. A release does not ship with an open blocker or critical bug, a failed gate,
 or an unrecorded accepted risk.
 
+## Pre-1.0 alpha policy
+
+Alpha releases (`0.x`) use a reduced gate. The tag-driven
+[release workflow](https://github.com/raulshma/droiddeck/blob/main/.github/workflows/release.yml)
+builds from the tag, runs the full unit and template suites, enforces the portable
+size budget, and drafts a GitHub release with checksums and an SBOM. Startup is
+measured on the reference machine and its JSON is committed under
+`docs/perf/results`.
+
+Alphas may ship with these gates deferred, provided the release notes list them
+as known limitations: the eight-hour soak, the clean-machine portable pass, and
+the hands-on accessibility pass. A failed build, test, or size budget, or an open
+security finding still blocks the release. The full checklist below remains the
+1.0.0 bar.
+
 ## 1. Prepare
 
-- [ ] Bump `DroidDeckVersion` in `Directory.Build.props` and stamp the same version
-      in the release notes.
+- [ ] Bump `DroidDeckVersion` in `Directory.Build.props`, the template
+      `sdkVersion` defaults, and the template and sample `minHostVersion` values.
+      The release workflow fails when the tag and `DroidDeckVersion` disagree.
+- [ ] Confirm the tag will point at a commit on `main`.
+- [ ] Draft `docs/releases/<tag>.md`; the workflow uses it as the release body.
 - [ ] Update `Licenses/` and the third-party notices for dependency changes.
 - [ ] Confirm CI is green on the exact commit being released.
 - [ ] Review dependency audit, secret scan, and license audit results.
@@ -17,18 +35,21 @@ or an unrecorded accepted risk.
 
 ## 2. Build the candidate
 
-Build once from the tag; never rebuild a distributed artifact from a different
+The release workflow runs these steps from the tag; reproduce them locally when
+investigating a failure. Never rebuild a distributed artifact from a different
 commit.
 
 ```powershell
-git switch --detach <tag>
+$version = "0.0.1-alpha"
+git switch --detach "v$version"
 dotnet restore DroidDeck.slnx
 dotnet build DroidDeck.slnx -c Release --no-restore
 dotnet test DroidDeck.slnx -c Release --no-build --filter "Category!=UI&Category!=Template"
+dotnet test tests/DroidDeck.Plugins.Tests/DroidDeck.Plugins.Tests.csproj -c Release --no-build --filter "Category=Template"
 dotnet publish src/DroidDeck.App/DroidDeck.App.csproj `
   -c Release -r win-x64 --self-contained true `
   -p:PublishReadyToRun=false -p:Deterministic=true `
-  -o artifacts/publish/win-x64
+  -o "artifacts/publish/DroidDeck-$version-win-x64"
 ```
 
 ReadyToRun stays off so the portable folder fits the size budget; see
@@ -37,24 +58,29 @@ ReadyToRun stays off so the portable folder fits the size budget; see
 `PublishTrimmed=false`; do not override them globally, because those properties
 propagate to class-library project references.
 
-- [ ] Release build and the non-UI, non-template test suite pass.
+- [ ] Release build, the non-UI/non-template suite, and the template suite pass.
 - [ ] Portable publish completes from the tag.
 
 ## 3. Size budget
 
+The release workflow creates the zip with a single
+`DroidDeck-<version>-win-x64` folder and enforces both budgets:
+
 ```powershell
-Compress-Archive -Path artifacts/publish/win-x64/* `
-  -DestinationPath artifacts/DroidDeck-win-x64.zip -CompressionLevel Optimal
+$version = "0.0.1-alpha"
+Compress-Archive -Path "artifacts/publish/DroidDeck-$version-win-x64" `
+  -DestinationPath "artifacts/DroidDeck-$version-win-x64.zip" -CompressionLevel Optimal
 
 dotnet run --project tools/DroidDeck.ReleaseCheck -c Release -- `
-  size --directory artifacts/publish/win-x64 `
-  --zip artifacts/DroidDeck-win-x64.zip `
-  --label "<version> <commit>" `
-  --json docs/perf/results/<date>-size.json
+  size --directory "artifacts/publish/DroidDeck-$version-win-x64" `
+  --zip "artifacts/DroidDeck-$version-win-x64.zip" `
+  --label "$version <commit>" `
+  --json "docs/perf/results/<date>-size-$version.json"
 ```
 
 Budget: extracted folder at most 250 MiB, zip at most 120 MiB. The portable zip
-must not contain PDBs, test files, caches, or local settings.
+must not contain symbols, test files, caches, or local settings; symbols are
+embedded in the assemblies.
 
 - [ ] Extracted size passes.
 - [ ] Zip size passes.
@@ -67,12 +93,17 @@ process start to the first main window with plugins disabled and an isolated dat
 directory, which is a repeatable proxy for cold start to interactive.
 
 ```powershell
+$version = "0.0.1-alpha"
 dotnet run --project tools/DroidDeck.ReleaseCheck -c Release -- `
-  startup --exe artifacts/publish/win-x64/DroidDeck.exe `
+  startup --exe "artifacts/publish/DroidDeck-$version-win-x64/DroidDeck.exe" `
   --runs 10 --warmup-runs 2 `
-  --label "<version> <commit>" `
-  --json docs/perf/results/<date>-startup.json
+  --label "$version <commit>" `
+  --json "docs/perf/results/<date>-startup-$version.json"
 ```
+
+The release workflow does not gate on startup because hosted runners are too
+noisy; this measurement is part of the release evidence and must be run on the
+reference machine.
 
 Budget: median at most 2,000 ms and p95 at most 3,000 ms. If the machine is busy,
 repeat the batch and keep the raw samples; a single outlier batch is not a
@@ -84,6 +115,10 @@ release decision.
       manually and are consistent with the performance plan (17.3-17.4).
 
 ## 5. Eight-hour soak
+
+Deferred for `0.0.1-alpha` under the [pre-1.0 alpha policy](#pre-10-alpha-policy)
+and listed as a known limitation in the release notes. Required again from the
+next alpha that changes long-running session, mirror, or log paths, and for 1.0.0.
 
 Prepare the reference workload: three devices or emulators, continuous logcat at
 about 2,000 lines per second, two active mirrors, twenty runs, and repeated
@@ -140,6 +175,12 @@ Checklist:
 
 ## 7. Accessibility and compatibility
 
+The hands-on Narrator, scaling, and pseudo-locale pass is deferred for
+`0.0.1-alpha` under the [pre-1.0 alpha policy](#pre-10-alpha-policy) and listed
+as a known limitation. The automated architecture and accessibility guard tests
+still run in CI. Windows 10 22H2 remains best effort; Windows 11 24H2 and 25H2
+are the supported targets.
+
 Run the manual pass in [accessibility and languages](accessibility.md), then verify:
 
 - [ ] The golden path is completed with the mouse disconnected.
@@ -155,6 +196,11 @@ Run the manual pass in [accessibility and languages](accessibility.md), then ver
       tested present and absent.
 
 ## 8. Clean-machine portable check
+
+Deferred for `0.0.1-alpha` under the [pre-1.0 alpha policy](#pre-10-alpha-policy)
+and listed as a known limitation. The alpha publishes the same self-contained
+portable folder that the 1.0.0 checklist verifies; run this section before the
+first beta.
 
 Use Windows Sandbox or a clean VM with no .NET SDK, no Windows App SDK runtime,
 and no DroidDeck data. Copy the portable folder and complete every item:
@@ -183,30 +229,57 @@ and no DroidDeck data. Copy the portable folder and complete every item:
 
 ## 9. Artifacts and publish
 
+The [release workflow](https://github.com/raulshma/droiddeck/blob/main/.github/workflows/release.yml)
+builds every artifact from the tag and creates a draft release. Publishing is a
+manual step after review.
+
+Release assets:
+
+| Asset | Contents |
+| --- | --- |
+| `DroidDeck-<version>-win-x64.zip` | Portable folder with a single top-level `DroidDeck-<version>-win-x64` directory. |
+| `DroidDeck.Plugin.Abstractions.<version>.nupkg` | Plugin contracts package. |
+| `DroidDeck.Plugin.UI.<version>.nupkg` | UI component kit package. |
+| `DroidDeck.Plugin.Templates.<version>.nupkg` | `dotnet new` templates package. |
+| `DroidDeck.PluginPack.<version>.nupkg` | Packaging tool package. |
+| `DroidDeck-<version>.spdx.json` | SPDX 2.2 SBOM generated with `Microsoft.Sbom.DotNetTool` 4.1.13. |
+| `SHA256SUMS.txt` | SHA-256 of the zip, SBOM, and four SDK packages. |
+
 - [ ] Portable zip built from the publish output, without symbols, test files, or
-      caches.
-- [ ] Symbols published separately and contain SourceLink information.
-- [ ] SHA-256 checksums generated for the zip and the executable.
+      caches; debug symbols stay embedded in the assemblies.
+- [ ] The four SDK packages are attached to the release because they are not
+      published to nuget.org; the authoring guide installs them from a local feed.
+- [ ] SBOM covers the portable publish and is attached unmodified.
+- [ ] `SHA256SUMS.txt` lists every attached binary asset and verifies.
 - [ ] License, third-party notices, and privacy/security docs included.
-- [ ] Release notes list changes, known issues with workarounds, requirements,
-      checksums, and the security review outcome.
+- [ ] Release notes (`docs/releases/<tag>.md`) list changes, known issues with
+      workarounds, requirements, checksums, the security review outcome, and the
+      deferred gates from the [pre-1.0 alpha policy](#pre-10-alpha-policy).
+- [ ] The release is unsigned; the notes document the SmartScreen warning and how
+      to verify the checksum before running.
 - [ ] The downloaded artifact is launched and exercised once from the published
       location, not just from the build output.
 - [ ] The tag is immutable, and the published artifact is the exact one built and
       verified above.
+- [ ] The workflow refuses to modify an already published release; re-running a
+      tag only refreshes the draft.
+- [ ] The draft is reviewed and published manually; the workflow never publishes.
 
 ## 10. Sign-off
 
+For a pre-1.0 alpha, deferred rows must cite this policy and appear as known
+limitations in the release notes.
+
 | Gate | Evidence | Owner | Result |
 | --- | --- | --- | --- |
-| CI green | Pending run link | Release engineer | Pending |
-| Size | `docs/perf/results/<date>-size*.json` | Release engineer | Pending |
-| Startup | `docs/perf/results/<date>-startup.json` | Release engineer | Pending |
-| Eight-hour soak | `docs/perf/results/<date>-soak.json` | Release engineer | Pending |
+| CI green | Release workflow run link | Release engineer | Pending |
+| Size | `docs/perf/results/<date>-size-<version>.json` | Release engineer | Pending |
+| Startup | `docs/perf/results/<date>-startup-<version>.json` | Release engineer | Pending |
+| Eight-hour soak | Deferred by the [pre-1.0 alpha policy](#pre-10-alpha-policy); listed in release notes | Release engineer | Deferred for 0.0.1-alpha |
 | Security review | [Security review](security-review.md) | Security reviewer | Reviewed, accepted risks recorded |
-| Accessibility | [Accessibility pass](accessibility.md) | Release engineer | Pending |
-| Clean machine | Section 8 checklist | Release engineer | Pending |
-| Release notes | Draft link | Release manager | Pending |
+| Accessibility | Deferred by the [pre-1.0 alpha policy](#pre-10-alpha-policy); automated guards in CI | Release engineer | Deferred for 0.0.1-alpha |
+| Clean machine | Deferred by the [pre-1.0 alpha policy](#pre-10-alpha-policy); listed in release notes | Release engineer | Deferred for 0.0.1-alpha |
+| Release notes | `docs/releases/<tag>.md` | Release manager | Pending |
 
 A gate is complete only when its evidence is attached. Known issues are published
 with workarounds; silent omissions are not acceptable. If a release must ship with
@@ -219,6 +292,10 @@ Portable releases have no installer or auto-update. To roll back, keep the
 previous release folder, restore the previous data directory if the settings schema
 changed, and publish the earlier version with an advisory explaining why. Tags and
 published artifacts are never mutated.
+
+The in-app update check reads the latest stable GitHub release, so it ignores
+prereleases like `0.0.1-alpha`. Publishing a later prerelease does not prompt
+users on the alpha; testers upgrade by replacing the portable folder.
 
 ## 1.0.0 candidate status (2026-10-31)
 

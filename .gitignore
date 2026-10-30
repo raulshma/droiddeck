@@ -72,6 +72,8 @@ artifacts/
 !src/DroidDeck.Projects/Artifacts/**
 !tests/DroidDeck.Core.Tests/Logs/
 !tests/DroidDeck.Core.Tests/Logs/**
+!docs/releases/
+!docs/releases/**
 
 # Tye
 .tye/
