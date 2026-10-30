@@ -110,6 +110,11 @@
                         <SymbolIcon Symbol="AllApps" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
+                <NavigationViewItem Content="Catalog" Tag="catalog" AutomationProperties.AutomationId="NavCatalog">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Shop" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
             </NavigationView.MenuItems>
             <NavigationView.FooterMenuItems>
                 <NavigationViewItem Content="Settings" Tag="settings" AutomationProperties.AutomationId="NavSettings">

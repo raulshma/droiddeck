@@ -57,6 +57,12 @@ public sealed class AppPaths
     /// <summary>Gets the installed plugin directory.</summary>
     public string PluginsDirectory => Path.Combine(DataDirectory, "plugins");
 
+    /// <summary>Gets the plugin catalog directory.</summary>
+    public string CatalogDirectory => Path.Combine(DataDirectory, "catalog");
+
+    /// <summary>Gets the directory that stores cached catalogs for offline browsing.</summary>
+    public string CatalogCacheDirectory => Path.Combine(CatalogDirectory, "cache");
+
     /// <summary>Gets the directory used to quarantine unreadable files.</summary>
     public string QuarantineDirectory => Path.Combine(DataDirectory, "quarantine");
 
@@ -98,6 +104,8 @@ public sealed class AppPaths
         Directory.CreateDirectory(ScreenshotsDirectory);
         Directory.CreateDirectory(RecordingsDirectory);
         Directory.CreateDirectory(PluginsDirectory);
+        Directory.CreateDirectory(CatalogDirectory);
+        Directory.CreateDirectory(CatalogCacheDirectory);
         Directory.CreateDirectory(QuarantineDirectory);
     }
 }

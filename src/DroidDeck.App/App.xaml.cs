@@ -1,4 +1,5 @@
-﻿using System.Runtime.InteropServices;
+﻿using System.Net;
+using System.Runtime.InteropServices;
 using DroidDeck.Adb;
 using DroidDeck.Adb.Commands;
 using DroidDeck.Adb.Devices;
@@ -32,6 +33,7 @@ using DroidDeck.Core.Toolchain;
 using DroidDeck.Core.Wireless;
 using DroidDeck.Plugins;
 using DroidDeck.Plugins.BuiltIns;
+using DroidDeck.Plugins.Catalog;
 using DroidDeck.Projects;
 using DroidDeck.Projects.Artifacts;
 using DroidDeck.Projects.Detection;
@@ -289,6 +291,30 @@ public partial class App : Application, IDisposable
                     () => GetAdbPath(provider))]);
         });
 
+        services.AddSingleton(provider =>
+        {
+            var http = new HttpClient(new SocketsHttpHandler
+            {
+                AutomaticDecompression = DecompressionMethods.All,
+                AllowAutoRedirect = true,
+                MaxAutomaticRedirections = 3,
+            })
+            {
+                Timeout = TimeSpan.FromSeconds(20),
+            };
+            var client = new PluginCatalogClient(
+                http,
+                _paths.CatalogDirectory,
+                userAgent: $"DroidDeck/{AppInfo.Version}",
+                logger: loggerFactory.CreateLogger<PluginCatalogClient>());
+            return new PluginCatalogService(
+                _paths,
+                client,
+                AppInfo.Version,
+                DroidDeck.Plugin.Abstractions.PluginApi.Version,
+                loggerFactory.CreateLogger<PluginCatalogService>());
+        });
+
         services.AddSingleton<IDeviceService>(provider =>
         {
             var adbPath = configuration.Current.Settings.Tools.AdbPath;
@@ -460,6 +486,7 @@ public partial class App : Application, IDisposable
         services.AddTransient<SessionPage>();
         services.AddTransient<HistoryPage>();
         services.AddTransient<ExtensionsPage>();
+        services.AddTransient<CatalogPage>();
         services.AddTransient<SettingsPage>();
         services.AddTransient<DiagnosticsPage>();
         services.AddTransient<DeviceToolsPage>();

@@ -56,6 +56,7 @@ public sealed partial class MainWindow : Window
             ["history"] = typeof(HistoryPage),
             ["activity"] = typeof(ActivityPage),
             ["extensions"] = typeof(ExtensionsPage),
+            ["catalog"] = typeof(CatalogPage),
             ["settings"] = typeof(SettingsPage),
             ["diagnostics"] = typeof(DiagnosticsPage),
         };
