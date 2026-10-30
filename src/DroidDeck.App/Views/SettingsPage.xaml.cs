@@ -10,6 +10,7 @@ using DroidDeck.Core.Configuration;
 using DroidDeck.Core.Diagnostics;
 using DroidDeck.Core.Features;
 using DroidDeck.Core.Infrastructure;
+using DroidDeck.Core.Localization;
 using DroidDeck.Core.Profiles;
 using DroidDeck.Core.Security;
 using DroidDeck.Core.Sessions;
@@ -131,7 +132,8 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
             ThemeCombo.SelectedItem = settings.Appearance.Theme;
             AccentBox.Text = _themes.AccentOverride ?? string.Empty;
             FontBox.Text = _themes.FontOverride ?? string.Empty;
-            ReducedMotionToggle.IsOn = _themes.IsReducedMotion;
+            ReducedMotionToggle.IsOn = _themes.IsReducedMotion();
+            SelectLanguage(settings.Appearance.Language);
             foreach (var row in _toolPaths)
             {
                 row.Path = GetConfiguredPath(settings.Tools, row.Kind) ?? string.Empty;
@@ -1599,6 +1601,44 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
             exception is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
             ReportFailure("Resetting the UI font", exception);
+        }
+    }
+
+    private void SelectLanguage(string? preference)
+    {
+        var normalized = string.IsNullOrWhiteSpace(preference)
+            ? LocalizationPreferences.System
+            : preference;
+        foreach (var item in LanguageCombo.Items.OfType<ComboBoxItem>())
+        {
+            if (string.Equals(
+                    item.Tag as string,
+                    normalized,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                LanguageCombo.SelectedItem = item;
+                return;
+            }
+        }
+
+        LanguageCombo.SelectedIndex = 0;
+    }
+
+    private async void OnLanguageChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initializing || LanguageCombo.SelectedItem is not ComboBoxItem { Tag: string preference })
+        {
+            return;
+        }
+
+        try
+        {
+            await _configuration.SetAsync(SettingsPaths.Language, preference);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            ReportFailure("Saving the language preference", exception);
         }
     }
 

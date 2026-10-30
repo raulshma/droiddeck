@@ -18,7 +18,11 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <StackPanel Spacing="2">
-                <TextBlock Text="Projects" Style="{StaticResource TitleTextBlockStyle}" />
+                <TextBlock
+                    Text="{StaticResource Loc.page.projects.title}"
+                    Style="{StaticResource TitleTextBlockStyle}"
+                    TextWrapping="Wrap"
+                    AutomationProperties.HeadingLevel="Level1" />
                 <TextBlock
                     Text="Add a Gradle, Flutter, React Native, Kotlin Multiplatform, or prebuilt APK project. Detection never invokes Gradle, Flutter, or Metro."
                     FontSize="12"

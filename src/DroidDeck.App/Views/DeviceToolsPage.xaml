@@ -18,7 +18,11 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <StackPanel Spacing="2">
-                <TextBlock Text="Device tools" Style="{StaticResource TitleTextBlockStyle}" />
+                <TextBlock
+                    Text="{StaticResource Loc.page.device-tools.title}"
+                    Style="{StaticResource TitleTextBlockStyle}"
+                    TextWrapping="Wrap"
+                    AutomationProperties.HeadingLevel="Level1" />
                 <TextBlock
                     Text="Apps, permissions, adb shell, ports, files, intents, broadcasts, and plugin contributions. Every action reports the exact adb command."
                     FontSize="12"

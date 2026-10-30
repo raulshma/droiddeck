@@ -6,7 +6,8 @@
     "accentColor": null,
     "fontFamily": null,
     "density": "comfortable",
-    "motion": "full"
+    "motion": "full",
+    "language": "system"
   },
   "tools": {
     "adbPath": null,

@@ -17,7 +17,11 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <StackPanel Spacing="2">
-                <TextBlock Text="Emulators" Style="{StaticResource TitleTextBlockStyle}" />
+                <TextBlock
+                    Text="{StaticResource Loc.page.emulators.title}"
+                    Style="{StaticResource TitleTextBlockStyle}"
+                    TextWrapping="Wrap"
+                    AutomationProperties.HeadingLevel="Level1" />
                 <TextBlock
                     Text="Launch AVDs, cold boot, save or load snapshots, wipe data, and stop running emulators. Create AVDs in Android Studio's Device Manager."
                     FontSize="12"

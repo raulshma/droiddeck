@@ -19,7 +19,11 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <StackPanel Spacing="2">
-                <TextBlock Text="Performance" Style="{StaticResource TitleTextBlockStyle}" />
+                <TextBlock
+                    Text="{StaticResource Loc.page.performance.title}"
+                    Style="{StaticResource TitleTextBlockStyle}"
+                    TextWrapping="Wrap"
+                    AutomationProperties.HeadingLevel="Level1" />
                 <TextBlock
                     Text="Sample launch time, FPS and jank, CPU, memory, and battery for a running application. Charts update live and every sample can be exported as CSV."
                     FontSize="12"

@@ -18,7 +18,11 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <StackPanel Spacing="2">
-                <TextBlock Text="Tests" Style="{StaticResource TitleTextBlockStyle}" />
+                <TextBlock
+                    Text="{StaticResource Loc.page.tests.title}"
+                    Style="{StaticResource TitleTextBlockStyle}"
+                    TextWrapping="Wrap"
+                    AutomationProperties.HeadingLevel="Level1" />
                 <TextBlock
                     Text="Run Gradle, Flutter, Jest, .NET, and custom tests. Results show suites, cases, stack traces, and attachments, and failing tests can be rerun per device."
                     FontSize="12"

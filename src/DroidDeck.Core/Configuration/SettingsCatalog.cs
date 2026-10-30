@@ -262,6 +262,10 @@ public sealed class SettingsCatalog
             "Controls animated transitions in the shell.",
             SettingsValueKind.Enum, SettingsLevel.Basic,
             options: ["full", "reduced"], keywords: ["animation", "accessibility"]);
+        Add(entries, "appearance", "language", "Language",
+            "Chooses the interface language; the pseudo-locale expands every string for localization testing.",
+            SettingsValueKind.Enum, SettingsLevel.Basic,
+            options: ["system", "english", "pseudo"], keywords: ["localization", "pseudo", "rtl"]);
 
         Add(entries, "tools", "adbPath", "adb path",
             "Overrides the automatically detected adb executable.");

@@ -16,8 +16,10 @@
                 AutomationProperties.AutomationId="OnboardingActionBar" />
 
             <TextBlock
-                Text="Welcome to DroidDeck"
+                Text="{StaticResource Loc.page.onboarding.title}"
                 Style="{StaticResource TitleTextBlockStyle}"
+                TextWrapping="Wrap"
+                AutomationProperties.HeadingLevel="Level1"
                 AutomationProperties.AutomationId="OnboardingWelcomeTitle" />
             <TextBlock
                 Text="Set up your tools, add a project, and connect a device. Every step can be skipped and finished later — everything is also reachable from Home."

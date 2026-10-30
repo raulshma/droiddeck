@@ -237,24 +237,35 @@ public sealed class ThemeManager
     /// <summary>Gets the effective font override, or <see langword="null"/> for the theme font.</summary>
     public string? FontOverride => _configuration.GetString(SettingsPaths.FontFamily);
 
-    /// <summary>Gets whether motion should be reduced.</summary>
-    public bool IsReducedMotion
+    /// <summary>Gets whether motion should be reduced for the current system base.</summary>
+    public bool IsReducedMotion(ThemeBase systemBase = ThemeBase.Light)
     {
-        get
+        var motion = _configuration.GetString(SettingsPaths.Motion);
+        if (string.Equals(motion, "reduced", StringComparison.OrdinalIgnoreCase))
         {
-            var motion = _configuration.GetString(SettingsPaths.Motion);
-            if (string.Equals(motion, "reduced", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-
-            return GetCurrent().ReducedMotion;
+            return true;
         }
+
+        return GetCurrent(systemBase).ReducedMotion;
     }
 
     /// <summary>Resolves the effective theme, applying the accent and font overrides.</summary>
     public ThemeDefinition GetCurrent(ThemeBase systemBase = ThemeBase.Light)
     {
+        if (systemBase == ThemeBase.HighContrast)
+        {
+            // A custom palette cannot know the system high-contrast colors, so
+            // the selected theme and accent are ignored and only the explicit
+            // font preference still applies.
+            var highContrast = ThemeCatalog.HighContrast.Clone();
+            if (!string.IsNullOrWhiteSpace(FontOverride))
+            {
+                highContrast.FontFamily = FontOverride;
+            }
+
+            return highContrast;
+        }
+
         var selected = SelectedThemeId;
         var theme = string.IsNullOrWhiteSpace(selected)
             ? ThemeCatalog.ForBase(ResolveBase(systemBase))

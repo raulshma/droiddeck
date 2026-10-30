@@ -10,6 +10,7 @@ using DroidDeck.Core.Devices;
 using DroidDeck.Core.Diagnostics;
 using DroidDeck.Core.Features;
 using DroidDeck.Core.Infrastructure;
+using DroidDeck.Core.Localization;
 using DroidDeck.Core.Notifications;
 using DroidDeck.Core.Resources;
 using DroidDeck.Core.Runs;
@@ -26,6 +27,7 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Graphics;
 using Windows.Storage;
@@ -69,6 +71,25 @@ public sealed partial class MainWindow : Window
     private static readonly string[] MenuCategoryOrder =
         ["App", "Navigate", "Device", "Run", "Screen", "Plugins", "Built-in"];
 
+    private static readonly Dictionary<string, string> NavigationLabelKeys =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["home"] = LocalizationKeys.NavHome,
+            ["devices"] = LocalizationKeys.NavDevices,
+            ["multi-device"] = LocalizationKeys.NavMultiDevice,
+            ["devices/emulators"] = LocalizationKeys.NavEmulators,
+            ["devices/wireless"] = LocalizationKeys.NavWireless,
+            ["projects"] = LocalizationKeys.NavProjects,
+            ["tests"] = LocalizationKeys.NavTests,
+            ["history"] = LocalizationKeys.NavHistory,
+            ["activity"] = LocalizationKeys.NavActivity,
+            ["extensions"] = LocalizationKeys.NavExtensions,
+            ["catalog"] = LocalizationKeys.NavCatalog,
+            ["settings"] = LocalizationKeys.NavSettings,
+            ["diagnostics"] = LocalizationKeys.NavDiagnostics,
+            ["about"] = LocalizationKeys.NavAbout,
+        };
+
     private static readonly TimeSpan StatusTextTimeout = TimeSpan.FromSeconds(1);
 
     // Maps navigation tags to the FeatureCatalog identifiers hidden in
@@ -88,6 +109,7 @@ public sealed partial class MainWindow : Window
         };
 
     private readonly IServiceProvider _services;
+    private readonly ILocalizer _localizer;
     private readonly IDeviceService _devices;
     private readonly IDiagnosticsService _diagnostics;
     private readonly IConfigurationService _configuration;
@@ -114,6 +136,8 @@ public sealed partial class MainWindow : Window
     private readonly DispatcherTimer _statusTimer;
     private readonly DispatcherTimer _messageTimer;
     private CommandPaletteOverlay? _palette;
+    private string _currentPageKey = "home";
+    private bool _micaAvailable;
     private bool _suppressSelectionChanged;
     private bool _placementRestored;
     private bool _allowClose;
@@ -123,6 +147,7 @@ public sealed partial class MainWindow : Window
     /// <summary>Creates the main window.</summary>
     public MainWindow(
         IServiceProvider services,
+        ILocalizer localizer,
         IDeviceService devices,
         IDiagnosticsService diagnostics,
         IConfigurationService configuration,
@@ -141,6 +166,7 @@ public sealed partial class MainWindow : Window
         ILogger<MainWindow> logger)
     {
         _services = services ?? throw new ArgumentNullException(nameof(services));
+        _localizer = localizer ?? throw new ArgumentNullException(nameof(localizer));
         _devices = devices ?? throw new ArgumentNullException(nameof(devices));
         _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
@@ -165,7 +191,6 @@ public sealed partial class MainWindow : Window
         SetTitleBar(TitleBarDragRegion);
         TryEnableMica();
 
-        DiagnosticsIdText.Text = $"Diagnostics {_diagnostics.DiagnosticsId}";
         _devices.DevicesChanged += OnDevicesChanged;
         _notifications.NotificationRaised += OnNotificationRaised;
         _resourceGuard.WarningRaised += OnResourceWarningRaised;
@@ -203,11 +228,66 @@ public sealed partial class MainWindow : Window
         RestorePlacement();
         UpdateStatus();
         Navigate(_configuration.Current.Settings.Onboarding.Completed ? "home" : "onboarding");
+        ApplyLocalization();
+    }
+
+    /// <summary>Reapplies every localized shell string and rebuilds pages after a language change.</summary>
+    public void ReloadLocalization()
+    {
+        foreach (var key in _pages.Keys.ToArray())
+        {
+            _pages.Remove(key, out var page);
+            if (page is IDisposable disposable)
+            {
+                disposable.Dispose();
+            }
+        }
+
+        if (_palette is not null)
+        {
+            RootGrid.Children.Remove(_palette);
+            _palette = null;
+        }
+
+        ApplyLocalization();
+        RebuildMenu();
+        Navigate(_currentPageKey);
+    }
+
+    private void ApplyLocalization()
+    {
+        RootGrid.FlowDirection = _localizer.IsRightToLeft
+            ? FlowDirection.RightToLeft
+            : FlowDirection.LeftToRight;
+        AutomationProperties.SetName(Navigation, _localizer.Get(LocalizationKeys.ShellNavigationName));
+        AutomationProperties.SetName(ShellMenuBar, _localizer.Get(LocalizationKeys.ShellMenuName));
+        foreach (var item in EnumerateNavigationItems())
+        {
+            if (item.Tag is string tag && NavigationLabelKeys.TryGetValue(tag, out var key))
+            {
+                item.Content = _localizer.Get(key);
+            }
+        }
+
+        NotificationActionButton.Content = _localizer.Get(LocalizationKeys.ShellActionView);
+        InstallApkButton.Content = _localizer.Get(LocalizationKeys.ShellActionInstallApk);
+        ToolTipService.SetToolTip(
+            InstallApkButton,
+            _localizer.Get(LocalizationKeys.ShellActionInstallApkTooltip));
+        FinishSetupButton.Content = _localizer.Get(LocalizationKeys.ShellActionFinishSetup);
+        CopyDiagnosticsButton.Content = _localizer.Get(LocalizationKeys.ShellActionCopyDiagnostics);
+        DropTitleText.Text = _localizer.Get(LocalizationKeys.ShellDropTitle);
+        DropSubtitleText.Text = _localizer.Get(LocalizationKeys.ShellDropSubtitle);
+        DiagnosticsIdText.Text = _localizer.Format(
+            LocalizationKeys.ShellStatusDiagnosticsId,
+            _diagnostics.DiagnosticsId);
+        UpdateStatus();
     }
 
     /// <summary>Navigates to a page by key. Unknown keys show a safe fallback.</summary>
     public void Navigate(string key)
     {
+        _currentPageKey = key;
         if (_pluginPages.TryGetValue(key, out var pluginEntry))
         {
             if (!_pages.TryGetValue(key, out var pluginPage))
@@ -223,7 +303,7 @@ public sealed partial class MainWindow : Window
 
         if (!PageTypes.TryGetValue(key, out var pageType))
         {
-            var fallback = new FallbackPage();
+            var fallback = new FallbackPage(_localizer);
             fallback.SetRequestedPage(key);
             PageHost.Content = fallback;
             _logger.LogWarning("Unknown navigation target {Page}", key);
@@ -283,7 +363,7 @@ public sealed partial class MainWindow : Window
     {
         if (_apkInstallBusy)
         {
-            ShowStatusMessage("An APK install is already in progress.");
+            ShowStatusMessage(_localizer.Get(LocalizationKeys.ShellMessageInstallBusy));
             return;
         }
 
@@ -306,7 +386,7 @@ public sealed partial class MainWindow : Window
             exception is COMException or InvalidOperationException or UnauthorizedAccessException)
         {
             _logger.LogWarning(exception, "The APK picker could not be opened.");
-            ShowStatusMessage("The APK picker could not be opened.");
+            ShowStatusMessage(_localizer.Get(LocalizationKeys.ShellMessageApkPickerFailed));
         }
     }
 
@@ -320,7 +400,9 @@ public sealed partial class MainWindow : Window
     {
         if (!command.IsEnabled)
         {
-            ShowStatusMessage($"'{command.Title}' is not available right now.");
+            ShowStatusMessage(_localizer.Format(
+                LocalizationKeys.ShellMessageCommandUnavailable,
+                command.Title));
             return;
         }
 
@@ -336,7 +418,10 @@ public sealed partial class MainWindow : Window
         {
             // Commands may come from plugins, so any failure is contained here.
             _logger.LogWarning(exception, "The command {CommandId} failed.", command.Id);
-            ShowStatusMessage($"'{command.Title}' failed: {exception.Message}");
+            ShowStatusMessage(_localizer.Format(
+                LocalizationKeys.ShellMessageCommandFailed,
+                command.Title,
+                exception.Message));
         }
     }
 
@@ -359,7 +444,7 @@ public sealed partial class MainWindow : Window
         var renderedIds = new List<string>();
         foreach (var group in groups)
         {
-            var menu = new MenuBarItem { Title = group.Key };
+            var menu = new MenuBarItem { Title = LocalizeMenuCategory(group.Key) };
             AutomationProperties.SetAutomationId(menu, $"Menu_{group.Key}");
 
             // The command registry orders by title; the persisted sequence the
@@ -392,6 +477,18 @@ public sealed partial class MainWindow : Window
 
         _ = SafeSaveAsync(PluginUiOrderStore.CommandsSurface, renderedIds.ToArray());
     }
+
+    private string LocalizeMenuCategory(string category) => category switch
+    {
+        "App" => _localizer.Get(LocalizationKeys.ShellMenuApp),
+        "Navigate" => _localizer.Get(LocalizationKeys.ShellMenuNavigate),
+        "Device" => _localizer.Get(LocalizationKeys.ShellMenuDevice),
+        "Run" => _localizer.Get(LocalizationKeys.ShellMenuRun),
+        "Screen" => _localizer.Get(LocalizationKeys.ShellMenuScreen),
+        "Plugins" => _localizer.Get(LocalizationKeys.ShellMenuPlugins),
+        "Built-in" => _localizer.Get(LocalizationKeys.ShellMenuBuiltIn),
+        _ => category,
+    };
 
     private static int MenuCategoryRank(string category)
     {
@@ -456,6 +553,13 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        if (e.Key == VirtualKey.F6)
+        {
+            e.Handled = true;
+            CycleFocusRegion();
+            return;
+        }
+
         // Chord steps must never swallow ordinary typing in text fields; a
         // chord like G A only fires when no text input has focus.
         if (FocusManager.GetFocusedElement() is TextBox or AutoSuggestBox or NumberBox)
@@ -481,6 +585,63 @@ public sealed partial class MainWindow : Window
             e.Handled = true;
             _ = ExecuteCommandAsync(command);
         }
+    }
+
+    /// <summary>Moves keyboard focus between the navigation pane and the active page.</summary>
+    private void CycleFocusRegion()
+    {
+        var focused = FocusManager.GetFocusedElement();
+        if (focused is DependencyObject element && IsDescendantOf(element, Navigation))
+        {
+            if (FindFirstFocusable(PageHost) is { } target)
+            {
+                target.Focus(FocusState.Keyboard);
+            }
+            else
+            {
+                PageHost.Focus(FocusState.Keyboard);
+            }
+
+            return;
+        }
+
+        Navigation.Focus(FocusState.Keyboard);
+    }
+
+    private static bool IsDescendantOf(DependencyObject element, DependencyObject ancestor)
+    {
+        for (var current = element; current is not null; current = VisualTreeHelper.GetParent(current))
+        {
+            if (ReferenceEquals(current, ancestor))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static Control? FindFirstFocusable(DependencyObject root)
+    {
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var index = 0; index < count; index++)
+        {
+            var child = VisualTreeHelper.GetChild(root, index);
+            if (child is Control control &&
+                control.IsTabStop &&
+                control.IsEnabled &&
+                control.Visibility == Visibility.Visible)
+            {
+                return control;
+            }
+
+            if (FindFirstFocusable(child) is { } nested)
+            {
+                return nested;
+            }
+        }
+
+        return null;
     }
 
     private void SetAcceleratorsEnabled(bool enabled)
@@ -554,21 +715,26 @@ public sealed partial class MainWindow : Window
                 ? ThemeBase.Dark
                 : ThemeBase.Light;
         var theme = _themeManager.GetCurrent(systemBase);
-        RootGrid.RequestedTheme = preference switch
+        RootGrid.RequestedTheme = ShellThemePolicy.ResolvePalette(preference, theme.Base) switch
         {
-            AppTheme.Dark => ElementTheme.Dark,
-            AppTheme.Light => ElementTheme.Light,
-            _ => theme.Base switch
-            {
-                ThemeBase.Dark => ElementTheme.Dark,
-                ThemeBase.Light => ElementTheme.Light,
-                _ => ElementTheme.Default,
-            },
+            ShellPalette.Dark => ElementTheme.Dark,
+            ShellPalette.Light => ElementTheme.Light,
+            _ => ElementTheme.Default,
         };
-        ApplyThemeTokens(theme);
+
+        // High contrast belongs to the operating system; custom accent tokens
+        // would override the user's system colors, so only the font applies.
+        if (ShellThemePolicy.ApplyCustomTokens(theme.Base))
+        {
+            ApplyAccentToken(theme);
+        }
+
+        ApplyFontToken(theme);
+        UpdateBackdrop(theme.Base);
+        ApplyMotion(theme);
     }
 
-    private static void ApplyThemeTokens(ThemeDefinition theme)
+    private static void ApplyAccentToken(ThemeDefinition theme)
     {
         var resources = Application.Current.Resources;
         if (ThemeContrast.TryParseColor(theme.Colors.Accent, out var red, out var green, out var blue))
@@ -578,11 +744,38 @@ public sealed partial class MainWindow : Window
             resources["SystemAccentColorSecondary"] = accent;
             resources["SystemAccentColorTertiary"] = accent;
         }
+    }
 
+    private static void ApplyFontToken(ThemeDefinition theme)
+    {
         // Controls pick their default font from this themed resource, so
         // overriding it at application scope changes the shell font everywhere.
-        resources["ContentControlThemeFontFamily"] = new FontFamily(
+        Application.Current.Resources["ContentControlThemeFontFamily"] = new FontFamily(
             string.IsNullOrWhiteSpace(theme.FontFamily) ? "Segoe UI Variable" : theme.FontFamily);
+    }
+
+    private void UpdateBackdrop(ThemeBase themeBase)
+    {
+        if (themeBase == ThemeBase.HighContrast)
+        {
+            SystemBackdrop = null;
+        }
+        else if (_micaAvailable && SystemBackdrop is null)
+        {
+            TryEnableMica();
+        }
+    }
+
+    private void ApplyMotion(ThemeDefinition theme)
+    {
+        var reduced = _themeManager.IsReducedMotion(theme.Base) || !_themeService.AnimationsEnabled;
+        if (reduced)
+        {
+            PageHost.Transitions = null;
+            return;
+        }
+
+        PageHost.Transitions ??= new TransitionCollection { new EntranceThemeTransition() };
     }
 
     private void OnThemeManagerChanged(object? sender, EventArgs e) =>
@@ -652,12 +845,14 @@ public sealed partial class MainWindow : Window
             package.SetText(ShellDiagnostics.BuildReport(_diagnostics, _pluginHost));
             Clipboard.SetContent(package);
             Clipboard.Flush();
-            ShowStatusMessage($"Diagnostics copied ({_diagnostics.DiagnosticsId}).");
+            ShowStatusMessage(_localizer.Format(
+                LocalizationKeys.ShellMessageDiagnosticsCopied,
+                _diagnostics.DiagnosticsId));
         }
         catch (Exception exception) when (exception is COMException or UnauthorizedAccessException)
         {
             _logger.LogWarning(exception, "The diagnostics report could not be copied.");
-            ShowStatusMessage("Diagnostics could not be copied. Open Diagnostics to save a report.");
+            ShowStatusMessage(_localizer.Get(LocalizationKeys.ShellMessageDiagnosticsCopyFailed));
         }
     }
 
@@ -760,7 +955,10 @@ public sealed partial class MainWindow : Window
                 $"PluginStatusBar_{entry.Item.Id}");
             ToolTipService.SetToolTip(
                 text,
-                $"{entry.Item.Title} (plugin: {entry.SourceLabel})");
+                _localizer.Format(
+                    LocalizationKeys.ShellMessagePluginTooltip,
+                    entry.Item.Title,
+                    entry.SourceLabel));
             UIElement host = entry.Item is IStatusBarClickableItem
                 ? WrapInButton(entry, text)
                 : text;
@@ -805,7 +1003,10 @@ public sealed partial class MainWindow : Window
                 CancellationToken.None);
             if (!result.Succeeded)
             {
-                ShowStatusMessage($"{entry.Item.Title} failed: {result.Error}");
+                ShowStatusMessage(_localizer.Format(
+                    LocalizationKeys.ShellMessageStatusItemFailed,
+                    entry.Item.Title,
+                    result.Error));
             }
         };
         button.Tag = entry.Item;
@@ -939,24 +1140,32 @@ public sealed partial class MainWindow : Window
     {
         var devices = _devices.Devices;
         var count = devices.Count;
-        AdbStatusText.Text = _devices.IsAdbConnected
-            ? "ADB connected"
-            : count > 0
-                ? "ADB via CLI fallback"
-                : "ADB disconnected";
-        DeviceCountText.Text = count == 1 ? "1 device" : $"{count} devices";
-        FallbackStatusText.Text = _devices.IsUsingCliFallback ? "CLI fallback active" : string.Empty;
+        AdbStatusText.Text = _localizer.Get(
+            _devices.IsAdbConnected
+                ? LocalizationKeys.ShellStatusAdbConnected
+                : count > 0
+                    ? LocalizationKeys.ShellStatusAdbFallback
+                    : LocalizationKeys.ShellStatusAdbDisconnected);
+        DeviceCountText.Text = count == 1
+            ? _localizer.Get(LocalizationKeys.ShellStatusDeviceOne)
+            : _localizer.Format(LocalizationKeys.ShellStatusDeviceMany, count);
+        FallbackStatusText.Text = _devices.IsUsingCliFallback
+            ? _localizer.Get(LocalizationKeys.ShellStatusCliFallbackActive)
+            : string.Empty;
         TitleStatusText.Text = count == 0
-            ? "No devices"
+            ? _localizer.Get(LocalizationKeys.ShellStatusNoDevices)
             : count == 1
-                ? "1 device connected"
-                : $"{count} devices connected";
+                ? _localizer.Get(LocalizationKeys.ShellStatusConnectedOne)
+                : _localizer.Format(LocalizationKeys.ShellStatusConnectedMany, count);
         UpdatePluginStatusTexts();
+        var diagnostics = _localizer.Format(
+            LocalizationKeys.ShellStatusDiagnosticsTooltip,
+            _diagnostics.DiagnosticsId);
         ToolTipService.SetToolTip(
             AdbStatusText,
             string.IsNullOrWhiteSpace(_devices.LastError)
-                ? $"Diagnostics ID {_diagnostics.DiagnosticsId}"
-                : $"{_devices.LastError}\nDiagnostics ID {_diagnostics.DiagnosticsId}");
+                ? diagnostics
+                : $"{_devices.LastError}\n{diagnostics}");
         FinishSetupButton.Visibility = _configuration.Current.Settings.Onboarding.Completed
             ? Visibility.Collapsed
             : Visibility.Visible;
@@ -974,7 +1183,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        e.DragUIOverride.Caption = "Install APK";
+        e.DragUIOverride.Caption = _localizer.Get(LocalizationKeys.ShellDropCaption);
         e.DragUIOverride.IsCaptionVisible = true;
         e.DragUIOverride.IsGlyphVisible = true;
         DropOverlay.Visibility = Visibility.Visible;
@@ -1001,7 +1210,7 @@ public sealed partial class MainWindow : Window
             exception is COMException or UnauthorizedAccessException or InvalidOperationException)
         {
             _logger.LogWarning(exception, "Dropped files could not be read.");
-            ShowStatusMessage("The dropped files could not be read.");
+            ShowStatusMessage(_localizer.Get(LocalizationKeys.ShellMessageDroppedFilesUnreadable));
             return;
         }
 
@@ -1014,7 +1223,7 @@ public sealed partial class MainWindow : Window
             exception is COMException or UnauthorizedAccessException or IOException)
         {
             _logger.LogWarning(exception, "The dropped folder could not be read.");
-            ShowStatusMessage("The dropped folder could not be read.");
+            ShowStatusMessage(_localizer.Get(LocalizationKeys.ShellMessageDroppedFolderUnreadable));
             return;
         }
 
@@ -1060,7 +1269,7 @@ public sealed partial class MainWindow : Window
     {
         if (_apkInstallBusy)
         {
-            ShowStatusMessage("An APK install is already in progress.");
+            ShowStatusMessage(_localizer.Get(LocalizationKeys.ShellMessageInstallBusy));
             return;
         }
 
@@ -1068,7 +1277,7 @@ public sealed partial class MainWindow : Window
         InstallApkButton.IsEnabled = false;
         try
         {
-            ShowStatusMessage("Inspecting APK...");
+            ShowStatusMessage(_localizer.Get(LocalizationKeys.ShellMessageInspectingApk));
             ApkInstallInspection inspection;
             try
             {
@@ -1079,8 +1288,8 @@ public sealed partial class MainWindow : Window
             {
                 _logger.LogWarning(exception, "APK inspection failed.");
                 await ShowMessageAsync(
-                    "APK inspection failed",
-                    "DroidDeck could not inspect the dropped files. Check the toolchain diagnostics and try again.");
+                    _localizer.Get(LocalizationKeys.ShellMessageInspectionFailedTitle),
+                    _localizer.Get(LocalizationKeys.ShellMessageInspectionFailedBody));
                 return;
             }
 
@@ -1098,13 +1307,15 @@ public sealed partial class MainWindow : Window
             var choice = await ShowDialogAsync(dialog);
             if (choice == ContentDialogResult.None || dialog.SelectedPlan is not { } plan)
             {
-                ShowStatusMessage("APK install canceled.");
+                ShowStatusMessage(_localizer.Get(LocalizationKeys.ShellMessageInstallCanceled));
                 return;
             }
 
             var selectedDevices = dialog.SelectedDevices;
-            ShowStatusMessage(
-                $"Installing {plan.PackageName} on {selectedDevices.Count} device(s)...");
+            ShowStatusMessage(_localizer.Format(
+                LocalizationKeys.ShellMessageInstalling,
+                plan.PackageName,
+                selectedDevices.Count));
             IReadOnlyList<ApkInstallResult> results;
             try
             {
@@ -1115,15 +1326,18 @@ public sealed partial class MainWindow : Window
             {
                 _logger.LogWarning(exception, "The APK install could not run.");
                 await ShowMessageAsync(
-                    "APK install failed",
-                    "DroidDeck could not start the install. Check the device connection and try again.");
+                    _localizer.Get(LocalizationKeys.ShellMessageInstallFailedTitle),
+                    _localizer.Get(LocalizationKeys.ShellMessageInstallFailedBody));
                 return;
             }
 
             var summary = ApkInstallSummary.From(results);
-            ShowStatusMessage(
-                $"{plan.PackageName}: {summary.Succeeded} installed, {summary.Failed} failed, " +
-                $"{summary.Skipped} skipped.");
+            ShowStatusMessage(_localizer.Format(
+                LocalizationKeys.ShellMessageInstallSummary,
+                plan.PackageName,
+                summary.Succeeded,
+                summary.Failed,
+                summary.Skipped));
             await ShowDialogAsync(new ApkInstallResultDialog(plan, results));
         }
         finally
@@ -1143,7 +1357,7 @@ public sealed partial class MainWindow : Window
         catch (InvalidOperationException exception)
         {
             _logger.LogWarning(exception, "A dialog could not be opened because another dialog is active.");
-            ShowStatusMessage("Close the open dialog and try again.");
+            ShowStatusMessage(_localizer.Get(LocalizationKeys.ShellMessageDialogActive));
             return ContentDialogResult.None;
         }
     }
@@ -1158,7 +1372,7 @@ public sealed partial class MainWindow : Window
                 Text = message,
                 TextWrapping = TextWrapping.Wrap,
             },
-            CloseButtonText = "Close",
+            CloseButtonText = _localizer.Get(LocalizationKeys.ShellMessageClose),
             DefaultButton = ContentDialogButton.Close,
         };
         await ShowDialogAsync(dialog);
@@ -1200,7 +1414,9 @@ public sealed partial class MainWindow : Window
         {
             _notificationSessionId = null;
             NotificationBar.Severity = InfoBarSeverity.Warning;
-            NotificationBar.Title = $"Resource warning: {e.Kind}";
+            NotificationBar.Title = _localizer.Format(
+                LocalizationKeys.ShellMessageResourceWarningTitle,
+                e.Kind);
             NotificationBar.Message = e.Message;
             NotificationActionButton.Visibility = Visibility.Collapsed;
             NotificationBar.IsOpen = true;
@@ -1224,6 +1440,7 @@ public sealed partial class MainWindow : Window
         try
         {
             SystemBackdrop = new MicaBackdrop();
+            _micaAvailable = true;
         }
         catch (COMException exception)
         {

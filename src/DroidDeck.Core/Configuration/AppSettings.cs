@@ -292,6 +292,9 @@ public sealed class AppearanceSettings
     /// <summary>Gets or sets the motion preference.</summary>
     public string Motion { get; set; } = "full";
 
+    /// <summary>Gets or sets the language preference: system, english, or pseudo.</summary>
+    public string Language { get; set; } = "system";
+
     /// <summary>Gets or sets unknown keys preserved for forward compatibility.</summary>
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? AdditionalSettings { get; set; }
@@ -502,6 +505,9 @@ public static class SettingsPaths
 
     /// <summary>Motion path.</summary>
     public const string Motion = "appearance.motion";
+
+    /// <summary>Language preference path.</summary>
+    public const string Language = "appearance.language";
 
     /// <summary>ADB path override.</summary>
     public const string AdbPath = "tools.adbPath";

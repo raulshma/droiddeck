@@ -8,7 +8,11 @@
     <ScrollViewer Padding="24">
         <StackPanel Spacing="16">
             <StackPanel Spacing="2">
-                <TextBlock Text="Settings" Style="{StaticResource TitleTextBlockStyle}" />
+                <TextBlock
+                    Text="{StaticResource Loc.page.settings.title}"
+                    Style="{StaticResource TitleTextBlockStyle}"
+                    TextWrapping="Wrap"
+                    AutomationProperties.HeadingLevel="Level1" />
                 <TextBlock
                     Text="Settings are saved locally in your DroidDeck data folder."
                     FontSize="12"
@@ -334,6 +338,32 @@
                         OffContent="Full"
                         Toggled="OnReducedMotionToggled"
                         AutomationProperties.AutomationId="ReducedMotionToggle" />
+                    <StackPanel Spacing="4">
+                        <TextBlock
+                            Text="{StaticResource Loc.settings.language.label}"
+                            Style="{StaticResource FieldLabelStyle}" />
+                        <ComboBox
+                            x:Name="LanguageCombo"
+                            Width="220"
+                            SelectionChanged="OnLanguageChanged"
+                            AutomationProperties.AutomationId="LanguageSelector"
+                            AutomationProperties.Name="{StaticResource Loc.settings.language.label}">
+                            <ComboBoxItem
+                                Content="{StaticResource Loc.settings.language.system}"
+                                Tag="system" />
+                            <ComboBoxItem
+                                Content="{StaticResource Loc.settings.language.english}"
+                                Tag="english" />
+                            <ComboBoxItem
+                                Content="{StaticResource Loc.settings.language.pseudo}"
+                                Tag="pseudo" />
+                        </ComboBox>
+                        <TextBlock
+                            Text="{StaticResource Loc.settings.language.description}"
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextWrapping="Wrap" />
+                    </StackPanel>
                 </StackPanel>
             </Border>
 

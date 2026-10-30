@@ -16,5 +16,6 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Configuration\defaults.json" />
+    <EmbeddedResource Include="Localization\en-US.json" />
   </ItemGroup>
 </Project>

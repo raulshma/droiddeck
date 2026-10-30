@@ -55,10 +55,12 @@ Levels in the table below:
 | `appearance.fontFamily` | Overrides the theme font family. | null | Text | Advanced |
 | `appearance.density` | Spacing between rows and cards across the app. | "comfortable" | Enum | Basic |
 | `appearance.motion` | Controls animated transitions in the shell. | "full" | Enum | Basic |
+| `appearance.language` | Selects the interface language. | "system" | Enum | Basic |
 
 `appearance.theme` accepts `system`, `light`, or `dark`. Theme files placed in the
 themes directory appear in the theme picker. Accent colors are rejected when the
-resulting contrast is too low.
+resulting contrast is too low. `appearance.language` accepts `system`, `english`,
+or `pseudo`; see [accessibility and languages](accessibility.md).
 
 ### Tools
 

@@ -12,7 +12,11 @@
         </Grid.RowDefinitions>
 
         <StackPanel Spacing="2">
-            <TextBlock Text="About DroidDeck" Style="{StaticResource TitleTextBlockStyle}" />
+            <TextBlock
+                Text="{StaticResource Loc.page.about.title}"
+                Style="{StaticResource TitleTextBlockStyle}"
+                TextWrapping="Wrap"
+                AutomationProperties.HeadingLevel="Level1" />
             <TextBlock
                 Text="Versions, licenses, local data locations, and diagnostics for this installation."
                 FontSize="12"

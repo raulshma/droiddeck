@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using DroidDeck.App.Services;
 using DroidDeck.Core.Configuration;
+using DroidDeck.Core.Localization;
 using DroidDeck.Core.Logs;
 using DroidDeck.Core.Runs;
 using DroidDeck.Core.Sessions;
@@ -41,6 +42,7 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
     private readonly ISavedFilterStore _filters;
     private readonly SessionWorkspace _workspace;
     private readonly IConfigurationService _configuration;
+    private readonly ILocalizer _localizer;
     private readonly PluginHost _plugins;
     private readonly PluginUiOrderStore _uiOrder;
     private readonly PluginUiFaultReporter _faultReporter;
@@ -78,6 +80,7 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         ISavedFilterStore filters,
         SessionWorkspace workspace,
         IConfigurationService configuration,
+        ILocalizer localizer,
         PluginHost plugins,
         PluginUiOrderStore uiOrder,
         PluginUiFaultReporter faultReporter,
@@ -91,6 +94,7 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         _filters = filters ?? throw new ArgumentNullException(nameof(filters));
         _workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+        _localizer = localizer ?? throw new ArgumentNullException(nameof(localizer));
         _plugins = plugins ?? throw new ArgumentNullException(nameof(plugins));
         _uiOrder = uiOrder ?? throw new ArgumentNullException(nameof(uiOrder));
         _faultReporter = faultReporter ?? throw new ArgumentNullException(nameof(faultReporter));
@@ -256,7 +260,7 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         DetachLogcatSession();
         OutputTabs.Visibility = Visibility.Collapsed;
         EmptyPanel.Visibility = Visibility.Visible;
-        TitleText.Text = "Session";
+        TitleText.Text = _localizer.Get(LocalizationKeys.PageSessionTitle);
         SubtitleText.Text = "Run a project or open a session from History.";
         StatusText.Text = string.Empty;
         StateText.Text = string.Empty;

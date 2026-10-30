@@ -10,6 +10,7 @@ namespace DroidDeck.App.Services;
 public sealed class AppThemeService : IThemeService
 {
     private AccessibilitySettings? _accessibility;
+    private UISettings? _uiSettings;
     private bool _accessibilityUnavailable;
     private bool? _darkOverride;
 
@@ -35,6 +36,23 @@ public sealed class AppThemeService : IThemeService
             {
                 _accessibilityUnavailable = true;
                 return false;
+            }
+        }
+    }
+
+    /// <summary>Gets whether Windows animations are enabled; unavailable settings assume they are.</summary>
+    public bool AnimationsEnabled
+    {
+        get
+        {
+            try
+            {
+                _uiSettings ??= new UISettings();
+                return _uiSettings.AnimationsEnabled;
+            }
+            catch (Exception exception) when (exception is InvalidOperationException or COMException)
+            {
+                return true;
             }
         }
     }

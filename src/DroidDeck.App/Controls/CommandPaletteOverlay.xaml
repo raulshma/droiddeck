@@ -10,13 +10,17 @@
     IsTabStop="False"
     AutomationProperties.AutomationId="CommandPalette">
 
-    <Grid x:Name="OverlayRoot" Visibility="Collapsed" KeyDown="OnOverlayKeyDown">
+    <Grid
+        x:Name="OverlayRoot"
+        Visibility="Collapsed"
+        KeyDown="OnOverlayKeyDown"
+        AutomationProperties.Name="{StaticResource Loc.palette.name}">
         <Grid Background="{ThemeResource SmokeFillColorDefaultBrush}" Tapped="OnBackdropTapped" />
         <Border
-            Width="560"
+            MaxWidth="560"
             MaxHeight="520"
-            Margin="0,0,0,140"
-            HorizontalAlignment="Center"
+            Margin="24,0,24,140"
+            HorizontalAlignment="Stretch"
             VerticalAlignment="Center"
             Style="{StaticResource CardBorderStyle}">
             <Grid RowSpacing="10">
@@ -28,10 +32,11 @@
                 <TextBox
                     x:Name="QueryBox"
                     Grid.Row="0"
-                    PlaceholderText="Type a command…"
+                    PlaceholderText="{StaticResource Loc.palette.query-placeholder}"
                     TextChanged="OnQueryTextChanged"
                     KeyDown="OnQueryKeyDown"
-                    AutomationProperties.AutomationId="CommandPaletteQuery" />
+                    AutomationProperties.AutomationId="CommandPaletteQuery"
+                    AutomationProperties.Name="{StaticResource Loc.palette.query-name}" />
                 <Grid Grid.Row="1">
                     <ListView
                         x:Name="ResultsList"
@@ -39,7 +44,8 @@
                         SelectionMode="Single"
                         IsItemClickEnabled="True"
                         ItemClick="OnResultItemClick"
-                        AutomationProperties.AutomationId="CommandPaletteResults">
+                        AutomationProperties.AutomationId="CommandPaletteResults"
+                        AutomationProperties.Name="{StaticResource Loc.palette.results-name}">
                         <ListView.ItemTemplate>
                             <DataTemplate x:DataType="viewModels:CommandPaletteRow">
                                 <Grid ColumnSpacing="12" Padding="2,4">
@@ -76,7 +82,8 @@
                     </ListView>
                     <TextBlock
                         x:Name="EmptyText"
-                        Text="No matching commands."
+                        Text="{StaticResource Loc.palette.empty}"
+                        TextWrapping="Wrap"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                         HorizontalAlignment="Center"
                         VerticalAlignment="Center"
@@ -85,8 +92,9 @@
                 </Grid>
                 <TextBlock
                     Grid.Row="2"
-                    Text="↑↓ to navigate · Enter to run · Esc to close"
+                    Text="{StaticResource Loc.palette.hint}"
                     FontSize="12"
+                    TextWrapping="Wrap"
                     Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
             </Grid>
         </Border>

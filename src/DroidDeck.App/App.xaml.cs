@@ -18,6 +18,7 @@ using DroidDeck.Core.Devices;
 using DroidDeck.Core.Diagnostics;
 using DroidDeck.Core.Emulators;
 using DroidDeck.Core.Infrastructure;
+using DroidDeck.Core.Localization;
 using DroidDeck.Core.Logs;
 using DroidDeck.Core.Notifications;
 using DroidDeck.Core.Processes;
@@ -67,6 +68,7 @@ public partial class App : Application, IDisposable
     private ConfigurationService? _configuration;
     private ServiceProvider? _services;
     private PluginHost? _pluginHost;
+    private Localizer? _localizer;
     private MainWindow? _window;
     private AdbDeviceTracker? _adbTracker;
     private AdbDeviceMetadataSource? _adbMetadata;
@@ -186,6 +188,9 @@ public partial class App : Application, IDisposable
 
             await ApplyLaunchOverridesAsync(_configuration, logger);
 
+            _localizer = new Localizer(_configuration.GetString(SettingsPaths.Language));
+            ApplyLocalizerResources();
+
             _services = BuildServices(loggerFactory, _configuration);
             _configuration.Changed += OnConfigurationChanged;
             _window = _services.GetRequiredService<MainWindow>();
@@ -258,6 +263,8 @@ public partial class App : Application, IDisposable
         services.AddSingleton<IConfigurationService>(configuration);
         services.AddSingleton(_logBuffer);
         services.AddSingleton(_session);
+        services.AddSingleton<ILocalizer>(_localizer
+            ?? throw new InvalidOperationException("The localizer is not ready."));
 
         services.AddSingleton<IProcessRunner>(
             _ => new ProcessRunner(logger: loggerFactory.CreateLogger<ProcessRunner>()));
@@ -707,6 +714,20 @@ public partial class App : Application, IDisposable
 
     private void OnConfigurationChanged(object? sender, ConfigChangedEventArgs e)
     {
+        if (string.Equals(e.Path, SettingsPaths.Language, StringComparison.OrdinalIgnoreCase))
+        {
+            if (_window is { } window)
+            {
+                window.DispatcherQueue.TryEnqueue(ApplyLocalizationChange);
+            }
+            else
+            {
+                ApplyLocalizationChange();
+            }
+
+            return;
+        }
+
         if (e.Path.StartsWith("notifications.", StringComparison.OrdinalIgnoreCase) &&
             _services?.GetService<INotificationService>() is { } notifications &&
             _configuration is not null)
@@ -750,6 +771,27 @@ public partial class App : Application, IDisposable
             _configuration is not null)
         {
             coordinator.MaxConcurrency = Math.Max(1, _configuration.Current.Settings.Run.MaxConcurrentDevices);
+        }
+    }
+
+    private void ApplyLocalizationChange()
+    {
+        if (_localizer is null || _configuration is null)
+        {
+            return;
+        }
+
+        _localizer.Update(_configuration.GetString(SettingsPaths.Language));
+        ApplyLocalizerResources();
+        _window?.ReloadLocalization();
+    }
+
+    private void ApplyLocalizerResources()
+    {
+        var resources = Application.Current.Resources;
+        foreach (var (key, value) in _localizer!.Resources)
+        {
+            resources[key] = value;
         }
     }
 

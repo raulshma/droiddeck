@@ -80,7 +80,7 @@ public sealed class ThemeTests
         await manager.SetReducedMotionAsync(true);
 
         Assert.Equal("#005A9E", manager.GetCurrent().Colors.Accent);
-        Assert.True(manager.IsReducedMotion);
+        Assert.True(manager.IsReducedMotion());
         Assert.Equal("reduced", configuration.GetString(SettingsPaths.Motion));
 
         await Assert.ThrowsAsync<ThemeValidationException>(() => manager.SetAccentAsync("#FEFEFE"));

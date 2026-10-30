@@ -206,6 +206,11 @@ multi-step chords such as `Ctrl+K Ctrl+C` are supported.
 | `Ctrl+Shift+R` | Toggle screen recording |
 | `Ctrl+B` | Toggle navigation pane |
 
+`F6` cycles focus between the navigation pane, page content, and status bar, and
+`Alt` reveals access keys for navigation and status-bar actions. Full keyboard,
+screen reader, scaling, and language behavior is covered in
+[accessibility and languages](accessibility.md).
+
 ## Settings and appearance
 
 **Settings** searches every option and groups them into appearance, profiles,
