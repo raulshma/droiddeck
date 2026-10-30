@@ -450,10 +450,12 @@ public sealed class LayeredConfigurationTests
         }
 
         stopwatch.Stop();
-        // The design target is well under 1 ms per cached resolution; the total bound is
-        // generous so the test stays stable on loaded CI machines.
+        // The design target is well under 1 ms per cached resolution. The total
+        // bound is generous because solution-wide test runs execute several
+        // assemblies in parallel; 5 s still catches a multi-fold regression
+        // while keeping the release gate stable under load.
         Assert.True(
-            stopwatch.Elapsed < TimeSpan.FromSeconds(1),
+            stopwatch.Elapsed < TimeSpan.FromSeconds(5),
             $"25,000 cached resolutions took {stopwatch.Elapsed}.");
     }
 

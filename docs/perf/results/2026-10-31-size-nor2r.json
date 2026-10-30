@@ -1,0 +1,19 @@
+{
+  "command": "size",
+  "timestampUtc": "2026-10-30T20:37:21.6952181+00:00",
+  "label": "1.0.0-rc.1 21d5ff4 nor2r",
+  "passed": true,
+  "environment": {
+    "machineName": "reference-development-pc",
+    "osVersion": "Microsoft Windows NT 10.0.26300.0",
+    "processorCount": 18,
+    "dotnetVersion": "10.0.14",
+    "architecture": "X64"
+  },
+  "directory": "artifacts/publish/win-x64-nor2r",
+  "extractedBytes": 244116886,
+  "zipBytes": 94886043,
+  "maxExtractedBytes": 262144000,
+  "maxZipBytes": 125829120,
+  "failures": []
+}

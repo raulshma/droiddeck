@@ -20,6 +20,7 @@
     <Project Path="tests/DroidDeck.TestSupport/DroidDeck.TestSupport.csproj" />
     <Project Path="tests/DroidDeck.Testing.ProcessHelper/DroidDeck.Testing.ProcessHelper.csproj" />
     <Project Path="tests/DroidDeck.Testing.FakeAdb/DroidDeck.Testing.FakeAdb.csproj" />
+    <Project Path="tests/DroidDeck.ReleaseCheck.Tests/DroidDeck.ReleaseCheck.Tests.csproj" />
     <Project Path="tests/DroidDeck.PluginSamples/SampleCommandPlugin/SampleCommandPlugin.csproj" />
     <Project Path="tests/DroidDeck.PluginSamples/SampleDetectorPlugin/SampleDetectorPlugin.csproj" />
     <Project Path="tests/DroidDeck.PluginSamples/SampleDeviceActionPlugin/SampleDeviceActionPlugin.csproj" />
@@ -36,5 +37,6 @@
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/DroidDeck.PluginPack/DroidDeck.PluginPack.csproj" />
+    <Project Path="tools/DroidDeck.ReleaseCheck/DroidDeck.ReleaseCheck.csproj" />
   </Folder>
 </Solution>

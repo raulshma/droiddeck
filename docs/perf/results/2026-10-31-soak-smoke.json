@@ -1,0 +1,176 @@
+{
+  "command": "soak",
+  "timestampUtc": "2026-10-30T20:14:22.8949883+00:00",
+  "label": "soak smoke 2026-10-31",
+  "passed": true,
+  "releaseEligible": false,
+  "environment": {
+    "machineName": "reference-development-pc",
+    "osVersion": "Microsoft Windows NT 10.0.26300.0",
+    "processorCount": 18,
+    "dotnetVersion": "10.0.14",
+    "architecture": "X64"
+  },
+  "processId": 16416,
+  "processName": "DroidDeck",
+  "durationSeconds": 120,
+  "intervalSeconds": 5,
+  "warmupSeconds": 30,
+  "maxMemoryGrowthPercent": 5,
+  "maxHandleGrowth": 32,
+  "sampleCount": 24,
+  "windowSampleCount": 18,
+  "baselineWorkingSetBytes": 164777984,
+  "finalWorkingSetBytes": 164589568,
+  "memoryGrowthPercent": -0.11434537274105745,
+  "baselineHandles": 801,
+  "finalHandles": 802,
+  "handleGrowth": 1,
+  "failures": [],
+  "samples": [
+    {
+      "timestampUtc": "2026-10-30T20:12:22.3062794+00:00",
+      "elapsedSeconds": 0.0004374,
+      "workingSetBytes": 164683776,
+      "handleCount": 803
+    },
+    {
+      "timestampUtc": "2026-10-30T20:12:27.3203933+00:00",
+      "elapsedSeconds": 5.0145398,
+      "workingSetBytes": 164683776,
+      "handleCount": 803
+    },
+    {
+      "timestampUtc": "2026-10-30T20:12:32.3358302+00:00",
+      "elapsedSeconds": 10.0299778,
+      "workingSetBytes": 164696064,
+      "handleCount": 806
+    },
+    {
+      "timestampUtc": "2026-10-30T20:12:37.379117+00:00",
+      "elapsedSeconds": 15.0732637,
+      "workingSetBytes": 164704256,
+      "handleCount": 803
+    },
+    {
+      "timestampUtc": "2026-10-30T20:12:42.4012355+00:00",
+      "elapsedSeconds": 20.0953819,
+      "workingSetBytes": 164712448,
+      "handleCount": 801
+    },
+    {
+      "timestampUtc": "2026-10-30T20:12:47.4272772+00:00",
+      "elapsedSeconds": 25.121424,
+      "workingSetBytes": 164712448,
+      "handleCount": 801
+    },
+    {
+      "timestampUtc": "2026-10-30T20:12:52.4376977+00:00",
+      "elapsedSeconds": 30.1318463,
+      "workingSetBytes": 164712448,
+      "handleCount": 801
+    },
+    {
+      "timestampUtc": "2026-10-30T20:12:57.466845+00:00",
+      "elapsedSeconds": 35.1609918,
+      "workingSetBytes": 164777984,
+      "handleCount": 801
+    },
+    {
+      "timestampUtc": "2026-10-30T20:13:02.4911785+00:00",
+      "elapsedSeconds": 40.1853252,
+      "workingSetBytes": 164777984,
+      "handleCount": 801
+    },
+    {
+      "timestampUtc": "2026-10-30T20:13:07.5251001+00:00",
+      "elapsedSeconds": 45.2192466,
+      "workingSetBytes": 164777984,
+      "handleCount": 801
+    },
+    {
+      "timestampUtc": "2026-10-30T20:13:12.5441603+00:00",
+      "elapsedSeconds": 50.2383095,
+      "workingSetBytes": 164704256,
+      "handleCount": 800
+    },
+    {
+      "timestampUtc": "2026-10-30T20:13:17.5615855+00:00",
+      "elapsedSeconds": 55.2557324,
+      "workingSetBytes": 164708352,
+      "handleCount": 802
+    },
+    {
+      "timestampUtc": "2026-10-30T20:13:22.5846856+00:00",
+      "elapsedSeconds": 60.2788332,
+      "workingSetBytes": 164708352,
+      "handleCount": 802
+    },
+    {
+      "timestampUtc": "2026-10-30T20:13:27.6029074+00:00",
+      "elapsedSeconds": 65.297054,
+      "workingSetBytes": 164708352,
+      "handleCount": 802
+    },
+    {
+      "timestampUtc": "2026-10-30T20:13:32.6269448+00:00",
+      "elapsedSeconds": 70.3210925,
+      "workingSetBytes": 164708352,
+      "handleCount": 802
+    },
+    {
+      "timestampUtc": "2026-10-30T20:13:37.6483641+00:00",
+      "elapsedSeconds": 75.3425107,
+      "workingSetBytes": 164708352,
+      "handleCount": 802
+    },
+    {
+      "timestampUtc": "2026-10-30T20:13:42.6788109+00:00",
+      "elapsedSeconds": 80.3729579,
+      "workingSetBytes": 164708352,
+      "handleCount": 802
+    },
+    {
+      "timestampUtc": "2026-10-30T20:13:47.6949221+00:00",
+      "elapsedSeconds": 85.3890688,
+      "workingSetBytes": 164597760,
+      "handleCount": 802
+    },
+    {
+      "timestampUtc": "2026-10-30T20:13:52.7196232+00:00",
+      "elapsedSeconds": 90.4137703,
+      "workingSetBytes": 164597760,
+      "handleCount": 802
+    },
+    {
+      "timestampUtc": "2026-10-30T20:13:57.7613593+00:00",
+      "elapsedSeconds": 95.455506,
+      "workingSetBytes": 164597760,
+      "handleCount": 802
+    },
+    {
+      "timestampUtc": "2026-10-30T20:14:02.7732849+00:00",
+      "elapsedSeconds": 100.4674316,
+      "workingSetBytes": 164589568,
+      "handleCount": 802
+    },
+    {
+      "timestampUtc": "2026-10-30T20:14:07.7883357+00:00",
+      "elapsedSeconds": 105.4824826,
+      "workingSetBytes": 164589568,
+      "handleCount": 802
+    },
+    {
+      "timestampUtc": "2026-10-30T20:14:12.8245105+00:00",
+      "elapsedSeconds": 110.518657,
+      "workingSetBytes": 164589568,
+      "handleCount": 802
+    },
+    {
+      "timestampUtc": "2026-10-30T20:14:17.8506979+00:00",
+      "elapsedSeconds": 115.5448444,
+      "workingSetBytes": 164589568,
+      "handleCount": 802
+    }
+  ]
+}

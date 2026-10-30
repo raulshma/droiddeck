@@ -17,6 +17,8 @@ acknowledgment and a fix or mitigation plan; please allow time for a release bef
 public disclosure.
 
 The current 1.x line receives security fixes. Older builds are not supported.
+The [release security review](security-review.md) records the controls checked
+before each release and the accepted residual risks.
 
 ## Threat model
 

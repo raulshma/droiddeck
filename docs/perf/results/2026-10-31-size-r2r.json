@@ -1,0 +1,21 @@
+{
+  "command": "size",
+  "timestampUtc": "2026-10-30T20:09:16.833775+00:00",
+  "label": "1.0.0-rc.1 21d5ff4 r2r",
+  "passed": false,
+  "environment": {
+    "machineName": "reference-development-pc",
+    "osVersion": "Microsoft Windows NT 10.0.26300.0",
+    "processorCount": 18,
+    "dotnetVersion": "10.0.14",
+    "architecture": "X64"
+  },
+  "directory": "artifacts/publish/win-x64",
+  "extractedBytes": 298025662,
+  "zipBytes": null,
+  "maxExtractedBytes": 262144000,
+  "maxZipBytes": 125829120,
+  "failures": [
+    "The extracted size is 284.2 MiB (298025662 bytes), over the 250.0 MiB (262144000 bytes) budget."
+  ]
+}

@@ -89,6 +89,35 @@ jobs:
           -p:PublishReadyToRun=false
           -o artifacts/DroidDeck-portable
 
+      - name: Create portable zip
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::CreateFromDirectory(
+            "$PWD/artifacts/DroidDeck-portable",
+            "$PWD/artifacts/DroidDeck-portable.zip",
+            [System.IO.Compression.CompressionLevel]::Optimal,
+            $false)
+
+      - name: Check portable size budget
+        run: >-
+          dotnet run --project tools/DroidDeck.ReleaseCheck/DroidDeck.ReleaseCheck.csproj
+          -c Release
+          --no-build
+          --
+          size --directory artifacts/DroidDeck-portable
+          --zip artifacts/DroidDeck-portable.zip
+          --label "${{ github.sha }}"
+          --json artifacts/release/size.json
+
+      - name: Upload release check results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-check-results
+          path: artifacts/release/*.json
+          if-no-files-found: ignore
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4

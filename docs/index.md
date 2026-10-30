@@ -16,6 +16,8 @@ sync: settings, logs, diagnostics, and plugin data stay on the computer.
 - [Privacy](privacy.md) — exactly what stays local and when the app uses the network.
 - [Security](security.md) — threat model, plugin trust, and how to report a vulnerability.
 - [Licensing](licensing.md) — the DroidDeck license and third-party notices.
+- [Release checklist](release.md) — size, startup, soak, security, accessibility, and clean-machine gates.
+- [Release security review](security-review.md) — scope, controls, findings, and accepted risks.
 - [Plugin SDK](plugin-sdk/index.md) — build, package, and install a plugin.
 
 ## Requirements
