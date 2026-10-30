@@ -38,6 +38,7 @@ First public alpha. Portable `win-x64` build; no installer and no auto-update.
   configuration source maps, script trust, and a toolchain doctor.
 - Command palette, menu bar command registry, first-run onboarding, Home cockpit,
   About page, diagnostics with redaction, and a manual update check.
+- DroidDeck app icon in the portable executable and window chrome.
 - Accessibility and localization groundwork: keyboard navigation, Narrator
   names, high-contrast and reduced-motion handling, scaling support, and
   pseudo-locale coverage.

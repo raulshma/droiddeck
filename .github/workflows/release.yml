@@ -133,7 +133,7 @@ jobs:
           # Publish has silently dropped these before, producing an app that only
           # shows the startup failure window. Fail before zipping such an artifact.
           $publish = "artifacts/publish/DroidDeck-$env:RELEASE_VERSION-win-x64"
-          foreach ($required in @("DroidDeck.pri", "App.xbf", "MainWindow.xbf")) {
+          foreach ($required in @("DroidDeck.pri", "App.xbf", "MainWindow.xbf", "Assets\droiddeck.ico")) {
             if (-not (Test-Path -LiteralPath (Join-Path $publish $required))) {
               throw "The portable publish is missing '$required'."
             }

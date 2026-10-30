@@ -187,6 +187,12 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
         Title = "DroidDeck";
         AppWindow.Title = "DroidDeck";
+        var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "droiddeck.ico");
+        if (File.Exists(iconPath))
+        {
+            AppWindow.SetIcon(iconPath);
+        }
+
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(TitleBarDragRegion);
         TryEnableMica();
