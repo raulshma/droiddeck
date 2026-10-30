@@ -7,6 +7,8 @@ using DroidDeck.Core.Configuration;
 using DroidDeck.Core.Devices;
 using DroidDeck.Core.Projects;
 using DroidDeck.Core.Runs;
+using DroidDeck.Plugins;
+using DroidDeck.Plugin.UI.Kit;
 using DroidDeck.Projects.Adapters;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -28,8 +30,11 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
     private readonly SessionWorkspace _workspace;
     private readonly IConfigurationService _configuration;
     private readonly PluginHost _plugins;
+    private readonly PluginUiFaultReporter _faultReporter;
     private readonly ILogger<ProjectsPage> _logger;
     private readonly DispatcherQueue? _dispatcher;
+    private readonly List<IDisposable> _pluginTabContents = [];
+    private readonly HashSet<string> _loadedPluginTabs = new(StringComparer.Ordinal);
     private ProjectModel? _selected;
     private RunConfiguration? _selectedConfiguration;
     private bool _syncingSelection;
@@ -44,6 +49,7 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
         SessionWorkspace workspace,
         IConfigurationService configuration,
         PluginHost plugins,
+        PluginUiFaultReporter faultReporter,
         ILogger<ProjectsPage> logger)
     {
         _projects = projects ?? throw new ArgumentNullException(nameof(projects));
@@ -53,6 +59,7 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
         _workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         _plugins = plugins ?? throw new ArgumentNullException(nameof(plugins));
+        _faultReporter = faultReporter ?? throw new ArgumentNullException(nameof(faultReporter));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _dispatcher = DispatcherQueue.GetForCurrentThread();
 
@@ -60,7 +67,9 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
         _projects.ProjectsChanged += OnProjectsChanged;
         _projects.ProjectChanged += OnProjectChanged;
         _devices.DevicesChanged += OnDevicesChanged;
+        _plugins.ResultsChanged += OnPluginResultsChanged;
         Refresh();
+        RebuildPluginTabs();
     }
 
     /// <inheritdoc />
@@ -104,6 +113,8 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
         _projects.ProjectsChanged -= OnProjectsChanged;
         _projects.ProjectChanged -= OnProjectChanged;
         _devices.DevicesChanged -= OnDevicesChanged;
+        _plugins.ResultsChanged -= OnPluginResultsChanged;
+        DisposePluginTabContents();
     }
 
     private void SelectProject(string projectId, bool persistOpened)
@@ -726,6 +737,125 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
                 extension.Value.Id,
                 $"{extension.Value.Id} · {extension.PluginId}"))
             .ToArray();
+
+    private void OnPluginResultsChanged(object? sender, EventArgs e) => Dispatch(RebuildPluginTabs);
+
+    /// <summary>
+    /// Rebuilds one lazily loaded tab per registered project tab. Each tab's
+    /// view is created on first show inside a fault boundary, so a failing tab
+    /// shows a fallback card and cannot break the rest of the page.
+    /// </summary>
+    private void RebuildPluginTabs()
+    {
+        DisposePluginTabContents();
+        PluginProjectTabs.TabItems.Clear();
+        _loadedPluginTabs.Clear();
+        var entries = _plugins.Extensions.ProjectTabs;
+        foreach (var entry in entries)
+        {
+            var boundary = new PluginFaultBoundary(entry.PluginId, $"project tab {entry.Tab.Id}", _faultReporter);
+            _pluginTabContents.Add(boundary);
+            PluginProjectTabs.TabItems.Add(new TabViewItem
+            {
+                Header = $"{entry.Tab.Title} · {entry.SourceLabel}",
+                IsClosable = false,
+                Content = boundary,
+                Tag = entry,
+            });
+        }
+
+        PluginProjectTabs.Visibility = entries.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        if (entries.Count > 0)
+        {
+            QueuePluginTabLoad(
+                PluginProjectTabs.SelectedItem as TabViewItem ??
+                PluginProjectTabs.TabItems[0] as TabViewItem);
+        }
+    }
+
+    private void OnPluginProjectTabSelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        QueuePluginTabLoad(PluginProjectTabs.SelectedItem as TabViewItem);
+
+    private void QueuePluginTabLoad(TabViewItem? item)
+    {
+        if (item is null || item.Tag is not ProjectTabEntry entry ||
+            !_loadedPluginTabs.Add(entry.Tab.Id))
+        {
+            return;
+        }
+
+        var afterFirstFrame = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var queued = _dispatcher is null || _dispatcher.TryEnqueue(
+            DispatcherQueuePriority.Low,
+            () => afterFirstFrame.TrySetResult());
+        if (!queued)
+        {
+            afterFirstFrame.TrySetResult();
+        }
+
+        _ = LoadPluginTabAsync(entry, item.Content as PluginFaultBoundary, afterFirstFrame.Task);
+    }
+
+    private async Task LoadPluginTabAsync(
+        ProjectTabEntry entry,
+        PluginFaultBoundary? boundary,
+        Task afterFirstFrame)
+    {
+        if (boundary is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await afterFirstFrame.ConfigureAwait(true);
+            if (_disposed)
+            {
+                return;
+            }
+
+            var result = await _plugins.Invoker.CreateViewAsync(
+                entry.PluginId,
+                $"project tab {entry.Tab.Id}",
+                token => entry.Tab.CreateViewAsync(token),
+                CancellationToken.None).ConfigureAwait(true);
+            boundary.Show(result.Content, result.Error);
+            if (!result.Succeeded)
+            {
+                _logger.LogWarning(
+                    "Plugin project tab {TabId} from {PluginId} could not load: {Error}",
+                    entry.Tab.Id,
+                    entry.PluginId,
+                    result.Error);
+            }
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(
+                exception,
+                "Plugin project tab {TabId} from {PluginId} could not load.",
+                entry.Tab.Id,
+                entry.PluginId);
+            try
+            {
+                boundary.Show(null, exception.Message);
+            }
+            catch
+            {
+                // One plugin tab must never break the host page.
+            }
+        }
+    }
+
+    private void DisposePluginTabContents()
+    {
+        foreach (var content in _pluginTabContents)
+        {
+            content.Dispose();
+        }
+
+        _pluginTabContents.Clear();
+    }
 
     private async void OnDuplicateRunConfigClick(object sender, RoutedEventArgs e)
     {

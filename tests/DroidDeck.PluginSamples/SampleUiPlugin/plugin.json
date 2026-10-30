@@ -1,0 +1,17 @@
+{
+  "id": "com.example.sample.ui",
+  "name": "Sample UI Plugin",
+  "version": "1.0.0",
+  "author": "DroidDeck",
+  "description": "A sample plugin that contributes a navigation page, a project tab, and a home widget built from the host UI component kit.",
+  "apiVersion": "1.0",
+  "minHostVersion": "0.1.0",
+  "entryAssembly": "SampleUiPlugin.dll",
+  "entryType": "SampleUiPlugin.SampleUiPlugin",
+  "capabilities": [
+    "ui-page",
+    "project-tab",
+    "home-widget"
+  ],
+  "license": "MIT"
+}

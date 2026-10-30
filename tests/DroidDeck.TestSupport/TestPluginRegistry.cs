@@ -17,6 +17,9 @@ public sealed class TestPluginRegistry : IPluginRegistry
     private readonly List<PluginExtension<ILogParser>> _logParsers = [];
     private readonly List<PluginExtension<IHighlightRuleProvider>> _highlightRuleProviders = [];
     private readonly List<PluginExtension<ITestRunner>> _testRunners = [];
+    private readonly List<PluginExtension<INavigationPage>> _navigationPages = [];
+    private readonly List<PluginExtension<IProjectTab>> _projectTabs = [];
+    private readonly List<PluginExtension<IHomeWidget>> _homeWidgets = [];
     private readonly Dictionary<Type, string> _owners = [];
     private readonly object _sync = new();
 
@@ -52,6 +55,15 @@ public sealed class TestPluginRegistry : IPluginRegistry
     public IReadOnlyList<PluginExtension<ITestRunner>> TestRunners => Snapshot(_testRunners);
 
     /// <inheritdoc />
+    public IReadOnlyList<PluginExtension<INavigationPage>> NavigationPages => Snapshot(_navigationPages);
+
+    /// <inheritdoc />
+    public IReadOnlyList<PluginExtension<IProjectTab>> ProjectTabs => Snapshot(_projectTabs);
+
+    /// <inheritdoc />
+    public IReadOnlyList<PluginExtension<IHomeWidget>> HomeWidgets => Snapshot(_homeWidgets);
+
+    /// <inheritdoc />
     public void AddCommand(ICommand command) => Add(PluginConstants.BuiltInPluginId, command, _commands);
 
     /// <inheritdoc />
@@ -82,6 +94,16 @@ public sealed class TestPluginRegistry : IPluginRegistry
     public void AddTestRunner(ITestRunner runner) => Add(PluginConstants.BuiltInPluginId, runner, _testRunners);
 
     /// <inheritdoc />
+    public void AddNavigationPage(INavigationPage page) =>
+        Add(PluginConstants.BuiltInPluginId, page, _navigationPages);
+
+    /// <inheritdoc />
+    public void AddProjectTab(IProjectTab tab) => Add(PluginConstants.BuiltInPluginId, tab, _projectTabs);
+
+    /// <inheritdoc />
+    public void AddHomeWidget(IHomeWidget widget) => Add(PluginConstants.BuiltInPluginId, widget, _homeWidgets);
+
+    /// <inheritdoc />
     public string? GetOwner(Type extensionType)
     {
         ArgumentNullException.ThrowIfNull(extensionType);
@@ -107,6 +129,9 @@ public sealed class TestPluginRegistry : IPluginRegistry
             removed += _logParsers.RemoveAll(extension => extension.PluginId == pluginId);
             removed += _highlightRuleProviders.RemoveAll(extension => extension.PluginId == pluginId);
             removed += _testRunners.RemoveAll(extension => extension.PluginId == pluginId);
+            removed += _navigationPages.RemoveAll(extension => extension.PluginId == pluginId);
+            removed += _projectTabs.RemoveAll(extension => extension.PluginId == pluginId);
+            removed += _homeWidgets.RemoveAll(extension => extension.PluginId == pluginId);
             RebuildOwners();
         }
 
@@ -174,6 +199,21 @@ public sealed class TestPluginRegistry : IPluginRegistry
         }
 
         foreach (var extension in _testRunners)
+        {
+            _owners[extension.Value.GetType()] = extension.PluginId;
+        }
+
+        foreach (var extension in _navigationPages)
+        {
+            _owners[extension.Value.GetType()] = extension.PluginId;
+        }
+
+        foreach (var extension in _projectTabs)
+        {
+            _owners[extension.Value.GetType()] = extension.PluginId;
+        }
+
+        foreach (var extension in _homeWidgets)
         {
             _owners[extension.Value.GetType()] = extension.PluginId;
         }

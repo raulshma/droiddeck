@@ -560,14 +560,21 @@
                                     MinHeight="72"
                                     Visibility="Collapsed"
                                     AutomationProperties.AutomationId="HomePluginWidgetHost">
-                                    <TextBlock
-                                        x:Name="PluginWidgetPlaceholderText"
-                                        Text="Plugin home widgets mount here."
-                                        FontSize="12"
-                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                        TextWrapping="Wrap"
-                                        VerticalAlignment="Center"
-                                        AutomationProperties.AutomationId="HomePluginWidgetPlaceholder" />
+                                    <Grid>
+                                        <TextBlock
+                                            x:Name="PluginWidgetPlaceholderText"
+                                            Text="Plugin home widgets mount here."
+                                            FontSize="12"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            TextWrapping="Wrap"
+                                            VerticalAlignment="Center"
+                                            AutomationProperties.AutomationId="HomePluginWidgetPlaceholder" />
+                                        <StackPanel
+                                            x:Name="PluginWidgetList"
+                                            Spacing="10"
+                                            Visibility="Collapsed"
+                                            AutomationProperties.AutomationId="HomePluginWidgetList" />
+                                    </Grid>
                                 </Border>
 
                                 <TextBlock

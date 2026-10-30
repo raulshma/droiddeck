@@ -9,6 +9,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <Grid Grid.Row="0" ColumnSpacing="12">
@@ -532,5 +533,15 @@
                 </Grid>
             </Border>
         </Grid>
+
+        <TabView
+            x:Name="PluginProjectTabs"
+            Grid.Row="3"
+            IsAddTabButtonVisible="False"
+            CanDragTabs="False"
+            CanReorderTabs="False"
+            Visibility="Collapsed"
+            SelectionChanged="OnPluginProjectTabSelectionChanged"
+            AutomationProperties.AutomationId="ProjectPluginTabs" />
     </Grid>
 </Page>

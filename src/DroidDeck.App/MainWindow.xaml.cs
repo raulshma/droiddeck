@@ -15,6 +15,7 @@ using DroidDeck.Core.Resources;
 using DroidDeck.Core.Runs;
 using DroidDeck.Core.Screen;
 using DroidDeck.Core.Themes;
+using DroidDeck.Plugins;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI;
@@ -88,6 +89,7 @@ public sealed partial class MainWindow : Window
     private readonly IConfigurationService _configuration;
     private readonly ApkInstallService _apkInstalls;
     private readonly PluginHost _pluginHost;
+    private readonly PluginUiFaultReporter _faultReporter;
     private readonly SessionWorkspace _workspace;
     private readonly INotificationService _notifications;
     private readonly IResourceGuard _resourceGuard;
@@ -100,6 +102,8 @@ public sealed partial class MainWindow : Window
     private readonly ChordRouter _chords = new();
     private readonly ILogger<MainWindow> _logger;
     private readonly Dictionary<string, Page> _pages = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, NavigationPageEntry> _pluginPages = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<NavigationViewItem> _pluginNavItems = [];
     private readonly List<KeyboardAccelerator> _accelerators = [];
     private readonly DispatcherTimer _statusTimer;
     private readonly DispatcherTimer _messageTimer;
@@ -118,6 +122,7 @@ public sealed partial class MainWindow : Window
         IConfigurationService configuration,
         ApkInstallService apkInstalls,
         PluginHost pluginHost,
+        PluginUiFaultReporter faultReporter,
         SessionWorkspace workspace,
         INotificationService notifications,
         IResourceGuard resourceGuard,
@@ -134,6 +139,7 @@ public sealed partial class MainWindow : Window
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         _apkInstalls = apkInstalls ?? throw new ArgumentNullException(nameof(apkInstalls));
         _pluginHost = pluginHost ?? throw new ArgumentNullException(nameof(pluginHost));
+        _faultReporter = faultReporter ?? throw new ArgumentNullException(nameof(faultReporter));
         _workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
         _notifications = notifications ?? throw new ArgumentNullException(nameof(notifications));
         _resourceGuard = resourceGuard ?? throw new ArgumentNullException(nameof(resourceGuard));
@@ -166,6 +172,8 @@ public sealed partial class MainWindow : Window
         _commandCatalog.RegisterShellCommands();
         RebuildMenu();
         RegisterAccelerators();
+        _pluginHost.ResultsChanged += OnPluginResultsChanged;
+        RebuildPluginNavItems();
         _commands.Changed += OnCommandSetChanged;
         _keybindings.Changed += OnCommandSetChanged;
         _themeManager.Changed += OnThemeManagerChanged;
@@ -190,6 +198,19 @@ public sealed partial class MainWindow : Window
     /// <summary>Navigates to a page by key. Unknown keys show a safe fallback.</summary>
     public void Navigate(string key)
     {
+        if (_pluginPages.TryGetValue(key, out var pluginEntry))
+        {
+            if (!_pages.TryGetValue(key, out var pluginPage))
+            {
+                pluginPage = new PluginPageHost(pluginEntry, _pluginHost, _faultReporter, _logger);
+                _pages[key] = pluginPage;
+            }
+
+            PageHost.Content = pluginPage;
+            SelectNavigationItem(key);
+            return;
+        }
+
         if (!PageTypes.TryGetValue(key, out var pageType))
         {
             var fallback = new FallbackPage();
@@ -633,6 +654,40 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>Adds one navigation entry per registered plugin page, after the built-ins.</summary>
+    private void RebuildPluginNavItems()
+    {
+        foreach (var item in _pluginNavItems)
+        {
+            Navigation.MenuItems.Remove(item);
+        }
+
+        _pluginNavItems.Clear();
+        _pluginPages.Clear();
+        foreach (var entry in _pluginHost.Extensions.NavigationPages)
+        {
+            var key = $"plugin/{entry.Page.Id}";
+            _pluginPages[key] = entry;
+            var item = new NavigationViewItem
+            {
+                Content = entry.Page.Title,
+                Tag = key,
+                Icon = CreatePluginPageIcon(entry.Page.Icon),
+            };
+            AutomationProperties.SetAutomationId(item, $"NavPlugin_{entry.Page.Id}");
+            _pluginNavItems.Add(item);
+            Navigation.MenuItems.Add(item);
+        }
+    }
+
+    private static IconElement CreatePluginPageIcon(string glyph) =>
+        !string.IsNullOrWhiteSpace(glyph) && glyph.Length <= 4
+            ? new FontIcon { Glyph = glyph }
+            : new SymbolIcon(Symbol.Document);
+
+    private void OnPluginResultsChanged(object? sender, EventArgs e) =>
+        DispatcherQueue.TryEnqueue(RebuildPluginNavItems);
+
     private bool SelectNavigationItem(string key)
     {
         foreach (var item in EnumerateNavigationItems())
@@ -1063,6 +1118,7 @@ public sealed partial class MainWindow : Window
     {
         _statusTimer.Stop();
         _messageTimer.Stop();
+        _pluginHost.ResultsChanged -= OnPluginResultsChanged;
         _devices.DevicesChanged -= OnDevicesChanged;
         _notifications.NotificationRaised -= OnNotificationRaised;
         _resourceGuard.WarningRaised -= OnResourceWarningRaised;

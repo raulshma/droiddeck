@@ -8,11 +8,14 @@ using DroidDeck.Core.Diagnostics;
 using DroidDeck.Core.Projects;
 using DroidDeck.Core.Runs;
 using DroidDeck.Core.Toolchain;
-using DroidDeck.Plugin.Abstractions;
+using DroidDeck.Plugins;
+using DroidDeck.Plugin.UI.Kit;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Dispatching;
+using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
 
 namespace DroidDeck.App.Views;
@@ -30,6 +33,7 @@ public sealed partial class HomePage : Page, IRefreshablePage, IDisposable
     private readonly IDeviceService _devices;
     private readonly IToolchainService _toolchain;
     private readonly PluginHost _plugins;
+    private readonly PluginUiFaultReporter _faultReporter;
     private readonly IDiagnosticsService _diagnostics;
     private readonly IConfigurationService _configuration;
     private readonly IProjectService _projects;
@@ -43,6 +47,7 @@ public sealed partial class HomePage : Page, IRefreshablePage, IDisposable
     private readonly BulkObservableCollection<DeviceRowViewModel> _deviceRows = [];
     private readonly BulkObservableCollection<RecentProjectRow> _projectRows = [];
     private readonly BulkObservableCollection<EnvironmentToolRow> _environmentRows = [];
+    private readonly Dictionary<string, PluginFaultBoundary> _pluginWidgetBoundaries = new(StringComparer.Ordinal);
     private QuickRunSelection? _selection;
     private string? _devicesProblem;
     private string? _projectsProblem;
@@ -58,6 +63,7 @@ public sealed partial class HomePage : Page, IRefreshablePage, IDisposable
         IDeviceService devices,
         IToolchainService toolchain,
         PluginHost plugins,
+        PluginUiFaultReporter faultReporter,
         IDiagnosticsService diagnostics,
         IConfigurationService configuration,
         IProjectService projects,
@@ -69,6 +75,7 @@ public sealed partial class HomePage : Page, IRefreshablePage, IDisposable
         _devices = devices ?? throw new ArgumentNullException(nameof(devices));
         _toolchain = toolchain ?? throw new ArgumentNullException(nameof(toolchain));
         _plugins = plugins ?? throw new ArgumentNullException(nameof(plugins));
+        _faultReporter = faultReporter ?? throw new ArgumentNullException(nameof(faultReporter));
         _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         _projects = projects ?? throw new ArgumentNullException(nameof(projects));
@@ -115,6 +122,12 @@ public sealed partial class HomePage : Page, IRefreshablePage, IDisposable
         _plugins.ResultsChanged -= OnPluginsChanged;
         _projects.ProjectsChanged -= OnProjectsChanged;
         _runs.SessionChanged -= OnSessionChanged;
+        foreach (var boundary in _pluginWidgetBoundaries.Values)
+        {
+            boundary.Dispose();
+        }
+
+        _pluginWidgetBoundaries.Clear();
     }
 
     private void Reload(bool force)
@@ -435,14 +448,7 @@ public sealed partial class HomePage : Page, IRefreshablePage, IDisposable
             return;
         }
 
-        var widgets = _plugins.Results
-            .Where(result => result.Succeeded && !_plugins.IsDisabled(result.Plugin!.Id))
-            .Where(result => result.Plugin!.Capabilities.HasFlag(PluginCapability.HomeWidget))
-            .Select(result => result.Plugin!.Name)
-            .ToArray();
-        PluginWidgetPlaceholderText.Text = widgets.Length == 0
-            ? "Plugin home widgets mount here. No installed plugin provides one yet."
-            : $"Waiting to mount: {string.Join(", ", widgets)}. Widgets appear here once the widget host lands.";
+        UpdatePluginWidgets();
 
         PluginsSummaryText.Text = _plugins.PluginsDisabled
             ? $"Plugins are disabled ({_plugins.DisabledReason ?? "safe mode"})."
@@ -453,6 +459,128 @@ public sealed partial class HomePage : Page, IRefreshablePage, IDisposable
         PluginWidgetHost.Visibility = Visibility.Visible;
         PluginsSummaryText.Visibility = Visibility.Visible;
     }
+
+    /// <summary>
+    /// Mounts one lazily loaded card per registered home widget. Every widget
+    /// loads on its own after the first frame, so a slow or failing widget can
+    /// neither block Home nor its siblings.
+    /// </summary>
+    private void UpdatePluginWidgets()
+    {
+        var entries = _plugins.Extensions.HomeWidgets;
+        foreach (var staleId in _pluginWidgetBoundaries.Keys
+            .Where(id => entries.All(entry => !string.Equals(entry.Widget.Id, id, StringComparison.Ordinal)))
+            .ToArray())
+        {
+            if (_pluginWidgetBoundaries.Remove(staleId, out var staleBoundary))
+            {
+                staleBoundary.Dispose();
+            }
+        }
+
+        if (entries.Count == 0)
+        {
+            PluginWidgetList.Children.Clear();
+            _pluginWidgetBoundaries.Clear();
+            PluginWidgetPlaceholderText.Text =
+                "Plugin home widgets mount here. No installed plugin provides one yet.";
+            PluginWidgetPlaceholderText.Visibility = Visibility.Visible;
+            PluginWidgetList.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        PluginWidgetPlaceholderText.Visibility = Visibility.Collapsed;
+        PluginWidgetList.Visibility = Visibility.Visible;
+        foreach (var entry in entries)
+        {
+            if (_pluginWidgetBoundaries.ContainsKey(entry.Widget.Id))
+            {
+                continue;
+            }
+
+            var boundary = new PluginFaultBoundary(entry.PluginId, $"home widget {entry.Widget.Id}", _faultReporter);
+            _pluginWidgetBoundaries[entry.Widget.Id] = boundary;
+            PluginWidgetList.Children.Add(BuildPluginWidgetCard(entry, boundary));
+            QueuePluginWidgetLoad(entry, boundary);
+        }
+    }
+
+    private static PluginCard BuildPluginWidgetCard(HomeWidgetEntry entry, PluginFaultBoundary boundary)
+    {
+        var source = new TextBlock
+        {
+            Text = entry.SourceLabel,
+            FontSize = 11,
+            Foreground = ResolveBrush("TextFillColorSecondaryBrush"),
+            TextWrapping = TextWrapping.Wrap,
+        };
+        var content = new StackPanel { Spacing = 8 };
+        content.Children.Add(source);
+        content.Children.Add(boundary);
+
+        return new PluginCard(entry.Widget.Title) { Content = content };
+    }
+
+    private void QueuePluginWidgetLoad(HomeWidgetEntry entry, PluginFaultBoundary boundary)
+    {
+        var afterFirstFrame = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var queued = _dispatcher is null || _dispatcher.TryEnqueue(
+            DispatcherQueuePriority.Low,
+            () => afterFirstFrame.TrySetResult());
+        if (!queued)
+        {
+            afterFirstFrame.TrySetResult();
+        }
+
+        _ = LoadPluginWidgetAsync(entry, boundary, afterFirstFrame.Task);
+    }
+
+    private async Task LoadPluginWidgetAsync(
+        HomeWidgetEntry entry,
+        PluginFaultBoundary boundary,
+        Task afterFirstFrame)
+    {
+        try
+        {
+            await afterFirstFrame.ConfigureAwait(true);
+            if (_disposed)
+            {
+                return;
+            }
+
+            var result = await _plugins.Invoker.CreateViewAsync(
+                entry.PluginId,
+                $"home widget {entry.Widget.Id}",
+                token => entry.Widget.CreateViewAsync(token),
+                CancellationToken.None).ConfigureAwait(true);
+            boundary.Show(result.Content, result.Error);
+            if (!result.Succeeded)
+            {
+                _logger.LogWarning(
+                    "Plugin home widget {WidgetId} from {PluginId} could not load: {Error}",
+                    entry.Widget.Id,
+                    entry.PluginId,
+                    result.Error);
+            }
+        }
+        catch (Exception exception)
+        {
+            LogRegionFailure($"plugin home widget {entry.Widget.Id}", exception);
+            try
+            {
+                boundary.Show(null, exception.Message);
+            }
+            catch
+            {
+                // One widget must never break the host page.
+            }
+        }
+    }
+
+    private static Brush ResolveBrush(string key) =>
+        Application.Current.Resources.TryGetValue(key, out var value) && value is Brush brush
+            ? brush
+            : new SolidColorBrush(Microsoft.UI.Colors.Gray);
 
     private string FailureSummary()
     {

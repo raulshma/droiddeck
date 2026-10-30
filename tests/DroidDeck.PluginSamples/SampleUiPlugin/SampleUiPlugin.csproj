@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>$(DroidDeckWindowsTargetFramework)</TargetFramework>
+    <TargetPlatformMinVersion>$(DroidDeckWindowsMinVersion)</TargetPlatformMinVersion>
+    <RootNamespace>SampleUiPlugin</RootNamespace>
+    <UseWinUI>true</UseWinUI>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\DroidDeck.Plugin.Abstractions\DroidDeck.Plugin.Abstractions.csproj" />
+    <ProjectReference Include="..\..\..\src\DroidDeck.Plugin.UI\DroidDeck.Plugin.UI.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="plugin.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

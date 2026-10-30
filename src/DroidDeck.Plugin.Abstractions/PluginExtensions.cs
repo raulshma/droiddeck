@@ -41,6 +41,15 @@ public interface IPluginRegistry
     /// <summary>Registers a test runner.</summary>
     void AddTestRunner(ITestRunner runner);
 
+    /// <summary>Registers a navigation page.</summary>
+    void AddNavigationPage(INavigationPage page);
+
+    /// <summary>Registers a project tab.</summary>
+    void AddProjectTab(IProjectTab tab);
+
+    /// <summary>Registers a home widget.</summary>
+    void AddHomeWidget(IHomeWidget widget);
+
     /// <summary>Gets all registered commands.</summary>
     IReadOnlyList<PluginExtension<ICommand>> Commands { get; }
 
@@ -67,6 +76,15 @@ public interface IPluginRegistry
 
     /// <summary>Gets all registered test runners.</summary>
     IReadOnlyList<PluginExtension<ITestRunner>> TestRunners { get; }
+
+    /// <summary>Gets all registered navigation pages.</summary>
+    IReadOnlyList<PluginExtension<INavigationPage>> NavigationPages { get; }
+
+    /// <summary>Gets all registered project tabs.</summary>
+    IReadOnlyList<PluginExtension<IProjectTab>> ProjectTabs { get; }
+
+    /// <summary>Gets all registered home widgets.</summary>
+    IReadOnlyList<PluginExtension<IHomeWidget>> HomeWidgets { get; }
 
     /// <summary>Gets the plugin identifier that owns an extension type.</summary>
     string? GetOwner(Type extensionType);

@@ -297,6 +297,9 @@ public partial class App : Application, IDisposable
                     () => GetAdbPath(provider))]);
         });
 
+        services.AddSingleton(provider => new PluginUiFaultReporter(
+            provider.GetRequiredService<PluginHost>().Health));
+
         services.AddSingleton(provider =>
         {
             var http = new HttpClient(new SocketsHttpHandler
