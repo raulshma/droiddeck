@@ -157,7 +157,7 @@ jobs:
       - name: Generate SBOM
         shell: pwsh
         run: |
-          $manifestDirectory = "artifacts/sbom"
+          $manifestDirectory = Join-Path $env:RUNNER_TEMP "sbom"
           New-Item -ItemType Directory -Force -Path $manifestDirectory | Out-Null
           $sbomTool = Join-Path $env:USERPROFILE ".dotnet/tools/sbom-tool.exe"
           if (-not (Test-Path -LiteralPath $sbomTool)) { throw "sbom-tool was not installed." }
@@ -171,7 +171,7 @@ jobs:
             -m $manifestDirectory
           if ($LASTEXITCODE -ne 0) { throw "SBOM generation failed." }
           Copy-Item `
-            -LiteralPath "$manifestDirectory/_manifest/spdx_2.2/manifest.spdx.json" `
+            -LiteralPath (Join-Path $manifestDirectory "_manifest/spdx_2.2/manifest.spdx.json") `
             -Destination "artifacts/DroidDeck-$env:RELEASE_VERSION.spdx.json"
 
       - name: Generate checksums and verify assets
