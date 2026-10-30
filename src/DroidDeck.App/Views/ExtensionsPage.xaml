@@ -185,6 +185,11 @@
                                                 Click="OnEnablePluginClick"
                                                 AutomationProperties.AutomationId="{Binding EnableId}" />
                                             <Button
+                                                Content="Trust"
+                                                Visibility="{Binding CanTrust, Converter={StaticResource BoolToVisibility}}"
+                                                Click="OnTrustPluginClick"
+                                                AutomationProperties.AutomationId="{Binding TrustId}" />
+                                            <Button
                                                 Content="Disable"
                                                 Visibility="{Binding CanDisable, Converter={StaticResource BoolToVisibility}}"
                                                 Click="OnDisablePluginClick"

@@ -86,4 +86,23 @@ public sealed class PluginStateStoreTests
 
         Assert.True(store.IsDisabled("com.example.sample"));
     }
+
+    [Fact]
+    public async Task AReasonSurvivesReloadsAndIsClearedOnEnable()
+    {
+        using var temp = new TempDirectory();
+        var root = temp.Combine("plugins");
+        var store = await PluginStateStore.LoadAsync(root);
+
+        const string reason = "Disabled after 3 consecutive crashes. Last error: boom.";
+        await store.SetDisabledAsync("com.example.sample", disabled: true, reason);
+
+        var reloaded = await PluginStateStore.LoadAsync(root);
+        Assert.Equal(reason, reloaded.GetDisabledReason("com.example.sample"));
+
+        await reloaded.SetDisabledAsync("com.example.sample", disabled: false);
+
+        var enabled = await PluginStateStore.LoadAsync(root);
+        Assert.Null(enabled.GetDisabledReason("com.example.sample"));
+    }
 }

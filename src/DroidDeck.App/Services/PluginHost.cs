@@ -21,6 +21,7 @@ public sealed class PluginHost : IAsyncDisposable
     private readonly object _sync = new();
     private readonly PluginExtensionCatalog _catalog;
     private readonly PluginHealthTracker _health;
+    private readonly PluginCrashGuard _crashGuard;
     private readonly PluginActionInvoker _invoker;
     private readonly IReadOnlyList<IRunStep> _builtInRunSteps;
     private bool _initialized;
@@ -41,6 +42,10 @@ public sealed class PluginHost : IAsyncDisposable
         _builtInRunSteps = builtInRunSteps?.ToArray() ?? [];
         _health = new PluginHealthTracker();
         _invoker = new PluginActionInvoker(_health);
+        _crashGuard = new PluginCrashGuard(
+            _health,
+            logger: loggerFactory?.CreateLogger<PluginCrashGuard>());
+        _crashGuard.Tripped += OnCrashGuardTripped;
         _catalog = new PluginExtensionCatalog(registry);
         _manager = new PluginManager(loader, _health, loggerFactory?.CreateLogger<PluginManager>());
         _manager.Changed += OnManagerChanged;
@@ -149,7 +154,19 @@ public sealed class PluginHost : IAsyncDisposable
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pluginId);
         ObjectDisposedException.ThrowIf(_disposed, this);
-        return _manager.DisableAsync(pluginId, cancellationToken);
+        return _manager.DisableAsync(pluginId, cancellationToken: cancellationToken);
+    }
+
+    /// <summary>
+    /// Approves the plugin's current contents. The plugin loads when DroidDeck
+    /// restarts; the manager reports the restart requirement.
+    /// </summary>
+    /// <returns><see langword="true"/> when the plugin needed approval and it was recorded.</returns>
+    public Task<bool> TrustAsync(string pluginId, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pluginId);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _manager.TrustAsync(pluginId, cancellationToken);
     }
 
     /// <summary>
@@ -222,11 +239,36 @@ public sealed class PluginHost : IAsyncDisposable
         }
 
         _disposed = true;
+        _crashGuard.Tripped -= OnCrashGuardTripped;
+        _crashGuard.Dispose();
         _manager.Changed -= OnManagerChanged;
         await _manager.DisposeAsync().ConfigureAwait(false);
     }
 
     private void OnManagerChanged(object? sender, EventArgs e) => RaiseChanged();
+
+    private async void OnCrashGuardTripped(object? sender, PluginCrashEventArgs e)
+    {
+        var detail = e.TimedOut
+            ? $"The last invocation timed out. {e.LastError}"
+            : e.LastError ?? "The last error was not recorded.";
+        var reason = $"Disabled after {e.FailureCount} consecutive crashes. Last error: {e.LastError ?? "unknown"}.";
+        try
+        {
+            if (await _manager.DisableAsync(e.PluginId, reason).ConfigureAwait(false))
+            {
+                _logger.LogWarning(
+                    "Plugin {PluginId} was disabled after {FailureCount} consecutive failures. {Detail}",
+                    e.PluginId,
+                    e.FailureCount,
+                    detail);
+            }
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Disabling crashing plugin {PluginId} failed.", e.PluginId);
+        }
+    }
 
     private void RaiseChanged()
     {

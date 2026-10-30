@@ -21,6 +21,7 @@ public sealed class PluginStateStore
 
     private readonly object _sync = new();
     private readonly HashSet<string> _disabledIds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _disabledReasons = new(StringComparer.OrdinalIgnoreCase);
 
     private PluginStateStore(string filePath)
     {
@@ -63,6 +64,17 @@ public sealed class PluginStateStore
                 {
                     store._disabledIds.Add(id);
                 }
+
+                if (state.Reasons is not null)
+                {
+                    foreach (var pair in state.Reasons)
+                    {
+                        if (store._disabledIds.Contains(pair.Key) && !string.IsNullOrWhiteSpace(pair.Value))
+                        {
+                            store._disabledReasons[pair.Key] = pair.Value;
+                        }
+                    }
+                }
             }
 
             return store;
@@ -85,35 +97,64 @@ public sealed class PluginStateStore
         }
     }
 
+    /// <summary>Gets why a plugin was disabled, when a reason was recorded.</summary>
+    public string? GetDisabledReason(string pluginId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pluginId);
+        lock (_sync)
+        {
+            return _disabledReasons.TryGetValue(pluginId, out var reason) ? reason : null;
+        }
+    }
+
     /// <summary>
     /// Updates the disabled flag for one plugin and persists it. The in-memory
     /// change applies even when the file cannot be written; the next change
     /// retries the save.
     /// </summary>
-    public async Task SetDisabledAsync(string pluginId, bool disabled, CancellationToken cancellationToken = default)
+    public async Task SetDisabledAsync(
+        string pluginId,
+        bool disabled,
+        string? reason = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pluginId);
-        List<string> snapshot;
+        List<string> disabledIds;
+        Dictionary<string, string> reasons;
         lock (_sync)
         {
             if (disabled)
             {
                 _disabledIds.Add(pluginId);
+                if (string.IsNullOrWhiteSpace(reason))
+                {
+                    _disabledReasons.Remove(pluginId);
+                }
+                else
+                {
+                    _disabledReasons[pluginId] = reason;
+                }
             }
             else
             {
                 _disabledIds.Remove(pluginId);
+                _disabledReasons.Remove(pluginId);
             }
 
-            snapshot = [.. _disabledIds];
+            disabledIds = [.. _disabledIds];
+            reasons = new Dictionary<string, string>(_disabledReasons, StringComparer.OrdinalIgnoreCase);
         }
 
         Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
         await File.WriteAllTextAsync(
             FilePath,
-            JsonSerializer.Serialize(new SavedState(snapshot), Options),
+            JsonSerializer.Serialize(
+                new SavedState(disabledIds, reasons.Count == 0 ? null : reasons),
+                Options),
             cancellationToken).ConfigureAwait(false);
     }
 
-    private sealed record SavedState(IReadOnlyList<string> Disabled);
+    private sealed record SavedState(
+        IReadOnlyList<string> Disabled,
+        IReadOnlyDictionary<string, string>? Reasons = null);
 }

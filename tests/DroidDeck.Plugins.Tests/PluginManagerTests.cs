@@ -28,6 +28,7 @@ public sealed class PluginManagerTests
         Assert.Equal("1.0", status.ApiVersion);
         Assert.Equal(PluginState.Loaded, status.State);
         Assert.Null(status.Reason);
+        Assert.Equal(["command"], status.Capabilities);
         Assert.True(status.LoadDuration > TimeSpan.Zero);
         Assert.False(manager.RestartRequired);
         Assert.True(status.CanDisable);
@@ -306,7 +307,7 @@ public sealed class PluginManagerTests
     {
         registry = new PluginRegistry();
         var loader = new PluginLoader(registry, NullLoggerFactory.Instance, hostVersion: "1.0.0");
-        return new PluginManager(loader, new PluginHealthTracker());
+        return new PluginManager(loader, new PluginHealthTracker(), trustPolicy: PluginTrustPolicy.TrustAll);
     }
 
     private static PluginManager CreateManager(
@@ -317,7 +318,7 @@ public sealed class PluginManagerTests
         registry = new PluginRegistry();
         health = new PluginHealthTracker();
         var loader = new PluginLoader(registry, NullLoggerFactory.Instance, hostVersion: "1.0.0");
-        return new PluginManager(loader, health);
+        return new PluginManager(loader, health, trustPolicy: PluginTrustPolicy.TrustAll);
     }
 
     private static PluginManifest CreateManifest(

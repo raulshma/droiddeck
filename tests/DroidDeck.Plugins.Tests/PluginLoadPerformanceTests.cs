@@ -31,7 +31,7 @@ public sealed class PluginLoadPerformanceTests
         StagePerfPlugins(temp, count: 5);
         var registry = new PluginRegistry();
         await using var loader = new PluginLoader(registry, NullLoggerFactory.Instance, hostVersion: "1.0.0");
-        var manager = new PluginManager(loader, new PluginHealthTracker());
+        var manager = new PluginManager(loader, new PluginHealthTracker(), trustPolicy: PluginTrustPolicy.TrustAll);
 
         var stopwatch = Stopwatch.StartNew();
         await manager.InitializeAsync(temp.Combine("plugins"));

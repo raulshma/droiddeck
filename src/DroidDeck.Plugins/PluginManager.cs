@@ -21,6 +21,9 @@ public enum PluginState
 
     /// <summary>The plugin targets an incompatible API or host version.</summary>
     Incompatible,
+
+    /// <summary>The plugin contents were not approved yet or changed after approval.</summary>
+    TrustRequired,
 }
 
 /// <summary>One installed plugin as shown by the plugin manager.</summary>
@@ -38,11 +41,26 @@ public sealed record PluginStatus
     /// <summary>Gets the target API version.</summary>
     public required string ApiVersion { get; init; }
 
+    /// <summary>Gets the declared publisher, when one exists.</summary>
+    public string? Author { get; init; }
+
+    /// <summary>Gets the capability names declared by the plugin manifest.</summary>
+    public IReadOnlyList<string> Capabilities { get; init; } = [];
+
     /// <summary>Gets the plugin installation directory.</summary>
     public required string InstallPath { get; init; }
 
     /// <summary>Gets the lifecycle state.</summary>
     public required PluginState State { get; init; }
+
+    /// <summary>Gets the trust decision for the plugin contents.</summary>
+    public PluginTrustDecision Trust { get; init; } = PluginTrustDecision.Trusted;
+
+    /// <summary>Gets the hash of the current plugin contents, when it was computed.</summary>
+    public string? ContentHash { get; init; }
+
+    /// <summary>Gets the hash that was approved for the plugin, when one exists.</summary>
+    public string? ApprovedHash { get; init; }
 
     /// <summary>Gets the human-readable reason for the state, when one exists.</summary>
     public string? Reason { get; init; }
@@ -59,6 +77,9 @@ public sealed record PluginStatus
     /// <summary>Gets whether the manager offers a disable action.</summary>
     public bool CanDisable => State is PluginState.Loaded or PluginState.EnabledPendingRestart;
 
+    /// <summary>Gets whether the manager offers a trust action.</summary>
+    public bool CanTrust => State == PluginState.TrustRequired;
+
     /// <summary>Gets the status label shown by the plugin manager.</summary>
     public string StatusLabel => State switch
     {
@@ -66,6 +87,7 @@ public sealed record PluginStatus
         PluginState.Disabled => "Disabled",
         PluginState.EnabledPendingRestart => "Enabled · restart required",
         PluginState.DisabledByError => "Disabled by error",
+        PluginState.TrustRequired => "Approval required",
         _ => "Incompatible",
     };
 }
@@ -82,20 +104,27 @@ public sealed class PluginManager : IAsyncDisposable
     private readonly PluginLoader _loader;
     private readonly PluginHealthTracker _health;
     private readonly ILogger<PluginManager>? _logger;
+    private readonly PluginTrustPolicy _trustPolicy;
     private readonly object _sync = new();
     private List<PluginStatus> _statuses = [];
     private IReadOnlyList<PluginLoadResult> _results = [];
     private PluginStateStore? _store;
+    private PluginTrustStore? _trust;
     private bool _restartRequired;
     private bool _initialized;
     private bool _disposed;
 
     /// <summary>Creates a manager over a loader and the shared health tracker.</summary>
-    public PluginManager(PluginLoader loader, PluginHealthTracker health, ILogger<PluginManager>? logger = null)
+    public PluginManager(
+        PluginLoader loader,
+        PluginHealthTracker health,
+        ILogger<PluginManager>? logger = null,
+        PluginTrustPolicy trustPolicy = PluginTrustPolicy.RequireApproval)
     {
         _loader = loader ?? throw new ArgumentNullException(nameof(loader));
         _health = health ?? throw new ArgumentNullException(nameof(health));
         _logger = logger;
+        _trustPolicy = trustPolicy;
     }
 
     /// <summary>Raised after statuses or state changes.</summary>
@@ -170,17 +199,32 @@ public sealed class PluginManager : IAsyncDisposable
 
         var store = await PluginStateStore.LoadAsync(pluginsRoot, cancellationToken).ConfigureAwait(false);
         var disabled = new HashSet<string>(store.DisabledIds, StringComparer.OrdinalIgnoreCase);
+        var trust = _trustPolicy == PluginTrustPolicy.RequireApproval
+            ? await PluginTrustStore.LoadAsync(pluginsRoot, cancellationToken).ConfigureAwait(false)
+            : null;
         var manifests = await ScanAsync(pluginsRoot, cancellationToken).ConfigureAwait(false);
+        var evaluations = await EvaluateTrustAsync(manifests, disabled, trust, cancellationToken)
+            .ConfigureAwait(false);
+        var skip = new HashSet<string>(disabled, StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in evaluations)
+        {
+            if (pair.Value.Decision != PluginTrustDecision.Trusted)
+            {
+                skip.Add(pair.Key);
+            }
+        }
+
         var results = await _loader
-            .LoadInstalledAsync(pluginsRoot, disabled, cancellationToken)
+            .LoadInstalledAsync(pluginsRoot, skip, cancellationToken)
             .ConfigureAwait(false);
 
         var failures = new List<(string Id, string Reason)>();
-        var statuses = BuildStatuses(manifests, results, disabled, failures);
+        var statuses = BuildStatuses(manifests, results, disabled, store, evaluations, failures);
 
         lock (_sync)
         {
             _store = store;
+            _trust = trust;
             _results = results;
             _statuses = statuses;
             _initialized = true;
@@ -213,7 +257,8 @@ public sealed class PluginManager : IAsyncDisposable
 
         try
         {
-            await store.SetDisabledAsync(pluginId, disabled: false, cancellationToken).ConfigureAwait(false);
+            await store.SetDisabledAsync(pluginId, disabled: false, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -240,8 +285,14 @@ public sealed class PluginManager : IAsyncDisposable
     /// stay loaded until restart, and the disabled state persists for the next
     /// launch.
     /// </summary>
+    /// <param name="pluginId">The plugin to disable.</param>
+    /// <param name="reason">Overrides the status reason, for example after repeated crashes.</param>
+    /// <param name="cancellationToken">Cancels the state write.</param>
     /// <returns><see langword="true"/> when the plugin was found and disabled.</returns>
-    public async Task<bool> DisableAsync(string pluginId, CancellationToken cancellationToken = default)
+    public async Task<bool> DisableAsync(
+        string pluginId,
+        string? reason = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pluginId);
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -257,7 +308,8 @@ public sealed class PluginManager : IAsyncDisposable
             candidate => string.Equals(candidate.Id, pluginId, StringComparison.OrdinalIgnoreCase));
         try
         {
-            await store.SetDisabledAsync(pluginId, disabled: true, cancellationToken).ConfigureAwait(false);
+            await store.SetDisabledAsync(pluginId, disabled: true, reason, cancellationToken)
+                .ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -273,9 +325,58 @@ public sealed class PluginManager : IAsyncDisposable
         ReplaceStatus(status with
         {
             State = PluginState.Disabled,
-            Reason = loaded is not null
+            Reason = reason ?? (loaded is not null
                 ? "Disabled. Its extensions were removed; restart DroidDeck to unload it completely."
-                : "Disabled. Enable it and restart DroidDeck to load it.",
+                : "Disabled. Enable it and restart DroidDeck to load it."),
+        });
+        SetRestartRequired();
+        RaiseChanged();
+        return true;
+    }
+
+    /// <summary>
+    /// Approves a plugin whose contents are unknown or changed. The current
+    /// contents are pinned, and the plugin loads after DroidDeck restarts.
+    /// </summary>
+    /// <returns><see langword="true"/> when the plugin needed approval and it was recorded.</returns>
+    public async Task<bool> TrustAsync(string pluginId, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pluginId);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        var trust = _trust;
+        var status = FindStatus(pluginId);
+        if (trust is null ||
+            status is not { State: PluginState.TrustRequired, ContentHash: not null })
+        {
+            return false;
+        }
+
+        try
+        {
+            await trust.ApproveAsync(
+                status.Id,
+                status.ContentHash,
+                status.Name,
+                status.Version,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // Approval only counts when the pinned hash is durable.
+            _logger?.LogWarning(
+                exception,
+                "The trust decision for {PluginId} could not be persisted.",
+                pluginId);
+            return false;
+        }
+
+        ReplaceStatus(status with
+        {
+            State = PluginState.EnabledPendingRestart,
+            Trust = PluginTrustDecision.Trusted,
+            ApprovedHash = status.ContentHash,
+            Reason = "Approved. Restart DroidDeck to load it.",
         });
         SetRestartRequired();
         RaiseChanged();
@@ -351,6 +452,8 @@ public sealed class PluginManager : IAsyncDisposable
         List<(string Directory, PluginManifestReadResult Read)> manifests,
         IReadOnlyList<PluginLoadResult> results,
         HashSet<string> disabled,
+        PluginStateStore? store,
+        IReadOnlyDictionary<string, TrustEvaluation> evaluations,
         List<(string Id, string Reason)> failures)
     {
         var statuses = new List<PluginStatus>();
@@ -384,6 +487,7 @@ public sealed class PluginManager : IAsyncDisposable
                 continue;
             }
 
+            evaluations.TryGetValue(manifest.Id, out var evaluation);
             if (disabled.Contains(manifest.Id))
             {
                 statuses.Add(new PluginStatus
@@ -392,10 +496,37 @@ public sealed class PluginManager : IAsyncDisposable
                     Name = manifest.Name,
                     Version = manifest.Version,
                     ApiVersion = manifest.ApiVersion,
+                    Author = manifest.Author,
+                    Capabilities = manifest.Capabilities,
                     InstallPath = directory,
                     State = PluginState.Disabled,
-                    Reason = "Disabled. Enable it and restart DroidDeck to load it.",
+                    Reason = store?.GetDisabledReason(manifest.Id) ??
+                        "Disabled. Enable it and restart DroidDeck to load it.",
                     Issues = read.Validation.Issues,
+                    Trust = evaluation?.Decision ?? PluginTrustDecision.Trusted,
+                    ContentHash = evaluation?.ContentHash,
+                    ApprovedHash = evaluation?.ApprovedHash,
+                });
+                continue;
+            }
+
+            if (evaluation is not null && evaluation.Decision != PluginTrustDecision.Trusted)
+            {
+                statuses.Add(new PluginStatus
+                {
+                    Id = manifest.Id,
+                    Name = manifest.Name,
+                    Version = manifest.Version,
+                    ApiVersion = manifest.ApiVersion,
+                    Author = manifest.Author,
+                    Capabilities = manifest.Capabilities,
+                    InstallPath = directory,
+                    State = PluginState.TrustRequired,
+                    Reason = BuildTrustReason(evaluation),
+                    Issues = read.Validation.Issues,
+                    Trust = evaluation.Decision,
+                    ContentHash = evaluation.ContentHash,
+                    ApprovedHash = evaluation.ApprovedHash,
                 });
                 continue;
             }
@@ -410,10 +541,14 @@ public sealed class PluginManager : IAsyncDisposable
                     Name = manifest.Name,
                     Version = manifest.Version,
                     ApiVersion = manifest.ApiVersion,
+                    Author = manifest.Author,
+                    Capabilities = manifest.Capabilities,
                     InstallPath = directory,
                     State = PluginState.DisabledByError,
                     Reason = missingResult,
                     Issues = read.Validation.Issues,
+                    ContentHash = evaluation?.ContentHash,
+                    ApprovedHash = evaluation?.ApprovedHash,
                 });
                 continue;
             }
@@ -427,10 +562,14 @@ public sealed class PluginManager : IAsyncDisposable
                     Name = manifest.Name,
                     Version = manifest.Version,
                     ApiVersion = manifest.ApiVersion,
+                    Author = manifest.Author,
+                    Capabilities = manifest.Capabilities,
                     InstallPath = directory,
                     State = PluginState.Loaded,
                     Issues = issues,
                     LoadDuration = result.LoadDuration,
+                    ContentHash = evaluation?.ContentHash,
+                    ApprovedHash = evaluation?.ApprovedHash,
                 });
                 continue;
             }
@@ -444,15 +583,96 @@ public sealed class PluginManager : IAsyncDisposable
                 Name = manifest.Name,
                 Version = manifest.Version,
                 ApiVersion = manifest.ApiVersion,
+                Author = manifest.Author,
+                Capabilities = manifest.Capabilities,
                 InstallPath = directory,
                 State = ClassifyFailure(result.Validation),
                 Reason = reason,
                 Issues = issues,
+                ContentHash = evaluation?.ContentHash,
+                ApprovedHash = evaluation?.ApprovedHash,
             });
         }
 
         return statuses;
     }
+
+    /// <summary>
+    /// Computes the content hash for every enabled plugin and compares it with
+    /// the approved hash. Hashing failures fail closed: the plugin is reported as
+    /// untrusted until its files can be read.
+    /// </summary>
+    private static async Task<Dictionary<string, TrustEvaluation>> EvaluateTrustAsync(
+        List<(string Directory, PluginManifestReadResult Read)> manifests,
+        HashSet<string> disabled,
+        PluginTrustStore? trust,
+        CancellationToken cancellationToken)
+    {
+        var evaluations = new Dictionary<string, TrustEvaluation>(StringComparer.OrdinalIgnoreCase);
+        if (trust is null)
+        {
+            return evaluations;
+        }
+
+        foreach (var (directory, read) in manifests)
+        {
+            var manifest = read.Manifest;
+            if (manifest is null || disabled.Contains(manifest.Id))
+            {
+                continue;
+            }
+
+            var approved = trust.Find(manifest.Id);
+            try
+            {
+                var hash = await PluginContentHasher.ComputeAsync(directory, cancellationToken)
+                    .ConfigureAwait(false);
+                evaluations[manifest.Id] = new TrustEvaluation(
+                    trust.Evaluate(manifest.Id, hash),
+                    hash,
+                    approved?.ContentHash,
+                    approved?.ApprovedAt,
+                    Error: null);
+            }
+            catch (Exception exception) when (
+                exception is IOException or UnauthorizedAccessException)
+            {
+                evaluations[manifest.Id] = new TrustEvaluation(
+                    PluginTrustDecision.Unknown,
+                    ContentHash: null,
+                    approved?.ContentHash,
+                    approved?.ApprovedAt,
+                    exception.Message);
+            }
+        }
+
+        return evaluations;
+    }
+
+    private static string BuildTrustReason(TrustEvaluation evaluation)
+    {
+        if (evaluation.Error is not null)
+        {
+            return $"The plugin contents could not be verified: {evaluation.Error}. " +
+                "It will not load until its files can be read and approved.";
+        }
+
+        if (evaluation.Decision == PluginTrustDecision.Unknown)
+        {
+            return "This plugin has not been approved on this machine. " +
+                "Review its files and choose Trust before DroidDeck loads it.";
+        }
+
+        return "The plugin contents changed since they were approved on " +
+            $"{evaluation.ApprovedAt?.ToLocalTime():g} " +
+            $"(approved {ShortHash(evaluation.ApprovedHash)}, current {ShortHash(evaluation.ContentHash)}). " +
+            "Review the new version and choose Trust again.";
+    }
+
+    private static string ShortHash(string? hash) =>
+        string.IsNullOrEmpty(hash)
+            ? "unknown"
+            : hash.Length <= 12 ? hash : hash[..12] + "…";
 
     private static PluginState ClassifyFailure(PluginValidationResult validation)
     {
@@ -473,6 +693,13 @@ public sealed class PluginManager : IAsyncDisposable
 
         return PluginState.DisabledByError;
     }
+
+    private sealed record TrustEvaluation(
+        PluginTrustDecision Decision,
+        string? ContentHash,
+        string? ApprovedHash,
+        DateTimeOffset? ApprovedAt,
+        string? Error);
 
     private void RaiseChanged()
     {

@@ -88,12 +88,15 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         {
             var failed = _plugins.Statuses.Count(status =>
                 status.State is PluginState.DisabledByError or PluginState.Incompatible);
+            var awaitingTrust = _plugins.Statuses.Count(status => status.State == PluginState.TrustRequired);
             var unhealthy = _plugins.Health.Snapshot().Count(health => !health.IsHealthy);
-            PluginsStatusText.Text = failed == 0
-                ? unhealthy == 0
-                    ? $"{_plugins.LoadedCount} plugin(s) loaded. No plugin issues were reported."
-                    : $"{_plugins.LoadedCount} plugin(s) loaded, {unhealthy} unhealthy. See the health details below."
-                : $"{_plugins.LoadedCount} plugin(s) loaded, {failed} failed. Review the reasons below and the Activity log.";
+            PluginsStatusText.Text = failed > 0
+                ? $"{_plugins.LoadedCount} plugin(s) loaded, {failed} failed. Review the reasons below and the Activity log."
+                : awaitingTrust > 0
+                    ? $"{_plugins.LoadedCount} plugin(s) loaded, {awaitingTrust} awaiting approval. Review the plugin files before choosing Trust."
+                    : unhealthy == 0
+                        ? $"{_plugins.LoadedCount} plugin(s) loaded. No plugin issues were reported."
+                        : $"{_plugins.LoadedCount} plugin(s) loaded, {unhealthy} unhealthy. See the health details below.";
         }
 
         var registry = _plugins.Registry;
@@ -177,6 +180,80 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
             _logger.LogWarning(exception, "The plugin {PluginId} could not be enabled.", row.PluginId);
             ShowAction(
                 $"Enabling {row.Title} failed: {exception.Message} (Diagnostics ID {_diagnostics.DiagnosticsId}).",
+                isError: true);
+        }
+        finally
+        {
+            if (sender is Button current)
+            {
+                current.IsEnabled = true;
+            }
+        }
+    }
+
+    private async void OnTrustPluginClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not PluginRow { CanTrust: true } row)
+        {
+            return;
+        }
+
+        if (sender is Button button)
+        {
+            button.IsEnabled = false;
+        }
+
+        try
+        {
+            var content = new StackPanel { Spacing = 8 };
+            content.Children.Add(new TextBlock
+            {
+                TextWrapping = TextWrapping.Wrap,
+                Text = row.CapabilitiesLabel,
+            });
+            content.Children.Add(new TextBlock
+            {
+                TextWrapping = TextWrapping.Wrap,
+                Text =
+                    $"Approving records a SHA-256 fingerprint of the current plugin files ({row.CurrentHashLabel}). " +
+                    "If any of those files change, DroidDeck asks again before loading the plugin. " +
+                    "Only approve plugins whose files and source you trust. Approval does not run the plugin until DroidDeck restarts.",
+            });
+            content.Children.Add(new TextBlock
+            {
+                TextWrapping = TextWrapping.Wrap,
+                FontSize = 12,
+                Opacity = 0.75,
+                Text =
+                    "Capabilities describe which extension points the plugin declares. " +
+                    "They are disclosed here, not enforced as a sandbox.",
+            });
+
+            var dialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = $"Trust {row.Title}?",
+                Content = content,
+                PrimaryButtonText = "Trust",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Close,
+            };
+
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+            {
+                return;
+            }
+
+            var trusted = await _plugins.TrustAsync(row.PluginId);
+            ShowAction(trusted
+                ? $"Approved {row.Title}. Restart DroidDeck to load it."
+                : $"{row.Title} no longer needs approval.");
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "The plugin {PluginId} could not be trusted.", row.PluginId);
+            ShowAction(
+                $"Trusting {row.Title} failed: {exception.Message} (Diagnostics ID {_diagnostics.DiagnosticsId}).",
                 isError: true);
         }
         finally
@@ -371,15 +448,29 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
             State = status.State;
             EnableId = $"EnablePlugin_{status.Id}";
             DisableId = $"DisablePlugin_{status.Id}";
+            TrustId = $"TrustPlugin_{status.Id}";
             FolderId = $"PluginFolder_{status.Id}";
             LogsId = $"PluginLogs_{status.Id}";
             Title = status.Name;
-            Subtitle = $"{status.Id} · version {status.Version} · API {status.ApiVersion}";
+            Subtitle = string.IsNullOrWhiteSpace(status.Author)
+                ? $"{status.Id} · version {status.Version} · API {status.ApiVersion}"
+                : $"{status.Id} · version {status.Version} · API {status.ApiVersion} · by {status.Author}";
+            var capabilities = PluginCapabilities.Parse(status.Capabilities);
+            CapabilitiesLabel = capabilities.Known == PluginCapability.None && !capabilities.HasUnknown
+                ? "Declared capabilities: none."
+                : capabilities.HasUnknown
+                    ? $"Declared capabilities: {PluginCapabilities.ToDisplayString(capabilities.Known)} " +
+                        $"(unrecognized: {string.Join(", ", capabilities.Unknown)})."
+                    : $"Declared capabilities: {PluginCapabilities.ToDisplayString(capabilities.Known)}.";
+            CurrentHashLabel = status.ContentHash is { Length: > 0 } hash
+                ? hash[..Math.Min(12, hash.Length)]
+                : "unavailable";
             Status = status.StatusLabel;
             StatusBrush = ResolveBrush(status.State switch
             {
                 PluginState.Loaded => "SystemFillColorSuccessBrush",
-                PluginState.Disabled or PluginState.EnabledPendingRestart => "SystemFillColorCautionBrush",
+                PluginState.Disabled or PluginState.EnabledPendingRestart or PluginState.TrustRequired =>
+                    "SystemFillColorCautionBrush",
                 _ => "SystemFillColorCriticalBrush",
             });
 
@@ -423,11 +514,20 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         /// <summary>Gets whether the plugin can be disabled now.</summary>
         public bool CanDisable => State is PluginState.Loaded or PluginState.EnabledPendingRestart;
 
+        /// <summary>Gets whether the plugin needs a trust decision before it can load.</summary>
+        public bool CanTrust => State == PluginState.TrustRequired;
+
         /// <summary>Gets the enable button automation id.</summary>
         public string EnableId { get; }
 
         /// <summary>Gets the disable button automation id.</summary>
         public string DisableId { get; }
+
+        /// <summary>Gets the trust button automation id.</summary>
+        public string TrustId { get; }
+
+        /// <summary>Gets the short content hash shown before approval.</summary>
+        public string CurrentHashLabel { get; }
 
         /// <summary>Gets the open-folder button automation id.</summary>
         public string FolderId { get; }
@@ -440,6 +540,9 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
 
         /// <summary>Gets the plugin identity line.</summary>
         public string Subtitle { get; }
+
+        /// <summary>Gets the declared capabilities shown before approval.</summary>
+        public string CapabilitiesLabel { get; }
 
         /// <summary>Gets the status label.</summary>
         public string Status { get; }
