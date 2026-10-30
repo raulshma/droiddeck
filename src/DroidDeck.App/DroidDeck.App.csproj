@@ -59,6 +59,21 @@
           Condition="Exists('$(NuGetPackageRoot)microsoft.windowsappsdk\$(DroidDeckWindowsAppSdkVersion)\NOTICE.txt')" />
   </Target>
 
+  <!-- Publish does not carry the XAML compiler output; without the XBF tree and
+       the app PRI, MainWindow.LoadComponent fails at startup. -->
+  <Target Name="CopyWinUIResourcesToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <WinUIXbf Include="$(OutDir)**\*.xbf" />
+    </ItemGroup>
+    <Copy SourceFiles="@(WinUIXbf)"
+          DestinationFiles="@(WinUIXbf->'$(PublishDir)%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(OutDir)$(AssemblyName).pri"
+          DestinationFolder="$(PublishDir)"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(OutDir)$(AssemblyName).pri')" />
+  </Target>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="Microsoft.Extensions.Logging" />
