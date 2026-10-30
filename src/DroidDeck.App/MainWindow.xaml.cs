@@ -68,6 +68,8 @@ public sealed partial class MainWindow : Window
     private static readonly string[] MenuCategoryOrder =
         ["App", "Navigate", "Device", "Run", "Screen", "Plugins", "Built-in"];
 
+    private static readonly TimeSpan StatusTextTimeout = TimeSpan.FromSeconds(1);
+
     // Maps navigation tags to the FeatureCatalog identifiers hidden in
     // Customize mode. Tags without an entry are always visible.
     private static readonly Dictionary<string, string> NavigationFeatureIds =
@@ -695,6 +697,25 @@ public sealed partial class MainWindow : Window
             _pluginNavItems.Add(item);
             Navigation.MenuItems.Add(item);
         }
+
+        // Cached hosts for plugin pages that no longer exist would keep the
+        // removed plugin's views and fault boundary alive forever, so dispose
+        // them; if one is on screen right now, swap in a live page.
+        foreach (var key in _pages.Keys
+            .Where(key => key.StartsWith("plugin/", StringComparison.Ordinal) && !_pluginPages.ContainsKey(key))
+            .ToArray())
+        {
+            _pages.Remove(key, out var removed);
+            if (removed is IDisposable disposable)
+            {
+                disposable.Dispose();
+            }
+
+            if (removed is not null && ReferenceEquals(PageHost.Content, removed))
+            {
+                Navigate("home");
+            }
+        }
     }
 
     private static IconElement CreatePluginPageIcon(string glyph) =>
@@ -771,10 +792,13 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
-            // The invoker gives the click the plugin timeout and feeds the
-            // health tracker, so a stuck or crashing click cannot wedge the
-            // status bar.
-            var result = await _pluginHost.Invoker.InvokeAsync(
+            // A click may present a modal dialog through the plugin dialog
+            // service, so the wait is deliberately not time-boxed: a dialog
+            // the user keeps open must not surface as a false plugin timeout.
+            // The invoker still isolates faults, arms a watchdog for the health
+            // tracker, and content creation inside the dialog stays inside the
+            // usual timeout.
+            var result = await _pluginHost.Invoker.InvokeUiCallbackAsync(
                 entry.PluginId,
                 token => clickable.InvokeClickAsync(token),
                 CancellationToken.None);
@@ -787,28 +811,55 @@ public sealed partial class MainWindow : Window
         return button;
     }
 
-    /// <summary>Refreshes status item texts; a throwing item shows a placeholder and feeds the fault reporter.</summary>
+    /// <summary>Refreshes status item texts; a throwing or blocking item shows a placeholder and feeds the fault reporter.</summary>
     private void UpdatePluginStatusTexts()
     {
         foreach (var host in _statusItems.Values)
         {
-            string text;
-            try
-            {
-                text = host.Entry.Item.GetText();
-            }
-            catch (Exception exception)
-            {
-                _faultReporter.Report(
-                    host.Entry.PluginId,
-                    $"status bar item {host.Entry.Item.Id}",
-                    exception);
-                text = "\u2026";
-            }
-
-            host.Text.Text = text;
-            host.Text.Visibility = string.IsNullOrEmpty(text) ? Visibility.Collapsed : Visibility.Visible;
+            host.PollGeneration++;
+            _ = PollStatusItemTextAsync(host, host.PollGeneration);
         }
+    }
+
+    private async Task PollStatusItemTextAsync(StatusItemHost host, int generation)
+    {
+        string text;
+        try
+        {
+            // GetText runs inline on the UI thread from a two second timer, so
+            // a plugin that blocks inside it would freeze the whole shell.
+            // Marshal it to the pool with a time box; on timeout the
+            // placeholder stays and the fault reaches the health tracker so
+            // the crash guard sees a wedged item.
+            text = await Task.Run(() => host.Entry.Item.GetText())
+                .WaitAsync(StatusTextTimeout)
+                .ConfigureAwait(true);
+        }
+        catch (TimeoutException)
+        {
+            _pluginHost.Health.RecordFailure(
+                host.Entry.PluginId,
+                $"status bar item {host.Entry.Item.Id} did not return its text before its timeout.",
+                timedOut: true);
+            text = "\u2026";
+        }
+        catch (Exception exception)
+        {
+            _faultReporter.Report(
+                host.Entry.PluginId,
+                $"status bar item {host.Entry.Item.Id}",
+                exception);
+            text = "\u2026";
+        }
+
+        // A late poll must never overwrite the result of a newer one.
+        if (generation != host.PollGeneration)
+        {
+            return;
+        }
+
+        host.Text.Text = text;
+        host.Text.Visibility = string.IsNullOrEmpty(text) ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void PersistUiOrderIfChanged(string surface, IEnumerable<string> orderedIds)
@@ -1305,5 +1356,8 @@ public sealed partial class MainWindow : Window
         public StatusBarItemEntry Entry { get; } = entry;
 
         public TextBlock Text { get; } = text;
+
+        /// <summary>Gets or sets the poll generation, so a late poll cannot overwrite a newer one.</summary>
+        public int PollGeneration { get; set; }
     }
 }

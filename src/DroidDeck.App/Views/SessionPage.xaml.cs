@@ -29,6 +29,12 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
 {
     private const int MaxBuildLines = 100_000;
     private const int PanelRecentLogLines = 20;
+
+    /// <summary>How long a synchronous panel update may take before it counts as slow.</summary>
+    private static readonly TimeSpan PanelUpdateBudget = TimeSpan.FromSeconds(2);
+
+    /// <summary>Slow updates a panel may deliver before it stops receiving them.</summary>
+    private const int MaxSlowPanelUpdates = 3;
     private readonly IRunSessionService _runs;
     private readonly ILogcatService _logcat;
     private readonly ISessionStore _store;
@@ -588,15 +594,48 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
                 continue;
             }
 
+            var stopwatch = Stopwatch.StartNew();
             var result = _plugins.Invoker.UpdateSessionPanel(
                 panel.Entry.PluginId,
                 panel.Entry.Panel,
                 snapshot);
+            stopwatch.Stop();
             if (!result.Succeeded)
             {
                 // One panel's failure swaps only its own boundary to the
                 // fallback card; the other panels keep receiving updates.
                 panel.Boundary.Show(null, result.Error);
+                continue;
+            }
+
+            // UpdateSession runs synchronously on this thread, so a panel that
+            // wedges freezes the whole shell and no timer can interrupt it.
+            // Measure every update instead: once a panel repeatedly exceeds
+            // its budget, stop calling it, swap in the fallback card, and
+            // report the fault so the crash guard can pause the plugin.
+            if (stopwatch.Elapsed > PanelUpdateBudget)
+            {
+                panel.SlowUpdates++;
+                if (panel.SlowUpdates >= MaxSlowPanelUpdates)
+                {
+                    panel.Loaded = false;
+                    _plugins.Health.RecordFailure(
+                        panel.Entry.PluginId,
+                        $"session panel {panel.Entry.Panel.Id} exceeded its update budget " +
+                            $"{panel.SlowUpdates} times; the panel no longer receives updates.",
+                        timedOut: true);
+                    panel.Boundary.Show(
+                        null,
+                        $"This panel was too slow to update {MaxSlowPanelUpdates} times, so it was paused.");
+                    _logger.LogWarning(
+                        "Plugin session panel {PanelId} from {PluginId} was paused after repeated slow updates.",
+                        panel.Entry.Panel.Id,
+                        panel.Entry.PluginId);
+                }
+            }
+            else
+            {
+                panel.SlowUpdates = 0;
             }
         }
     }
@@ -682,6 +721,9 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         public PluginCard Card { get; } = card;
 
         public bool Loaded { get; set; }
+
+        /// <summary>Gets or sets the run of consecutive updates over the budget.</summary>
+        public int SlowUpdates { get; set; }
     }
 
     private void UpdateBuildErrors()

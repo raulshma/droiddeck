@@ -11,7 +11,7 @@ namespace DroidDeck.Plugins;
 /// order: items keep their persisted position first, new items append after
 /// them, and removed identifiers are pruned silently on the next save.
 /// </summary>
-public sealed class PluginUiOrderStore
+public sealed class PluginUiOrderStore : IDisposable
 {
     /// <summary>The surface key for session and device toolbar actions.</summary>
     public const string ToolbarSurface = "toolbar";
@@ -29,8 +29,10 @@ public sealed class PluginUiOrderStore
     };
 
     private readonly object _sync = new();
+    private readonly SemaphoreSlim _saveGate = new(1, 1);
     private readonly Dictionary<string, List<string>> _surfaces = new(StringComparer.OrdinalIgnoreCase);
     private bool _loaded;
+    private bool _disposed;
 
     /// <summary>Creates a store over the ordering document at <paramref name="filePath"/>.</summary>
     public PluginUiOrderStore(string filePath)
@@ -95,7 +97,9 @@ public sealed class PluginUiOrderStore
     /// Persists the identifier sequence of a surface, replacing whatever was
     /// recorded before, so identifiers that no longer exist are pruned. The
     /// in-memory change applies even when the file cannot be written; the next
-    /// save retries.
+    /// save retries. The snapshot and the file write are serialized together,
+    /// so two concurrent saves can never interleave their writes and leave a
+    /// stale surface sequence in the file.
     /// </summary>
     public async Task SaveAsync(
         string surface,
@@ -105,28 +109,48 @@ public sealed class PluginUiOrderStore
         ArgumentException.ThrowIfNullOrWhiteSpace(surface);
         ArgumentNullException.ThrowIfNull(orderedIds);
 
-        Dictionary<string, List<string>> snapshot;
-        lock (_sync)
+        await _saveGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            EnsureLoaded();
-            _surfaces[surface] = [.. orderedIds.Where(static id => !string.IsNullOrWhiteSpace(id))];
-            snapshot = _surfaces.ToDictionary(
-                pair => pair.Key,
-                pair => new List<string>(pair.Value),
-                StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, List<string>> snapshot;
+            lock (_sync)
+            {
+                EnsureLoaded();
+                _surfaces[surface] = [.. orderedIds.Where(static id => !string.IsNullOrWhiteSpace(id))];
+                snapshot = _surfaces.ToDictionary(
+                    pair => pair.Key,
+                    pair => new List<string>(pair.Value),
+                    StringComparer.OrdinalIgnoreCase);
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
+            var document = new SavedOrder
+            {
+                Surfaces = snapshot.ToDictionary(
+                    pair => pair.Key,
+                    pair => pair.Value.ToArray()),
+            };
+            await File.WriteAllTextAsync(
+                FilePath,
+                JsonSerializer.Serialize(document, Options),
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _saveGate.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
         }
 
-        Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
-        var document = new SavedOrder
-        {
-            Surfaces = snapshot.ToDictionary(
-                pair => pair.Key,
-                pair => pair.Value.ToArray()),
-        };
-        await File.WriteAllTextAsync(
-            FilePath,
-            JsonSerializer.Serialize(document, Options),
-            cancellationToken).ConfigureAwait(false);
+        _disposed = true;
+        _saveGate.Dispose();
     }
 
     private sealed class SavedOrder

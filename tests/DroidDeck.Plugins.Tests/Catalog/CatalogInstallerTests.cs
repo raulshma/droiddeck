@@ -6,6 +6,7 @@ using DroidDeck.Core;
 using DroidDeck.Plugins;
 using DroidDeck.Plugins.Catalog;
 using DroidDeck.TestSupport;
+using Microsoft.Extensions.Logging;
 
 namespace DroidDeck.Plugins.Tests.Catalog;
 
@@ -149,6 +150,86 @@ public sealed class CatalogInstallerTests
         Assert.False(File.Exists(temp.Combine("evil.txt")));
         Assert.False(File.Exists(temp.Combine("plugins", "evil.txt")));
         Assert.False(Directory.Exists(temp.Combine("plugins", PluginId)));
+    }
+
+    [Theory]
+    [InlineData("C:/evil.txt")]
+    [InlineData("\\..\\evil.txt")]
+    [InlineData("//?/C:/evil.txt")]
+    public async Task AbsoluteAndPrefixedEntryNamesAbortTheInstall(string hostileName)
+    {
+        using var temp = new TempDirectory();
+        var harness = CreateHarness(temp);
+        var package = BuildPackage("1.0.0", [(hostileName, "escaped")]);
+        harness.Respond(PackageUrl("1.0.0"), package);
+        var entry = CreateEntry(package, "1.0.0");
+
+        var result = await harness.Installer.InstallAsync(entry, Accept());
+
+        Assert.False(result.Succeeded);
+        Assert.Contains("unsafe path", result.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.False(Directory.Exists(temp.Combine("plugins", PluginId)));
+        Assert.True(HasNoFiles(temp.Combine("plugins")));
+    }
+
+    [Theory]
+    [InlineData("CON.txt")]
+    [InlineData("aux.dll")]
+    [InlineData("libs/COM1.dll")]
+    [InlineData("NUL")]
+    public async Task AReservedDeviceNameEntryAbortsTheInstall(string hostileName)
+    {
+        using var temp = new TempDirectory();
+        var harness = CreateHarness(temp);
+        var package = BuildPackage("1.0.0", [(hostileName, "reserved")]);
+        harness.Respond(PackageUrl("1.0.0"), package);
+        var entry = CreateEntry(package, "1.0.0");
+
+        var result = await harness.Installer.InstallAsync(entry, Accept());
+
+        Assert.False(result.Succeeded);
+        Assert.Contains("unsafe path", result.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.False(Directory.Exists(temp.Combine("plugins", PluginId)));
+        // The staging directory was cleaned up instead of leaking a partial extract.
+        Assert.True(HasNoDirectories(temp.Combine("plugin-backups")));
+    }
+
+    [Fact]
+    public async Task AFileAndDirectoryCollisionAbortsTheInstallGracefully()
+    {
+        using var temp = new TempDirectory();
+        var harness = CreateHarness(temp);
+        var package = BuildPackage("1.0.0", [("data", "a file"), ("data/inner.txt", "inside")]);
+        harness.Respond(PackageUrl("1.0.0"), package);
+        var entry = CreateEntry(package, "1.0.0");
+
+        var result = await harness.Installer.InstallAsync(entry, Accept());
+
+        Assert.False(result.Succeeded);
+        Assert.Contains("could not be extracted", result.Error, StringComparison.Ordinal);
+        Assert.False(Directory.Exists(temp.Combine("plugins", PluginId)));
+        Assert.True(HasNoDirectories(temp.Combine("plugin-backups")));
+        Assert.True(HasNoFiles(harness.Paths.QuarantineDirectory));
+        var audit = Assert.Single(await harness.Audit.ReadAsync());
+        Assert.Equal("failure", audit.Result);
+        Assert.Contains("extract", audit.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task AnUnzipBombIsRejectedWhenItExceedsTheExtractCap()
+    {
+        using var temp = new TempDirectory();
+        var harness = CreateHarness(temp);
+        var package = BuildBombPackage("1.0.0", megabytes: 70);
+        harness.Respond(PackageUrl("1.0.0"), package);
+        var entry = CreateEntry(package, "1.0.0");
+
+        var result = await harness.Installer.InstallAsync(entry, Accept());
+
+        Assert.False(result.Succeeded);
+        Assert.Contains("unpacks to more than", result.Error, StringComparison.Ordinal);
+        Assert.False(Directory.Exists(temp.Combine("plugins", PluginId)));
+        Assert.True(HasNoDirectories(temp.Combine("plugin-backups")));
     }
 
     [Fact]
@@ -488,6 +569,181 @@ public sealed class CatalogInstallerTests
         Assert.False(Directory.Exists(temp.Combine("plugins", PluginId)));
     }
 
+    [Fact]
+    public async Task ARedirectToHttpIsRefusedWithoutFollowingIt()
+    {
+        using var temp = new TempDirectory();
+        var harness = CreateHarness(temp);
+        harness.Respond(PackageUrl("1.0.0"), _ => new HttpResponseMessage(HttpStatusCode.Found)
+        {
+            Headers = { Location = new Uri("http://evil.example.com/chart-1.0.0.ddplugin") },
+            Content = new ByteArrayContent([]),
+        });
+        harness.Respond(
+            "http://evil.example.com/chart-1.0.0.ddplugin",
+            _ => throw new InvalidOperationException("The installer must not send to plain HTTP."));
+        var package = BuildPackage("1.0.0");
+        var entry = CreateEntry(package, "1.0.0");
+
+        var result = await harness.Installer.InstallAsync(entry, Accept());
+
+        Assert.False(result.Succeeded);
+        Assert.Contains("non-HTTPS", result.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, harness.Handler.Requests);
+        Assert.False(Directory.Exists(temp.Combine("plugins", PluginId)));
+    }
+
+    [Fact]
+    public async Task ARedirectToHttpsIsFollowedAndInstalled()
+    {
+        using var temp = new TempDirectory();
+        var harness = CreateHarness(temp);
+        var package = BuildPackage("1.0.0");
+        harness.Respond(PackageUrl("1.0.0"), _ => new HttpResponseMessage(HttpStatusCode.Found)
+        {
+            Headers = { Location = new Uri("https://cdn.example.com/chart-1.0.0.ddplugin") },
+            Content = new ByteArrayContent([]),
+        });
+        harness.Respond("https://cdn.example.com/chart-1.0.0.ddplugin", package);
+        var entry = CreateEntry(package, "1.0.0");
+
+        var result = await harness.Installer.InstallAsync(entry, Accept());
+
+        Assert.True(result.Succeeded, result.Error);
+        Assert.True(File.Exists(temp.Combine("plugins", PluginId, "Chart.dll")));
+        Assert.Equal(2, harness.Handler.Requests);
+    }
+
+    [Fact]
+    public async Task ARedirectLoopIsRefusedAfterTheHopLimit()
+    {
+        using var temp = new TempDirectory();
+        var harness = CreateHarness(temp);
+        var package = BuildPackage("1.0.0");
+        harness.Respond(PackageUrl("1.0.0"), _ => new HttpResponseMessage(HttpStatusCode.MovedPermanently)
+        {
+            Headers = { Location = new Uri("https://mirror.example.com/chart-1.0.0.ddplugin") },
+            Content = new ByteArrayContent([]),
+        });
+        harness.Respond("https://mirror.example.com/chart-1.0.0.ddplugin", _ =>
+            new HttpResponseMessage(HttpStatusCode.MovedPermanently)
+            {
+                Headers = { Location = new Uri(PackageUrl("1.0.0")) },
+                Content = new ByteArrayContent([]),
+            });
+        var entry = CreateEntry(package, "1.0.0");
+
+        var result = await harness.Installer.InstallAsync(entry, Accept());
+
+        Assert.False(result.Succeeded);
+        Assert.Contains("redirected too many times", result.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(6, harness.Handler.Requests);
+        Assert.False(Directory.Exists(temp.Combine("plugins", PluginId)));
+    }
+
+    [Fact]
+    public async Task APluginWhoseIdStartsWithStagingKeepsItsRollbackBackup()
+    {
+        using var temp = new TempDirectory();
+        var harness = CreateHarness(temp);
+        const string stagingId = "staging-helper";
+        Assert.True((await harness.Installer
+            .InstallAsync(harness.CreateEntry("1.0.0", pluginId: stagingId), Accept())).Succeeded);
+        Assert.True((await harness.Installer
+            .UpdateAsync(harness.CreateEntry("1.1.0", pluginId: stagingId), Accept())).Succeeded);
+
+        var rollback = await harness.Installer.GetRollbackVersionsAsync();
+
+        Assert.True(rollback.TryGetValue(stagingId, out var version));
+        Assert.Equal("1.0.0", version);
+    }
+
+    [Fact]
+    public async Task AStaleBackupThatCannotBeDeletedFailsTheUpdateGracefully()
+    {
+        using var temp = new TempDirectory();
+        var harness = CreateHarness(temp);
+        Assert.True((await InstallAsync(harness, "1.0.0")).Succeeded);
+        var backup = temp.CreateDirectory("plugin-backups", PluginId);
+        File.WriteAllText(Path.Combine(backup, "plugin.json"), "{ }");
+        var lockedPath = Path.Combine(backup, "Locked.dll");
+        File.WriteAllText(lockedPath, "locked");
+        await using var locked = File.Open(lockedPath, FileMode.Open, FileAccess.Read, FileShare.None);
+
+        var result = await harness.Installer.UpdateAsync(harness.CreateEntry("1.1.0"), Accept());
+
+        await locked.DisposeAsync();
+        Assert.False(result.Succeeded);
+        Assert.Contains("backup", result.Error, StringComparison.OrdinalIgnoreCase);
+        // The installed version was never touched.
+        var manifest = await PluginManifestReader.ReadAsync(temp.Combine("plugins", PluginId));
+        Assert.Equal("1.0.0", manifest.Manifest!.Version);
+        var audit = Assert.Single(await harness.Audit.ReadAsync(), entry => entry.Action == "update");
+        Assert.Equal("failure", audit.Result);
+    }
+
+    [Fact]
+    public async Task UninstallingALockedPluginLeavesNoPartialState()
+    {
+        using var temp = new TempDirectory();
+        var harness = CreateHarness(temp);
+        Assert.True((await InstallAsync(harness, "1.0.0")).Succeeded);
+        var pluginDirectory = temp.Combine("plugins", PluginId);
+        var lockedPath = Path.Combine(pluginDirectory, "Chart.dll");
+        await using var locked = File.Open(lockedPath, FileMode.Open, FileAccess.Read, FileShare.None);
+
+        var result = await harness.Installer.UninstallAsync(PluginId);
+
+        await locked.DisposeAsync();
+        if (result.Succeeded)
+        {
+            // The whole directory left the plugins root together.
+            Assert.False(Directory.Exists(pluginDirectory));
+            // Any locked leftover is staging-shaped and never shows as a rollback backup.
+            var rollback = await harness.Installer.GetRollbackVersionsAsync();
+            Assert.False(rollback.ContainsKey(PluginId));
+        }
+        else
+        {
+            // Nothing was deleted: the plugin directory is complete.
+            Assert.True(Directory.Exists(pluginDirectory));
+            Assert.True(File.Exists(lockedPath));
+            Assert.True(File.Exists(Path.Combine(pluginDirectory, "plugin.json")));
+            Assert.Contains("Nothing was deleted", result.Error, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public async Task AFailedAuditAppendIsRetriedOnceAndMirroredToTheFileLog()
+    {
+        using var temp = new TempDirectory();
+        var handler = new RecordingHandler();
+        var paths = new AppPaths(temp.Path);
+        var blockedPath = temp.Combine("audit-blocked");
+        Directory.CreateDirectory(blockedPath);
+        using var audit = new PluginAuditLog(blockedPath);
+        var logger = new CapturingLogger();
+        var installer = new CatalogInstaller(new HttpClient(handler), paths, audit, logger: logger);
+        var package = BuildPackage("1.0.0");
+        handler.Respond(PackageUrl("1.0.0"), package);
+
+        var result = await installer.InstallAsync(CreateEntry(package, "1.0.0"), Accept());
+
+        // The install still succeeds when the audit file cannot be written.
+        Assert.True(result.Succeeded, result.Error);
+        Assert.True(File.Exists(temp.Combine("plugins", PluginId, "plugin.json")));
+        Assert.Empty(await audit.ReadAsync());
+        // The retry was attempted once, then the full payload was mirrored to the log.
+        Assert.Contains(logger.Entries, entry => entry.Level == LogLevel.Warning);
+        var mirrored = Assert.Single(
+            logger.Entries,
+            entry => entry.Level == LogLevel.Error &&
+                entry.Message.Contains(PluginId, StringComparison.Ordinal));
+        Assert.Contains("action=install", mirrored.Message, StringComparison.Ordinal);
+        Assert.Contains("result=success", mirrored.Message, StringComparison.Ordinal);
+        Assert.Contains("sourceId=src-1", mirrored.Message, StringComparison.Ordinal);
+    }
+
     private static async Task<CatalogInstallResult> InstallAsync(Harness harness, string version)
     {
         var result = await harness.Installer.InstallAsync(harness.CreateEntry(version), Accept());
@@ -583,6 +839,50 @@ public sealed class CatalogInstallerTests
         stream.Write(Encoding.UTF8.GetBytes(contents));
     }
 
+    /// <summary>Builds a package whose payload declares far more bytes than the extract cap.</summary>
+    private static byte[] BuildBombPackage(string version, int megabytes)
+    {
+        using var buffer = new MemoryStream();
+        using (var archive = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            AddEntry(archive, "plugin.json", ManifestJson(version));
+            var bomb = archive.CreateEntry("payload/plugin.bin");
+            using var stream = bomb.Open();
+            var megabyte = new byte[1024 * 1024];
+            for (var index = 0; index < megabytes; index++)
+            {
+                stream.Write(megabyte);
+            }
+        }
+
+        return buffer.ToArray();
+    }
+
+    private static bool HasNoFiles(string path) =>
+        !Directory.Exists(path) ||
+        (Directory.GetFiles(path, "*", SearchOption.AllDirectories).Length == 0 &&
+         Directory.GetDirectories(path, "*", SearchOption.AllDirectories).Length == 0);
+
+    private static bool HasNoDirectories(string path) =>
+        !Directory.Exists(path) || Directory.GetDirectories(path, "*", SearchOption.AllDirectories).Length == 0;
+
+    private sealed class CapturingLogger : ILogger<CatalogInstaller>
+    {
+        public List<(LogLevel Level, string Message)> Entries { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter) =>
+            Entries.Add((logLevel, formatter(state, exception)));
+    }
+
     private static string ManifestJson(string version, string? manifestId = null) => $$"""
         {
           "id": "{{manifestId ?? PluginId}}",
@@ -625,7 +925,7 @@ public sealed class CatalogInstallerTests
             string? pluginId = null,
             IReadOnlyList<CatalogDependency>? dependencies = null)
         {
-            var package = BuildPackage(version);
+            var package = BuildPackage(version, manifestId: pluginId ?? PluginId);
             Handler.Respond(PackageUrl(version), package);
             return CatalogInstallerTests.CreateEntry(
                 package,

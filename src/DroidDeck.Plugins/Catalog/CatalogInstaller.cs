@@ -88,7 +88,8 @@ public sealed record CatalogInstalledPlugin(string PluginId, string Version, str
 
 /// <summary>
 /// Installs, updates, rolls back, and uninstalls catalog plugins. Every run
-/// downloads over HTTPS into quarantine, verifies the catalog's SHA-256 hash
+/// downloads over HTTPS into quarantine (redirects are followed by hand so
+/// every hop must stay HTTPS), verifies the catalog's SHA-256 hash
 /// (a mismatch aborts and deletes the download), validates the package zip,
 /// checks dependencies, and asks a trust decision <em>before</em> any file is
 /// extracted into the plugins root. Updates are manual only — nothing here runs
@@ -108,6 +109,8 @@ public sealed class CatalogInstaller
 
     private const long MaxExtractedBytes = 64 * 1024 * 1024;
     private const string StagingPrefix = "staging-";
+    private const int StagingSuffixLength = 32;
+    private const int MaxRedirectHops = 5;
 
     private readonly HttpClient _httpClient;
     private readonly AppPaths _paths;
@@ -204,28 +207,61 @@ public sealed class CatalogInstaller
         try
         {
             Directory.Move(final, trash);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return await FailAsync(
+                CatalogInstallAction.Rollback,
+                pluginId,
+                installed.Version,
+                backupManifest.Version,
+                null,
+                $"The installed version of '{pluginId}' could not be moved aside: {exception.Message}. " +
+                    "The current version is still installed.",
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        try
+        {
+            Directory.Move(backup, final);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // Put the moved-aside version back; if even that fails, keep the
+            // moved copy on disk — it is the only remaining copy of the
+            // plugin, so it is never deleted on a failure path.
             try
             {
-                Directory.Move(backup, final);
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
                 Directory.Move(trash, final);
+            }
+            catch (Exception restoreException) when (restoreException is IOException or UnauthorizedAccessException)
+            {
                 return await FailAsync(
                     CatalogInstallAction.Rollback,
                     pluginId,
                     installed.Version,
                     backupManifest.Version,
                     null,
-                    $"The backup of '{pluginId}' could not be restored: {exception.Message}. " +
-                        "The current version is still installed.",
+                    $"The backup of '{pluginId}' could not be restored: {exception.Message}, and the " +
+                        $"installed version could not be moved back either ({restoreException.Message}). " +
+                        $"Its files are kept at '{trash}'.",
                     cancellationToken).ConfigureAwait(false);
             }
+
+            return await FailAsync(
+                CatalogInstallAction.Rollback,
+                pluginId,
+                installed.Version,
+                backupManifest.Version,
+                null,
+                $"The backup of '{pluginId}' could not be restored: {exception.Message}. " +
+                    "The current version is still installed.",
+                cancellationToken).ConfigureAwait(false);
         }
-        finally
-        {
-            DeleteDirectoryIfExists(trash);
-        }
+
+        // Both moves completed: the backup copy is now installed and the
+        // moved-aside version is safe to discard.
+        DeleteDirectoryIfExists(trash);
 
         return await SucceedAsync(
             CatalogInstallAction.Rollback,
@@ -261,9 +297,17 @@ public sealed class CatalogInstaller
                 cancellationToken).ConfigureAwait(false);
         }
 
+        // Rename the plugin out of the plugins root first: the rename is
+        // atomic on the same volume, so a locked file can never leave a
+        // half-deleted plugin behind — either the whole directory moves, or
+        // nothing at all is touched. Only the moved copy is then deleted; a
+        // locked file there merely leaves a staging-shaped leftover that the
+        // rollback scan ignores.
+        var trash = Path.Combine(_paths.PluginBackupsDirectory, StagingPrefix + Guid.NewGuid().ToString("N"));
         try
         {
-            Directory.Delete(installed.Directory, recursive: true);
+            Directory.CreateDirectory(_paths.PluginBackupsDirectory);
+            Directory.Move(installed.Directory, trash);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -274,9 +318,11 @@ public sealed class CatalogInstaller
                 null,
                 null,
                 $"The plugin '{pluginId}' could not be removed: {exception.Message}. " +
-                    "Restart DroidDeck if the plugin is loaded and try again.",
+                    "Restart DroidDeck if the plugin is loaded and try again. Nothing was deleted.",
                 cancellationToken).ConfigureAwait(false);
         }
+
+        DeleteDirectoryIfExists(trash);
 
         return await SucceedAsync(
             CatalogInstallAction.Uninstall,
@@ -334,7 +380,7 @@ public sealed class CatalogInstaller
 
         foreach (var directory in Directory.EnumerateDirectories(root))
         {
-            if (Path.GetFileName(directory).StartsWith(StagingPrefix, StringComparison.OrdinalIgnoreCase))
+            if (IsStagingDirectoryName(Path.GetFileName(directory)))
             {
                 continue;
             }
@@ -351,6 +397,17 @@ public sealed class CatalogInstaller
 
         return versions;
     }
+
+    /// <summary>
+    /// Matches only the exact staging shape the installer generates
+    /// (<c>staging-</c> plus 32 hexadecimal characters), so a plugin whose id
+    /// legitimately starts with <c>staging-</c> keeps its rollback backup
+    /// visible while move-aside leftovers stay hidden.
+    /// </summary>
+    private static bool IsStagingDirectoryName(string name) =>
+        name.Length == StagingPrefix.Length + StagingSuffixLength &&
+        name.StartsWith(StagingPrefix, StringComparison.OrdinalIgnoreCase) &&
+        name[StagingPrefix.Length..].All(char.IsAsciiHexDigit);
 
     private async Task<CatalogInstallResult> InstallCoreAsync(
         CatalogEntry entry,
@@ -496,14 +553,17 @@ public sealed class CatalogInstaller
             }
 
             var swapError = SwapIntoPlace(action, pluginId, stagingDirectory!);
-            stagingDirectory = null;
             if (swapError is not null)
             {
+                // A failed swap never leaves staging as the only copy of an
+                // installed version, so the finally block below deletes it
+                // instead of leaking a staging directory.
                 return await FailAsync(
                     action, pluginId, fromVersion, entry.Version.Version, sourceId, swapError,
                     cancellationToken, tempPath).ConfigureAwait(false);
             }
 
+            stagingDirectory = null;
             return await SucceedAsync(
                 action,
                 pluginId,
@@ -609,20 +669,61 @@ public sealed class CatalogInstaller
                 $"the limit is {_maxBytes} bytes.";
         }
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, entry.Version.DownloadUrl);
-        request.Headers.UserAgent.ParseAdd(_userAgent);
-        using var response = await _httpClient
-            .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
-            .ConfigureAwait(false);
-
-        // Redirects are followed by the HTTP stack, so the requested address being
-        // HTTPS does not guarantee the package arrived over HTTPS.
-        if (response.RequestMessage?.RequestUri is { } finalUri &&
-            !string.Equals(finalUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        // Redirects are followed by hand, one hop at a time, so every address in
+        // the chain is checked against the HTTPS requirement before anything is
+        // sent to it. (The host should also build this client with
+        // AllowAutoRedirect = false; when the handler follows redirects itself,
+        // this loop never sees them and only the final-address check below
+        // still applies.) The PluginCatalogClient keeps the same final-address
+        // precedent for the catalogs it fetches.
+        var address = new Uri(entry.Version.DownloadUrl, UriKind.Absolute);
+        for (var hop = 0; hop <= MaxRedirectHops; hop++)
         {
-            return $"The package at {entry.Version.DownloadUrl} redirected to a non-HTTPS address; " +
-                "only HTTPS downloads are allowed.";
+            if (!string.Equals(address.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+            {
+                return $"The package at {entry.Version.DownloadUrl} redirected to the non-HTTPS " +
+                    $"address '{address}'; only HTTPS downloads are allowed.";
+            }
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, address);
+            request.Headers.UserAgent.ParseAdd(_userAgent);
+            using var response = await _httpClient
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (IsRedirect(response) && response.Headers.Location is { } location)
+            {
+                address = location.IsAbsoluteUri ? location : new Uri(address, location);
+                continue;
+            }
+
+            // An HTTP stack that follows redirects on its own reports the final
+            // address here; a non-HTTPS final address is still refused.
+            if (response.RequestMessage?.RequestUri is { } finalUri &&
+                !string.Equals(finalUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+            {
+                return $"The package at {entry.Version.DownloadUrl} redirected to a non-HTTPS address; " +
+                    "only HTTPS downloads are allowed.";
+            }
+
+            return await DownloadBodyAsync(entry, response, tempPath, cancellationToken)
+                .ConfigureAwait(false);
         }
+
+        return $"The package at {entry.Version.DownloadUrl} redirected too many times; " +
+            $"the limit is {MaxRedirectHops} hops.";
+    }
+
+    private static bool IsRedirect(HttpResponseMessage response) =>
+        (int)response.StatusCode is 301 or 302 or 303 or 307 or 308;
+
+    private async Task<string?> DownloadBodyAsync(
+        CatalogEntry entry,
+        HttpResponseMessage response,
+        string tempPath,
+        CancellationToken cancellationToken)
+    {
+        var pluginId = entry.Plugin.Id;
 
         if (!response.IsSuccessStatusCode)
         {
@@ -670,7 +771,7 @@ public sealed class CatalogInstaller
         return string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase)
             ? null
             : $"The package hash does not match the catalog for '{entry.Plugin.Id}': " +
-                $"expected {ShortHash(expected)}, got {ShortHash(actual)}. The download was deleted.";
+                $"expected {ShortHash(expected)}, got {ShortHash(actual)}.";
     }
 
     private static string? FindUnsafeEntryName(ZipArchive archive)
@@ -685,6 +786,13 @@ public sealed class CatalogInstaller
 
         return null;
     }
+
+    private static readonly HashSet<string> ReservedDeviceNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    };
 
     private static bool IsUnsafeEntryName(string? fullName)
     {
@@ -707,6 +815,16 @@ public sealed class CatalogInstaller
             }
 
             if (segment is "..")
+            {
+                return true;
+            }
+
+            // Windows reserves device names even with an extension, so a file
+            // named "CON.txt" or "aux.dll" would fail to extract with a raw
+            // error; reject the package up front instead.
+            var dot = segment.IndexOf('.');
+            var stem = dot < 0 ? segment : segment[..dot];
+            if (stem.Length > 0 && ReservedDeviceNames.Contains(stem))
             {
                 return true;
             }
@@ -829,34 +947,69 @@ public sealed class CatalogInstaller
                 continue;
             }
 
-            var target = Path.GetFullPath(Path.Combine(stagingDirectory, entry.FullName.Replace('\\', '/')));
-            if (!target.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+            (long Bytes, string? Error) outcome;
+            try
             {
-                return $"The package for '{pluginId}' contains an entry that escapes the plugin directory.";
+                outcome = await ExtractEntryAsync(entry, pluginId, stagingDirectory, root, buffer, extracted)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception) when (
+                exception is IOException or UnauthorizedAccessException or NotSupportedException)
+            {
+                // Hostile or broken entries (file/dir collisions, reserved
+                // device names, paths the OS refuses) surface here as raw I/O
+                // errors. Turn them into a graceful failure so the caller can
+                // report the error, audit it, and clean the staging directory.
+                return $"The package for '{pluginId}' could not be extracted: " +
+                    $"the entry '{entry.FullName}' failed ({exception.Message}).";
             }
 
-            if (extracted + Math.Max(entry.Length, 0) > MaxExtractedBytes)
+            extracted += outcome.Bytes;
+            if (outcome.Error is not null)
             {
-                return $"The package for '{pluginId}' unpacks to more than {MaxExtractedBytes} bytes.";
-            }
-
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-            await using var source = entry.Open();
-            await using var output = File.Create(target);
-            int read;
-            while ((read = await source.ReadAsync(buffer).ConfigureAwait(false)) > 0)
-            {
-                extracted += read;
-                if (extracted > MaxExtractedBytes)
-                {
-                    return $"The package for '{pluginId}' unpacks to more than {MaxExtractedBytes} bytes.";
-                }
-
-                await output.WriteAsync(buffer.AsMemory(0, read)).ConfigureAwait(false);
+                return outcome.Error;
             }
         }
 
         return null;
+    }
+
+    private static async Task<(long Bytes, string? Error)> ExtractEntryAsync(
+        ZipArchiveEntry entry,
+        string pluginId,
+        string stagingDirectory,
+        string root,
+        byte[] buffer,
+        long extractedSoFar)
+    {
+        var target = Path.GetFullPath(Path.Combine(stagingDirectory, entry.FullName.Replace('\\', '/')));
+        if (!target.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+        {
+            return (0, $"The package for '{pluginId}' contains an entry that escapes the plugin directory.");
+        }
+
+        if (extractedSoFar + Math.Max(entry.Length, 0) > MaxExtractedBytes)
+        {
+            return (0, $"The package for '{pluginId}' unpacks to more than {MaxExtractedBytes} bytes.");
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        await using var source = entry.Open();
+        await using var output = File.Create(target);
+        long written = 0;
+        int read;
+        while ((read = await source.ReadAsync(buffer).ConfigureAwait(false)) > 0)
+        {
+            written += read;
+            if (extractedSoFar + written > MaxExtractedBytes)
+            {
+                return (written, $"The package for '{pluginId}' unpacks to more than {MaxExtractedBytes} bytes.");
+            }
+
+            await output.WriteAsync(buffer.AsMemory(0, read)).ConfigureAwait(false);
+        }
+
+        return (written, null);
     }
 
     private string? SwapIntoPlace(CatalogInstallAction action, string pluginId, string stagingDirectory)
@@ -870,13 +1023,32 @@ public sealed class CatalogInstaller
                 return $"The plugin '{pluginId}' appeared on disk while installing; nothing was changed.";
             }
 
-            Directory.Move(stagingDirectory, final);
-            return null;
+            try
+            {
+                Directory.Move(stagingDirectory, final);
+                return null;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                return $"The new version of '{pluginId}' could not be moved into place: {exception.Message}. " +
+                    "Nothing was installed.";
+            }
         }
 
         var backup = Path.Combine(_paths.PluginBackupsDirectory, pluginId);
         DeleteDirectoryIfExists(backup);
-        Directory.Move(final, backup);
+        try
+        {
+            Directory.Move(final, backup);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // The installed version never moved, so nothing is lost; the audit
+            // and the returned error record why the update stopped here.
+            return $"The previous version of '{pluginId}' could not be moved to the backup location: " +
+                $"{exception.Message}. The installed version was not changed.";
+        }
+
         try
         {
             Directory.Move(stagingDirectory, final);
@@ -884,7 +1056,20 @@ public sealed class CatalogInstaller
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            Directory.Move(backup, final);
+            // Put the previous version back so the plugin is never left
+            // missing. The backup keeps a second copy until the next update
+            // either way, so no failure path below deletes the only version.
+            try
+            {
+                Directory.Move(backup, final);
+            }
+            catch (Exception restoreException) when (restoreException is IOException or UnauthorizedAccessException)
+            {
+                return $"The new version of '{pluginId}' could not be put in place: {exception.Message}, and " +
+                    $"the previous version could not be moved back from '{backup}' ({restoreException.Message}). " +
+                    "Its files are kept in the backup location.";
+            }
+
             return $"The new version of '{pluginId}' could not be put in place: {exception.Message}. " +
                 "The previous version is still installed.";
         }
@@ -927,8 +1112,11 @@ public sealed class CatalogInstaller
         CancellationToken cancellationToken,
         string? tempPath = null)
     {
-        DeleteFileIfExists(tempPath);
-        await AuditAsync(action, pluginId, fromVersion, toVersion, "failure", error, sourceId, cancellationToken)
+        var removed = DeleteFileIfExists(tempPath);
+        var reason = removed || tempPath is null
+            ? error
+            : $"{error} The download could not be removed from quarantine and was left at '{tempPath}'.";
+        await AuditAsync(action, pluginId, fromVersion, toVersion, "failure", reason, sourceId, cancellationToken)
             .ConfigureAwait(false);
         return new CatalogInstallResult(action, pluginId, fromVersion, toVersion, error, null, null);
     }
@@ -943,47 +1131,78 @@ public sealed class CatalogInstaller
         string? sourceId,
         CancellationToken cancellationToken)
     {
+        var entry = new PluginAuditEntry(
+            DateTimeOffset.UtcNow,
+            action.ToString().ToLowerInvariant(),
+            pluginId,
+            fromVersion,
+            toVersion,
+            result,
+            reason,
+            sourceId);
+
         try
         {
-            await _audit.AppendAsync(
-                new PluginAuditEntry(
-                    DateTimeOffset.UtcNow,
-                    action.ToString().ToLowerInvariant(),
-                    pluginId,
-                    fromVersion,
-                    toVersion,
-                    result,
-                    reason,
-                    sourceId),
-                cancellationToken).ConfigureAwait(false);
+            await _audit.AppendAsync(entry, cancellationToken).ConfigureAwait(false);
+            return;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             _logger.LogWarning(
                 exception,
-                "The audit entry for {Action} of {PluginId} could not be written.",
+                "The audit entry for {Action} of {PluginId} could not be written; retrying once.",
                 action,
                 pluginId);
+        }
+
+        try
+        {
+            await _audit.AppendAsync(entry, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // Non-fatal by design: an install, update, or uninstall must never
+            // depend on audit writability. Mirror the full payload into the
+            // normal file log so the decision is still recorded somewhere
+            // recoverable.
+            _logger.LogError(
+                exception,
+                "The audit entry for {Action} of {PluginId} could not be written after a retry. " +
+                    "Audit payload: action={EntryAction} pluginId={EntryPluginId} fromVersion={FromVersion} " +
+                    "toVersion={ToVersion} result={EntryResult} reason={EntryReason} sourceId={EntrySourceId} " +
+                    "timestampUtc={TimestampUtc:o}",
+                action,
+                pluginId,
+                entry.Action,
+                entry.PluginId,
+                entry.FromVersion,
+                entry.ToVersion,
+                entry.Result,
+                entry.Reason,
+                entry.SourceId,
+                entry.TimestampUtc);
         }
     }
 
     private static string ShortHash(string hash) =>
         hash.Length <= 12 ? hash : hash[..12] + "…";
 
-    private static void DeleteFileIfExists(string? path)
+    private static bool DeleteFileIfExists(string? path)
     {
         if (string.IsNullOrEmpty(path) || !File.Exists(path))
         {
-            return;
+            return true;
         }
 
         try
         {
             File.Delete(path);
+            return true;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            // Best effort; quarantine leftovers are cleaned by the OS or the next run.
+            // Best effort; the caller reports the leftover so it is not silently lost.
+            return false;
         }
     }
 

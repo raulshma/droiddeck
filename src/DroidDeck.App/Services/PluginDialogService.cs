@@ -55,6 +55,16 @@ public sealed class PluginDialogService : IPluginDialogServiceProvider
             return PluginDialogResult.Failed($"This plugin has no dialog named '{dialogId}'.");
         }
 
+        var buttons = extension.Value.Buttons;
+        if (buttons.Count > 3 || buttons.Count(static button => !button.IsPrimary) > 2)
+        {
+            // A ContentDialog renders exactly three buttons (primary,
+            // secondary, close); anything more would be silently dropped.
+            return PluginDialogResult.Failed(
+                $"The dialog '{dialogId}' declares {buttons.Count} buttons, but a dialog supports " +
+                "at most three: one primary and two other buttons.");
+        }
+
         var xamlRoot = _xamlRoot();
         if (xamlRoot is null)
         {
@@ -67,7 +77,6 @@ public sealed class PluginDialogService : IPluginDialogServiceProvider
         // their thread affinity while the invoker still time-boxes the plugin.
         var presentation = await _plugins().Invoker.CreateDialogAsync(extension, cancellationToken).ConfigureAwait(true);
 
-        var buttons = extension.Value.Buttons;
         var dialog = new ContentDialog
         {
             Title = extension.Value.Title,
@@ -119,6 +128,9 @@ public sealed class PluginDialogService : IPluginDialogServiceProvider
             dialog.SecondaryButtonText = others[0].Text;
         }
 
+        // The third button renders as the dialog's Close button, so the
+        // ContentDialog's None result (close button or Escape) maps back to
+        // that button's id in MapResult.
         if (others.Length > 1)
         {
             dialog.CloseButtonText = others[1].Text;
@@ -131,12 +143,19 @@ public sealed class PluginDialogService : IPluginDialogServiceProvider
         }
     }
 
-    private static string? MapResult(ContentDialogResult result, IReadOnlyList<PluginDialogButton> buttons) => result switch
+    private static string? MapResult(ContentDialogResult result, IReadOnlyList<PluginDialogButton> buttons)
     {
-        ContentDialogResult.Primary => buttons.FirstOrDefault(static button => button.IsPrimary)?.Id,
-        ContentDialogResult.Secondary => buttons.Where(static button => !button.IsPrimary).FirstOrDefault()?.Id,
-        _ => null,
-    };
+        var others = buttons.Where(static button => !button.IsPrimary).ToArray();
+        return result switch
+        {
+            ContentDialogResult.Primary => buttons.FirstOrDefault(static button => button.IsPrimary)?.Id,
+            ContentDialogResult.Secondary => others is { Length: > 0 } rendered ? rendered[0].Id : null,
+            // None is the Close button when a third button was rendered; with
+            // fewer buttons it is a dismissal.
+            ContentDialogResult.None => others is { Length: > 1 } rendered ? rendered[1].Id : null,
+            _ => null,
+        };
+    }
 
     private Task<T> RunOnUiAsync<T>(Func<Task<T>> action)
     {

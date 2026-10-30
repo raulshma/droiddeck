@@ -111,9 +111,15 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
                     continue;
                 }
 
+                // Merged sources can offer several newer versions; keep the
+                // highest so the shown update never trails what the update
+                // would actually install.
                 if (SemanticVersion.TryParse(entry.Version.Version, out var candidate) &&
                     SemanticVersion.TryParse(current, out var parsedCurrent) &&
-                    candidate > parsedCurrent)
+                    candidate > parsedCurrent &&
+                    (!updates.TryGetValue(entry.Plugin.Id, out var best) ||
+                        !SemanticVersion.TryParse(best, out var bestVersion) ||
+                        candidate > bestVersion))
                 {
                     updates[entry.Plugin.Id] = entry.Version.Version;
                 }
@@ -414,9 +420,13 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
             return;
         }
 
+        // Match the exact entry the row advertised (id and version): browse
+        // order alone could pick a different version from another merged
+        // source than the one the user was shown.
         var entry = _catalog.Browse(new CatalogQuery()).FirstOrDefault(candidate =>
             string.Equals(candidate.Plugin.Id, row.PluginId, StringComparison.OrdinalIgnoreCase) &&
-            candidate.Compatibility != CatalogCompatibility.Incompatible);
+            candidate.Compatibility != CatalogCompatibility.Incompatible &&
+            string.Equals(candidate.Version.Version, row.UpdateVersion, StringComparison.Ordinal));
         if (entry is null)
         {
             ShowAction($"No catalog entry for {row.Title} is available right now. Refresh the Catalog page.", isError: true);
@@ -460,15 +470,27 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
             return;
         }
 
+        // A concurrent refresh can replace the version dictionaries after the
+        // row was rendered, so never index directly: a missing version just
+        // disables the button until the next render shows the current state.
+        if (!_rollbackVersions.TryGetValue(row.PluginId, out var rollbackVersion))
+        {
+            button.IsEnabled = false;
+            ShowAction(
+                $"No rollback backup for {row.Title} is available right now. Refresh Extensions.",
+                isError: true);
+            return;
+        }
+
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
-            Title = $"Roll back {row.Title} to v{_rollbackVersions[row.PluginId]}?",
+            Title = $"Roll back {row.Title} to v{rollbackVersion}?",
             Content = new TextBlock
             {
                 TextWrapping = TextWrapping.Wrap,
                 Text = $"This replaces version {row.Version} with the kept version " +
-                    $"{_rollbackVersions[row.PluginId]}. The restored files match the hash you approved " +
+                    $"{rollbackVersion}. The restored files match the hash you approved " +
                     "before, so no new approval is needed. Restart DroidDeck to load the restored version." +
                     (row.State == PluginState.Loaded
                         ? " Restart DroidDeck first if the plugin is loaded; its files are in use."
@@ -830,6 +852,7 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
                 ? $"{status.Id} · version {status.Version} · API {status.ApiVersion}"
                 : $"{status.Id} · version {status.Version} · API {status.ApiVersion} · by {status.Author}";
             CanUpdate = updateVersion is not null;
+            UpdateVersion = updateVersion;
             UpdateLabel = updateVersion is null ? string.Empty : $"Update to v{updateVersion}";
             CanRollback = rollbackVersion is not null;
             RollbackLabel = rollbackVersion is null ? string.Empty : $"Roll back to v{rollbackVersion}";
@@ -927,6 +950,9 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
 
         /// <summary>Gets whether a newer catalog version is available for this plugin.</summary>
         public bool CanUpdate { get; }
+
+        /// <summary>Gets the catalog version the update button offers, when one is available.</summary>
+        public string? UpdateVersion { get; }
 
         /// <summary>Gets the update button label, when an update is available.</summary>
         public string UpdateLabel { get; }

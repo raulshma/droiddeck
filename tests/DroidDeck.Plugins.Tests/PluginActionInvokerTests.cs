@@ -1,4 +1,6 @@
 using DroidDeck.Plugin.Abstractions;
+using DroidDeck.TestSupport;
+using Microsoft.Extensions.Logging;
 
 namespace DroidDeck.Plugins.Tests;
 
@@ -166,6 +168,151 @@ public sealed class PluginActionInvokerTests
             () => invoker.InvokeDeviceActionAsync(null!, Context));
         await Assert.ThrowsAsync<ArgumentNullException>(
             () => invoker.InvokeToolbarActionAsync(null!, Context));
+    }
+
+    [Fact]
+    public async Task AViewTimeoutKeepsTheTokenAliveForTheAbandonedPluginTask()
+    {
+        var health = new PluginHealthTracker();
+        var invoker = new PluginActionInvoker(health, TimeSpan.FromMilliseconds(50));
+        Exception? observedByPlugin = null;
+
+        var result = await invoker.CreateViewAsync(PluginId, "view", async token =>
+        {
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            }
+            catch (Exception exception)
+            {
+                observedByPlugin = exception;
+            }
+
+            return "late";
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.True(result.TimedOut);
+        // The abandoned task must see its token canceled, not disposed.
+        await Wait.UntilAsync(() => observedByPlugin is not null);
+        Assert.True(
+            observedByPlugin is OperationCanceledException,
+            $"Expected a cancellation, got {observedByPlugin?.GetType().Name}");
+    }
+
+    [Fact]
+    public async Task AnAbandonedViewTaskFaultIsObservedAndLogged()
+    {
+        var health = new PluginHealthTracker();
+        var logger = new CapturingLogger();
+        var invoker = new PluginActionInvoker(health, TimeSpan.FromMilliseconds(50), logger: logger);
+
+        var result = await invoker.CreateViewAsync(PluginId, "view", _ =>
+            Task.Delay(TimeSpan.FromMilliseconds(200), CancellationToken.None)
+                .ContinueWith<object>(_ => throw new InvalidOperationException("late fault"), TaskScheduler.Default));
+
+        Assert.True(result.TimedOut);
+        await Wait.UntilAsync(() => logger.Entries.Any(entry =>
+            entry.Message.Contains("abandoned", StringComparison.OrdinalIgnoreCase)));
+        Assert.Contains(
+            logger.Entries,
+            entry => entry.Message.Contains("abandoned", StringComparison.OrdinalIgnoreCase) &&
+                entry.Exception?.GetBaseException() is InvalidOperationException);
+    }
+
+    [Fact]
+    public async Task AnInvocationTimeoutKeepsTheTokenAliveForTheAbandonedPluginTask()
+    {
+        var health = new PluginHealthTracker();
+        var invoker = new PluginActionInvoker(health, TimeSpan.FromMilliseconds(50));
+        Exception? observedByPlugin = null;
+
+        var result = await invoker.InvokeAsync(PluginId, async token =>
+        {
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            }
+            catch (Exception exception)
+            {
+                observedByPlugin = exception;
+            }
+        });
+
+        Assert.True(result.TimedOut);
+        await Wait.UntilAsync(() => observedByPlugin is not null);
+        Assert.True(
+            observedByPlugin is OperationCanceledException,
+            $"Expected a cancellation, got {observedByPlugin?.GetType().Name}");
+    }
+
+    [Fact]
+    public async Task AUserCallbackMayOutliveTheTimeoutWithoutFailing()
+    {
+        var health = new PluginHealthTracker();
+        var invoker = new PluginActionInvoker(health, TimeSpan.FromMilliseconds(50));
+
+        var result = await invoker.InvokeUiCallbackAsync(
+            PluginId,
+            // A dialog the user keeps open ignores the callback's token; the
+            // delay here does the same on purpose.
+            token => Task.Delay(TimeSpan.FromMilliseconds(150), CancellationToken.None));
+
+        // A dialog the user keeps open must not surface as a false timeout.
+        Assert.True(result.Succeeded, result.Error);
+        Assert.False(result.TimedOut);
+        Assert.True(health.Get(PluginId).IsHealthy);
+    }
+
+    [Fact]
+    public async Task AUserCallbackThatStaysPendingIsReportedThroughTheWatchdog()
+    {
+        var health = new PluginHealthTracker();
+        var invoker = new PluginActionInvoker(health, TimeSpan.FromMilliseconds(50));
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var invoke = invoker.InvokeUiCallbackAsync(PluginId, _ => completion.Task);
+        await Wait.UntilAsync(() => !health.Get(PluginId).IsHealthy);
+        Assert.True(health.Get(PluginId).LastFailureTimedOut);
+
+        completion.TrySetResult();
+        var result = await invoke;
+        Assert.True(result.Succeeded, result.Error);
+        // The final success restores health after the transient watchdog fault.
+        Assert.True(health.Get(PluginId).IsHealthy);
+    }
+
+    [Fact]
+    public async Task AUserCallbackExceptionIsIsolated()
+    {
+        var health = new PluginHealthTracker();
+        var invoker = new PluginActionInvoker(health);
+
+        var result = await invoker.InvokeUiCallbackAsync(
+            PluginId,
+            _ => throw new InvalidOperationException("click failed"));
+
+        Assert.False(result.Succeeded);
+        Assert.False(result.TimedOut);
+        Assert.Equal("click failed", result.Error);
+        Assert.False(health.Get(PluginId).IsHealthy);
+    }
+
+    private sealed class CapturingLogger : ILogger<PluginActionInvoker>
+    {
+        public List<(string Message, Exception? Exception)> Entries { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter) =>
+            Entries.Add((formatter(state, exception), exception));
     }
 
     private sealed class RecordingDeviceAction : IDeviceAction

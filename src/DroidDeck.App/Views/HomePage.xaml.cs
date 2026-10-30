@@ -47,7 +47,7 @@ public sealed partial class HomePage : Page, IRefreshablePage, IDisposable
     private readonly BulkObservableCollection<DeviceRowViewModel> _deviceRows = [];
     private readonly BulkObservableCollection<RecentProjectRow> _projectRows = [];
     private readonly BulkObservableCollection<EnvironmentToolRow> _environmentRows = [];
-    private readonly Dictionary<string, PluginFaultBoundary> _pluginWidgetBoundaries = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, HomeWidgetMount> _pluginWidgets = new(StringComparer.Ordinal);
     private QuickRunSelection? _selection;
     private string? _devicesProblem;
     private string? _projectsProblem;
@@ -122,12 +122,12 @@ public sealed partial class HomePage : Page, IRefreshablePage, IDisposable
         _plugins.ResultsChanged -= OnPluginsChanged;
         _projects.ProjectsChanged -= OnProjectsChanged;
         _runs.SessionChanged -= OnSessionChanged;
-        foreach (var boundary in _pluginWidgetBoundaries.Values)
+        foreach (var widget in _pluginWidgets.Values)
         {
-            boundary.Dispose();
+            widget.Boundary.Dispose();
         }
 
-        _pluginWidgetBoundaries.Clear();
+        _pluginWidgets.Clear();
     }
 
     private void Reload(bool force)
@@ -468,20 +468,24 @@ public sealed partial class HomePage : Page, IRefreshablePage, IDisposable
     private void UpdatePluginWidgets()
     {
         var entries = _plugins.Extensions.HomeWidgets;
-        foreach (var staleId in _pluginWidgetBoundaries.Keys
+
+        // Stale widgets leave with both their boundary and their card: the
+        // boundary must be disposed, and the card must leave the panel, or the
+        // plugin would keep a permanent ghost card on Home after uninstall.
+        foreach (var staleId in _pluginWidgets.Keys
             .Where(id => entries.All(entry => !string.Equals(entry.Widget.Id, id, StringComparison.Ordinal)))
             .ToArray())
         {
-            if (_pluginWidgetBoundaries.Remove(staleId, out var staleBoundary))
+            if (_pluginWidgets.Remove(staleId, out var stale))
             {
-                staleBoundary.Dispose();
+                PluginWidgetList.Children.Remove(stale.Card);
+                stale.Boundary.Dispose();
             }
         }
 
         if (entries.Count == 0)
         {
             PluginWidgetList.Children.Clear();
-            _pluginWidgetBoundaries.Clear();
             PluginWidgetPlaceholderText.Text =
                 "Plugin home widgets mount here. No installed plugin provides one yet.";
             PluginWidgetPlaceholderText.Visibility = Visibility.Visible;
@@ -493,15 +497,17 @@ public sealed partial class HomePage : Page, IRefreshablePage, IDisposable
         PluginWidgetList.Visibility = Visibility.Visible;
         foreach (var entry in entries)
         {
-            if (_pluginWidgetBoundaries.ContainsKey(entry.Widget.Id))
+            if (_pluginWidgets.ContainsKey(entry.Widget.Id))
             {
                 continue;
             }
 
             var boundary = new PluginFaultBoundary(entry.PluginId, $"home widget {entry.Widget.Id}", _faultReporter);
-            _pluginWidgetBoundaries[entry.Widget.Id] = boundary;
-            PluginWidgetList.Children.Add(BuildPluginWidgetCard(entry, boundary));
-            QueuePluginWidgetLoad(entry, boundary);
+            var card = BuildPluginWidgetCard(entry, boundary);
+            PluginWidgetList.Children.Add(card);
+            var host = new HomeWidgetMount(entry, boundary, card);
+            _pluginWidgets[entry.Widget.Id] = host;
+            QueuePluginWidgetLoad(entry, host);
         }
     }
 
@@ -521,7 +527,7 @@ public sealed partial class HomePage : Page, IRefreshablePage, IDisposable
         return new PluginCard(entry.Widget.Title) { Content = content };
     }
 
-    private void QueuePluginWidgetLoad(HomeWidgetEntry entry, PluginFaultBoundary boundary)
+    private void QueuePluginWidgetLoad(HomeWidgetEntry entry, HomeWidgetMount host)
     {
         var afterFirstFrame = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var queued = _dispatcher is null || _dispatcher.TryEnqueue(
@@ -532,18 +538,19 @@ public sealed partial class HomePage : Page, IRefreshablePage, IDisposable
             afterFirstFrame.TrySetResult();
         }
 
-        _ = LoadPluginWidgetAsync(entry, boundary, afterFirstFrame.Task);
+        _ = LoadPluginWidgetAsync(entry, host, afterFirstFrame.Task);
     }
 
     private async Task LoadPluginWidgetAsync(
         HomeWidgetEntry entry,
-        PluginFaultBoundary boundary,
+        HomeWidgetMount host,
         Task afterFirstFrame)
     {
         try
         {
             await afterFirstFrame.ConfigureAwait(true);
-            if (_disposed)
+            if (_disposed || !_pluginWidgets.TryGetValue(entry.Widget.Id, out var current) ||
+                !ReferenceEquals(current, host))
             {
                 return;
             }
@@ -553,7 +560,13 @@ public sealed partial class HomePage : Page, IRefreshablePage, IDisposable
                 $"home widget {entry.Widget.Id}",
                 token => entry.Widget.CreateViewAsync(token),
                 CancellationToken.None).ConfigureAwait(true);
-            boundary.Show(result.Content, result.Error);
+            if (!_pluginWidgets.TryGetValue(entry.Widget.Id, out current) ||
+                !ReferenceEquals(current, host))
+            {
+                return;
+            }
+
+            host.Boundary.Show(result.Content, result.Error);
             if (!result.Succeeded)
             {
                 _logger.LogWarning(
@@ -566,13 +579,17 @@ public sealed partial class HomePage : Page, IRefreshablePage, IDisposable
         catch (Exception exception)
         {
             LogRegionFailure($"plugin home widget {entry.Widget.Id}", exception);
-            try
+            if (_pluginWidgets.TryGetValue(entry.Widget.Id, out var current) &&
+                ReferenceEquals(current, host))
             {
-                boundary.Show(null, exception.Message);
-            }
-            catch
-            {
-                // One widget must never break the host page.
+                try
+                {
+                    host.Boundary.Show(null, exception.Message);
+                }
+                catch
+                {
+                    // One widget must never break the host page.
+                }
             }
         }
     }
@@ -950,5 +967,18 @@ public sealed partial class HomePage : Page, IRefreshablePage, IDisposable
         content.Visibility = hasContent ? Visibility.Visible : Visibility.Collapsed;
         error.Text = errorText ?? string.Empty;
         error.Visibility = errorText is null ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    /// <summary>One home widget and the host chrome (fault boundary, card) that carries it.</summary>
+    private sealed class HomeWidgetMount(
+        HomeWidgetEntry entry,
+        PluginFaultBoundary boundary,
+        PluginCard card)
+    {
+        public HomeWidgetEntry Entry { get; } = entry;
+
+        public PluginFaultBoundary Boundary { get; } = boundary;
+
+        public PluginCard Card { get; } = card;
     }
 }

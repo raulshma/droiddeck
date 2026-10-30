@@ -202,11 +202,21 @@ public sealed partial class CatalogPage : Page, IRefreshablePage, IDisposable
             return;
         }
 
+        // The row shows "Update" when the plugin is installed with a newer
+        // catalog version; that branch must call UpdateAsync, because
+        // InstallAsync refuses installed plugins by design.
+        var isUpdate = _installedVersions.TryGetValue(entry.Plugin.Id, out var installedVersion) &&
+            SemanticVersion.TryParse(entry.Version.Version, out var candidate) &&
+            SemanticVersion.TryParse(installedVersion, out var current) &&
+            candidate > current;
+
         button.IsEnabled = false;
         ShowAction($"Downloading and verifying {row.Title} from {row.SourceName}…");
         try
         {
-            var result = await _installer.InstallAsync(entry, ShowTrustDecisionAsync);
+            var result = isUpdate
+                ? await _installer.UpdateAsync(entry, ShowTrustDecisionAsync)
+                : await _installer.InstallAsync(entry, ShowTrustDecisionAsync);
             if (result.Succeeded)
             {
                 _installedVersions[entry.Plugin.Id] = result.ToVersion ?? entry.Version.Version;
@@ -224,8 +234,14 @@ public sealed partial class CatalogPage : Page, IRefreshablePage, IDisposable
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogWarning(exception, "Installing {PluginId} failed.", entry.Plugin.Id);
-            ShowAction($"Installing {row.Title} failed: {exception.Message}", isError: true);
+            _logger.LogWarning(
+                exception,
+                "{Verb} {PluginId} failed.",
+                isUpdate ? "Updating" : "Installing",
+                entry.Plugin.Id);
+            ShowAction(
+                $"{(isUpdate ? "Updating" : "Installing")} {row.Title} failed: {exception.Message}",
+                isError: true);
         }
         finally
         {
