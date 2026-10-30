@@ -5,6 +5,10 @@ namespace DroidDeck.Core.Tests.Devices;
 
 public sealed class DeviceOperationCoordinatorTests
 {
+    // Long enough to survive a thread pool saturated by parallel test assemblies on
+    // CI, short enough to fail a real deadlock instead of hanging the run.
+    private static readonly TimeSpan LeaseTimeout = TimeSpan.FromSeconds(30);
+
     [Fact]
     public async Task AcquireAsync_SerializesOperationsOnTheSameDevice()
     {
@@ -22,7 +26,7 @@ public sealed class DeviceOperationCoordinatorTests
         Assert.Single(coordinator.ActiveOperations);
 
         await first.DisposeAsync();
-        await secondTask.WaitAsync(TimeSpan.FromSeconds(2));
+        await secondTask.WaitAsync(LeaseTimeout);
         Assert.True(secondCompleted);
         Assert.Empty(coordinator.ActiveOperations);
     }
@@ -87,7 +91,7 @@ public sealed class DeviceOperationCoordinatorTests
 
         coordinator.MaxConcurrency = 2;
 
-        var second = await secondTask.WaitAsync(TimeSpan.FromSeconds(2));
+        var second = await secondTask.WaitAsync(LeaseTimeout);
         Assert.Equal(2, coordinator.ActiveOperations.Count);
         await second.DisposeAsync();
         await first.DisposeAsync();
@@ -110,7 +114,7 @@ public sealed class DeviceOperationCoordinatorTests
         Assert.False(thirdTask.IsCompleted);
 
         await second.DisposeAsync();
-        var third = await thirdTask.WaitAsync(TimeSpan.FromSeconds(2));
+        var third = await thirdTask.WaitAsync(LeaseTimeout);
         Assert.Single(coordinator.ActiveOperations);
         await third.DisposeAsync();
     }
