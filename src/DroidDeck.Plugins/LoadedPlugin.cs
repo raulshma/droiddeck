@@ -10,7 +10,7 @@ namespace DroidDeck.Plugins;
 public sealed class LoadedPlugin : IPluginInfo, IAsyncDisposable
 {
     private readonly PluginRegistry _registry;
-    private readonly JsonPluginSettings _settings;
+    private readonly IPluginSettings _settings;
     private readonly ILogger _logger;
     private bool _shutdown;
 
@@ -19,7 +19,7 @@ public sealed class LoadedPlugin : IPluginInfo, IAsyncDisposable
         string installPath,
         IPlugin instance,
         AssemblyLoadContext loadContext,
-        JsonPluginSettings settings,
+        IPluginSettings settings,
         PluginRegistry registry,
         ILogger logger)
     {
@@ -106,7 +106,11 @@ public sealed class LoadedPlugin : IPluginInfo, IAsyncDisposable
         finally
         {
             _registry.RemoveAll(Id);
-            _settings.Dispose();
+            if (_settings is IDisposable disposable)
+            {
+                disposable.Dispose();
+            }
+
             LoadContext.Unload();
             if (_logger.IsEnabled(LogLevel.Information))
             {

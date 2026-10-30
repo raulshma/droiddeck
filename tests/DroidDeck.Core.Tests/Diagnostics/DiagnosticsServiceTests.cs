@@ -135,6 +135,44 @@ public sealed class DiagnosticsServiceTests
         Assert.DoesNotContain("do-not-write", text, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Plugin settings never enter reports structurally: the plugin health
+    /// section carries statuses and reasons only, and schema-driven plugin
+    /// settings never hold secret values on disk in the first place. This test
+    /// pins the second line of defense: a plugin-settings-shaped section is
+    /// redacted like any other content.
+    /// </summary>
+    [Fact]
+    public void BuildReport_RedactsPluginSettingsShapedExtraSections()
+    {
+        using var temp = new TempDirectory();
+        var paths = new AppPaths(temp.Path);
+        var configuration = new ConfigurationService(paths);
+        var service = new DiagnosticsService(
+            paths,
+            configuration,
+            new StubToolchainService(),
+            new StubDeviceService(),
+            new BoundedLogBuffer(),
+            new SessionContext());
+        const string leakedDump = """
+            Plugin settings for com.example.sample:
+            - apiKey = plugin-secret-value-555
+            - password: "hunter2-with-entropy"
+            - endpoint = https://example.com
+            """;
+
+        var report = service.BuildReport(new DiagnosticsReportOptions
+        {
+            ExtraSections = [new DiagnosticsSection("Plugin settings", leakedDump)],
+        });
+
+        Assert.DoesNotContain("plugin-secret-value-555", report, StringComparison.Ordinal);
+        Assert.DoesNotContain("hunter2-with-entropy", report, StringComparison.Ordinal);
+        Assert.Contains("<redacted>", report, StringComparison.Ordinal);
+        Assert.Contains("https://example.com", report, StringComparison.Ordinal);
+    }
+
     private sealed class StubToolchainService : IToolchainService
     {
         public ToolchainSnapshot? CachedSnapshot { get; set; }

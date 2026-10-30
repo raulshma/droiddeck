@@ -244,5 +244,32 @@ public sealed class SettingsTransferTests
         Assert.Null(service.GetValueAt(ConfigScope.Global, SettingsPaths.PerformanceMaxSamples));
     }
 
+    /// <summary>
+    /// Plugin settings documents travel through the same transfer helpers when a
+    /// profile or export carries them, so the secret-shaped field names that
+    /// schema-driven plugin settings use must be excluded as well.
+    /// </summary>
+    [Fact]
+    public async Task ExportOmitsPluginSettingsSecretFields()
+    {
+        using var temp = new TempDirectory();
+        using var service = CreateService(temp);
+        await service.InitializeAsync();
+        await service.SetAsync("plugins.sample.endpoint", "https://example.com");
+        await service.SetAsync("plugins.sample.apiKey", "plugin-secret-value-555");
+        await service.SetAsync("plugins.sample.privateKey", "plugin-private-key-555");
+
+        var export = await service.ExportSettingsAsync(new SettingsExportOptions { Scopes = [ConfigScope.Global] });
+        var json = export.ToJson();
+
+        Assert.DoesNotContain("plugin-secret-value-555", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("plugin-private-key-555", json, StringComparison.Ordinal);
+        Assert.Contains(export.ExcludedPaths, path => path.EndsWith("apiKey", StringComparison.Ordinal));
+        Assert.Contains(export.ExcludedPaths, path => path.EndsWith("privateKey", StringComparison.Ordinal));
+        Assert.Equal(
+            "https://example.com",
+            export.Scopes[ConfigScope.Global]["plugins"]!["sample"]!["endpoint"]!.GetValue<string>());
+    }
+
     private static ConfigurationService CreateService(TempDirectory temp) => new(new AppPaths(temp.Combine("data")));
 }

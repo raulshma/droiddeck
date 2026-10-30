@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Reflection;
 using DroidDeck.Core.Infrastructure;
+using DroidDeck.Core.Security;
 using DroidDeck.Plugin.Abstractions;
 using Microsoft.Extensions.Logging;
 
@@ -33,13 +34,22 @@ public sealed class PluginLoader : IAsyncDisposable
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger _logger;
     private readonly string _hostVersion;
+    private readonly ISecretStore? _secretStore;
     private readonly List<LoadedPlugin> _plugins = [];
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly object _sync = new();
     private bool _disposed;
 
     /// <summary>Creates a loader that registers plugin extensions into a registry.</summary>
-    public PluginLoader(PluginRegistry registry, ILoggerFactory loggerFactory, string? hostVersion = null)
+    /// <param name="registry">The extension registry plugins register into.</param>
+    /// <param name="loggerFactory">The factory for host and plugin-scoped loggers.</param>
+    /// <param name="hostVersion">The host version to validate against; defaults to the running version.</param>
+    /// <param name="secretStore">The DPAPI secret store that backs plugin secret settings.</param>
+    public PluginLoader(
+        PluginRegistry registry,
+        ILoggerFactory loggerFactory,
+        string? hostVersion = null,
+        ISecretStore? secretStore = null)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(loggerFactory);
@@ -47,6 +57,7 @@ public sealed class PluginLoader : IAsyncDisposable
         _loggerFactory = loggerFactory;
         _logger = loggerFactory.CreateLogger("DroidDeck.Plugins");
         _hostVersion = hostVersion ?? AppInfo.Version;
+        _secretStore = secretStore;
     }
 
     /// <summary>Gets the loaded plugins in load order.</summary>
@@ -285,7 +296,7 @@ public sealed class PluginLoader : IAsyncDisposable
 
         var startedAt = Stopwatch.GetTimestamp();
         PluginLoadContext? loadContext = null;
-        JsonPluginSettings? settings = null;
+        IPluginSettings? settings = null;
         IPlugin? instance = null;
         try
         {
@@ -328,7 +339,8 @@ public sealed class PluginLoader : IAsyncDisposable
 
             var dataDirectory = Path.Combine(pluginDirectory, "data");
             Directory.CreateDirectory(dataDirectory);
-            settings = new JsonPluginSettings(Path.Combine(pluginDirectory, "settings.json"), logger);
+            settings = await CreateSettingsAsync(manifest, pluginDirectory, logger, validation, cancellationToken)
+                .ConfigureAwait(false);
 
             var loaded = new LoadedPlugin(manifest, pluginDirectory, instance, loadContext, settings, _registry, logger);
             var context = new PluginContext(
@@ -386,6 +398,54 @@ public sealed class PluginLoader : IAsyncDisposable
     }
 
     /// <summary>
+    /// Creates the plugin settings store. A plugin that ships a readable
+    /// settings.schema.json gets the schema-driven store with secret support; a
+    /// plugin without one, or with a schema outside the supported subset, keeps
+    /// the raw store and the schema problem is reported as a warning.
+    /// </summary>
+    private async Task<IPluginSettings> CreateSettingsAsync(
+        PluginManifest manifest,
+        string pluginDirectory,
+        ILogger logger,
+        PluginValidationResult validation,
+        CancellationToken cancellationToken)
+    {
+        var settingsPath = Path.Combine(pluginDirectory, "settings.json");
+        if (!File.Exists(PluginSettingsSchemaReader.GetSchemaPath(pluginDirectory)))
+        {
+            return new JsonPluginSettings(settingsPath, logger);
+        }
+
+        var read = await PluginSettingsSchemaReader.ReadAsync(pluginDirectory, cancellationToken).ConfigureAwait(false);
+        if (read.Schema is null)
+        {
+            var reason = read.Validation.Issues.FirstOrDefault(static issue =>
+                issue.Severity == PluginValidationSeverity.Error)?.Message ?? "The schema is invalid.";
+            validation.Warning(
+                "plugin.settingsSchema.invalid",
+                $"The settings schema was not used: {reason} The plugin keeps its raw settings store.");
+            return new JsonPluginSettings(settingsPath, logger);
+        }
+
+        if (read.Schema.Fields.Any(static field => field.Type == PluginSettingsFieldType.Secret) &&
+            _secretStore is null)
+        {
+            validation.Warning(
+                "plugin.settingsSchema.noSecretStore",
+                "The plugin declares secret settings, but no secret store is available, so its " +
+                    "settings schema was not used. The plugin keeps its raw settings store.");
+            return new JsonPluginSettings(settingsPath, logger);
+        }
+
+        return new SchemaPluginSettings(
+            settingsPath,
+            read.Schema,
+            manifest.Id,
+            _secretStore!,
+            logger);
+    }
+
+    /// <summary>
     /// Resolves manifest dependencies against the plugins that are already
     /// loaded. Failures carry a reason naming the missing dependency and the
     /// required version so the plugin manager can show it.
@@ -419,7 +479,7 @@ public sealed class PluginLoader : IAsyncDisposable
         string pluginId,
         IPlugin? instance,
         PluginLoadContext? loadContext,
-        JsonPluginSettings? settings)
+        IPluginSettings? settings)
     {
         if (instance is not null)
         {
@@ -435,7 +495,10 @@ public sealed class PluginLoader : IAsyncDisposable
 
         _registry.RemoveAll(pluginId);
         loadContext?.Unload();
-        settings?.Dispose();
+        if (settings is IDisposable disposable)
+        {
+            disposable.Dispose();
+        }
     }
 
     private bool IsLoaded(string pluginId)

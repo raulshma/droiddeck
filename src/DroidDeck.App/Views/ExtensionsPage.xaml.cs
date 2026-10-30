@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using DroidDeck.App.Services;
 using DroidDeck.Core;
 using DroidDeck.Core.Diagnostics;
+using DroidDeck.Core.Security;
 using DroidDeck.Plugin.Abstractions;
 using DroidDeck.Plugin.Abstractions.Rendering;
 using DroidDeck.Plugins;
@@ -29,6 +30,7 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
     private readonly PluginCatalogService _catalog;
     private readonly CatalogInstaller _installer;
     private readonly PluginAuditLog _audit;
+    private readonly ISecretStore _secrets;
     private readonly ILogger<ExtensionsPage> _logger;
     private readonly DispatcherQueue? _dispatcher;
     private readonly ObservableCollection<PluginRow> _rows = [];
@@ -45,6 +47,7 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         PluginCatalogService catalog,
         CatalogInstaller installer,
         PluginAuditLog audit,
+        ISecretStore secrets,
         ILogger<ExtensionsPage> logger)
     {
         _plugins = plugins ?? throw new ArgumentNullException(nameof(plugins));
@@ -54,6 +57,7 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
         _installer = installer ?? throw new ArgumentNullException(nameof(installer));
         _audit = audit ?? throw new ArgumentNullException(nameof(audit));
+        _secrets = secrets ?? throw new ArgumentNullException(nameof(secrets));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _dispatcher = DispatcherQueue.GetForCurrentThread();
 
@@ -551,6 +555,39 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         }
     }
 
+    private async void OnPluginSettingsClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not PluginRow row)
+        {
+            return;
+        }
+
+        if (sender is Button button)
+        {
+            button.IsEnabled = false;
+        }
+
+        try
+        {
+            await PluginSettingsDialogs.ShowAsync(XamlRoot, row, _secrets);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            _logger.LogWarning(exception, "The settings for {PluginId} could not be opened or saved.", row.PluginId);
+            ShowAction(
+                $"The settings for {row.Title} could not be opened or saved: {exception.Message}",
+                isError: true);
+        }
+        finally
+        {
+            if (sender is Button current)
+            {
+                current.IsEnabled = true;
+            }
+        }
+    }
+
     private async Task<bool> ShowTrustDecisionAsync(CatalogInstallPlan plan)
     {
         if (_dispatcher is null || _dispatcher.HasThreadAccess)
@@ -783,6 +820,7 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
             TrustId = $"TrustPlugin_{status.Id}";
             FolderId = $"PluginFolder_{status.Id}";
             LogsId = $"PluginLogs_{status.Id}";
+            SettingsId = $"PluginSettings_{status.Id}";
             UpdateId = $"UpdatePlugin_{status.Id}";
             RollbackId = $"RollbackPlugin_{status.Id}";
             UninstallId = $"UninstallPlugin_{status.Id}";
@@ -874,6 +912,9 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
 
         /// <summary>Gets the view-logs button automation id.</summary>
         public string LogsId { get; }
+
+        /// <summary>Gets the settings button automation id.</summary>
+        public string SettingsId { get; }
 
         /// <summary>Gets the update button automation id.</summary>
         public string UpdateId { get; }

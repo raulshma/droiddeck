@@ -285,7 +285,10 @@ public partial class App : Application, IDisposable
         services.AddSingleton(provider =>
         {
             var registry = provider.GetRequiredService<PluginRegistry>();
-            var loader = new PluginLoader(registry, loggerFactory);
+            var loader = new PluginLoader(
+                registry,
+                loggerFactory,
+                secretStore: provider.GetRequiredService<ISecretStore>());
             return new PluginHost(
                 registry,
                 loader,
