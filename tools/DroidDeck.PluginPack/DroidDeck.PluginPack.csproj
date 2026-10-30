@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>DroidDeck.PluginPack</RootNamespace>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>droiddeck-plugin-pack</ToolCommandName>
+    <PackageId>DroidDeck.PluginPack</PackageId>
+    <Description>Packages a built DroidDeck plugin folder as a .ddplugin archive with a SHA-256 hash.</Description>
+    <Authors>DroidDeck contributors</Authors>
+    <Company>DroidDeck contributors</Company>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>$(DroidDeckRepositoryUrl)</PackageProjectUrl>
+    <RepositoryUrl>$(DroidDeckRepositoryUrl)</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>droiddeck;plugins;packaging;dotnet-tool</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\DroidDeck.Plugin.Abstractions\DroidDeck.Plugin.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+</Project>

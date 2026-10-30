@@ -10,6 +10,7 @@ sync: settings, logs, diagnostics, and plugin data stay on the computer.
 - [User guide](user-guide.md) — install, connect a device, add a project, run, mirror, and troubleshoot.
 - [Settings reference](settings.md) — every setting, its scope, and its default.
 - [Catalog schema](catalog.md) — how to publish a plugin catalog.
+- [Plugin authoring](plugin-sdk/authoring.md), [API reference](plugin-sdk/api-reference.md), [packaging](plugin-sdk/packaging.md) — the plugin SDK guides.
 - [Troubleshooting](troubleshooting.md) — safe mode, logs, diagnostics, and common failure modes.
 - [Privacy](privacy.md) — exactly what stays local and when the app uses the network.
 - [Security](security.md) — threat model, plugin trust, and how to report a vulnerability.

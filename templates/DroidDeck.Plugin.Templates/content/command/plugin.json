@@ -1,0 +1,11 @@
+{
+  "id": "com.example.myplugin",
+  "name": "DroidDeckPlugin",
+  "version": "1.0.0",
+  "description": "A DroidDeck plugin that contributes a command.",
+  "apiVersion": "1.0",
+  "minHostVersion": "1.0.0",
+  "entryAssembly": "DroidDeckPlugin.dll",
+  "entryType": "DroidDeckPlugin.DroidDeckPlugin",
+  "capabilities": ["command"]
+}

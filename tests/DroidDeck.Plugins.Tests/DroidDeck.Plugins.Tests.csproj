@@ -18,7 +18,10 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\DroidDeck.Plugins\DroidDeck.Plugins.csproj" />
     <ProjectReference Include="..\..\src\DroidDeck.Plugin.Abstractions\DroidDeck.Plugin.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\DroidDeck.Plugin.UI\DroidDeck.Plugin.UI.csproj" />
     <ProjectReference Include="..\DroidDeck.PluginSamples\SampleCommandPlugin\SampleCommandPlugin.csproj" />
+    <ProjectReference Include="..\DroidDeck.PluginSamples\SampleDetectorPlugin\SampleDetectorPlugin.csproj" />
+    <ProjectReference Include="..\DroidDeck.PluginSamples\SampleDeviceActionPlugin\SampleDeviceActionPlugin.csproj" />
     <ProjectReference Include="..\DroidDeck.PluginSamples\SampleRendererPlugin\SampleRendererPlugin.csproj" />
     <ProjectReference Include="..\DroidDeck.PluginSamples\SampleUiPlugin\SampleUiPlugin.csproj" />
     <ProjectReference Include="..\DroidDeck.PluginSamples\SamplePerfPlugin1\SamplePerfPlugin1.csproj" />
@@ -26,6 +29,7 @@
     <ProjectReference Include="..\DroidDeck.PluginSamples\SamplePerfPlugin3\SamplePerfPlugin3.csproj" />
     <ProjectReference Include="..\DroidDeck.PluginSamples\SamplePerfPlugin4\SamplePerfPlugin4.csproj" />
     <ProjectReference Include="..\DroidDeck.PluginSamples\SamplePerfPlugin5\SamplePerfPlugin5.csproj" />
+    <ProjectReference Include="..\..\tools\DroidDeck.PluginPack\DroidDeck.PluginPack.csproj" />
     <ProjectReference Include="..\DroidDeck.TestSupport\DroidDeck.TestSupport.csproj" />
   </ItemGroup>
 </Project>

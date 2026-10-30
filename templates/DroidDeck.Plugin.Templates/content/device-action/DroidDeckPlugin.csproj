@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>DroidDeckPlugin</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <PluginSdkVersion Condition="'$(PluginSdkVersion)' == ''">__DROIDDECK_SDK_VERSION__</PluginSdkVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DroidDeck.Plugin.Abstractions" Version="$(PluginSdkVersion)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="plugin.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>DroidDeckPlugin</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWinUI>true</UseWinUI>
+    <PluginSdkVersion Condition="'$(PluginSdkVersion)' == ''">__DROIDDECK_SDK_VERSION__</PluginSdkVersion>
+    <PluginWindowsAppSdkVersion Condition="'$(PluginWindowsAppSdkVersion)' == ''">__DROIDDECK_WINDOWSAPPSDK_VERSION__</PluginWindowsAppSdkVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DroidDeck.Plugin.Abstractions" Version="$(PluginSdkVersion)" />
+    <PackageReference Include="DroidDeck.Plugin.UI" Version="$(PluginSdkVersion)" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="$(PluginWindowsAppSdkVersion)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="plugin.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

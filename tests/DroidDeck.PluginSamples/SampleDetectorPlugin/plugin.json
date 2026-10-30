@@ -1,0 +1,15 @@
+{
+  "id": "com.example.sample.detector",
+  "name": "Sample Detector Plugin",
+  "version": "1.0.0",
+  "author": "DroidDeck",
+  "description": "A sample plugin that detects Ionic projects and explains the files that justified the detection.",
+  "apiVersion": "1.0",
+  "minHostVersion": "0.1.0",
+  "entryAssembly": "SampleDetectorPlugin.dll",
+  "entryType": "SampleDetectorPlugin.SampleDetectorPlugin",
+  "capabilities": [
+    "project-detector"
+  ],
+  "license": "MIT"
+}

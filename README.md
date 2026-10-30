@@ -35,12 +35,20 @@ The solution treats warnings as errors and runs analyzers on every build.
 ## Test
 
 ```powershell
-dotnet test DroidDeck.slnx --filter "Category!=UI"
+dotnet test DroidDeck.slnx --filter "Category!=UI&Category!=Template"
 ```
 
 This covers Core, ADB, Screen, Projects, Plugins, architecture rules, and the fake
-ADB command-line and socket fixtures. UI automation tests launch the WinUI shell
-and need an interactive desktop; enable them explicitly:
+ADB command-line and socket fixtures. Template tests install the SDK packages and
+templates into a temporary feed, generate a plugin with each template, and build
+and load it; they are slower and run separately:
+
+```powershell
+dotnet test tests/DroidDeck.Plugins.Tests/DroidDeck.Plugins.Tests.csproj --filter "Category=Template"
+```
+
+UI automation tests launch the WinUI shell and need an interactive desktop;
+enable them explicitly:
 
 ```powershell
 $env:DROIDDECK_UI_TESTS = "1"
@@ -87,6 +95,8 @@ Add a `portable.marker` file next to the executable to store settings and logs i
 - `src/DroidDeck.Projects`, `src/DroidDeck.Screen` — project scanning and runs, scrcpy mirroring and recording
 - `src/DroidDeck.Plugins`, `src/DroidDeck.Plugin.Abstractions` — plugin host and contracts
 - `src/DroidDeck.Plugin.UI` — host-approved component kit and renderers for plugin UI
+- `templates/DroidDeck.Plugin.Templates` — `dotnet new` templates for plugin projects
+- `tools/DroidDeck.PluginPack` — `droiddeck-plugin-pack`, which writes `.ddplugin` archives
 - `src/DroidDeck.Core` — configuration, process runner, toolchain, diagnostics
 - `tests/` — unit, architecture, fake ADB, and UI automation coverage
 
@@ -95,9 +105,10 @@ never reference the shell or UI projects, and plugin contracts stay on plain .NE
 
 ## CI
 
-GitHub Actions builds Debug and Release on Windows, runs the non-UI test suite in
-both configurations, and uploads the portable `win-x64` artifact. A separate workflow
-publishes the documentation to GitHub Pages.
+GitHub Actions builds Debug and Release on Windows, runs the non-UI unit suite
+in both configurations, builds and loads a plugin from every template, packs the
+plugin SDK packages and packaging tool, and uploads the portable `win-x64`
+artifact. A separate workflow publishes the documentation to GitHub Pages.
 
 ## License
 

@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>true</IsPackable>
+    <PackageId>DroidDeck.Plugin.Templates</PackageId>
+    <PackageType>Template</PackageType>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <Description>dotnet new templates for DroidDeck plugins: command, page, device action, and renderer.</Description>
+    <Authors>DroidDeck contributors</Authors>
+    <Company>DroidDeck contributors</Company>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>$(DroidDeckRepositoryUrl)</PackageProjectUrl>
+    <RepositoryUrl>$(DroidDeckRepositoryUrl)</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>dotnet-new;templates;droiddeck;plugins</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="content\**\*"
+             Exclude="content\**\bin\**;content\**\obj\**"
+             PackagePath="content\%(RecursiveDir)%(Filename)%(Extension)" />
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+</Project>

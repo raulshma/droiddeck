@@ -35,7 +35,7 @@ Sources are stored in `<data>\catalog\sources.json`, fetched catalogs are cached
           "apiVersion": "1.0",
           "minHostVersion": "1.0.0",
           "maxHostVersion": "1.9.9",
-          "downloadUrl": "https://example.com/device-notes-1.2.0.zip",
+          "downloadUrl": "https://example.com/device-notes-1.2.0.ddplugin",
           "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
           "signature": null,
           "size": 48213,
@@ -166,13 +166,16 @@ on. The version picker always prefers the highest compatible version.
 7. **Audit** appends the action, versions, source, result, and hash to
    `logs\plugin-audit.jsonl`.
 
-Packages are plain zip archives containing a `plugin.json` manifest and the plugin
-files. Archive entries that escape the target folder are rejected.
+Packages are `.ddplugin` archives: zip files containing a `plugin.json` manifest
+and the plugin files at the root. Archive entries that escape the target folder
+are rejected. The [packaging guide](plugin-sdk/packaging.md) covers build output,
+packing, hashes, and limits.
 
 ## Publishing checklist
 
-1. Build and package the plugin as described in the [plugin SDK guide](plugin-sdk/index.md).
-2. Compute the SHA-256 of the finished package and set it in the catalog.
+1. Build and package the plugin with `droiddeck-plugin-pack` as described in the
+   [packaging guide](plugin-sdk/packaging.md).
+2. Use the SHA-256 the packaging tool prints and set it in the catalog.
 3. Use an HTTPS URL for `downloadUrl`; local testing can use a local source.
 4. Declare `apiVersion` and, when the plugin depends on a specific host, the host
    range.

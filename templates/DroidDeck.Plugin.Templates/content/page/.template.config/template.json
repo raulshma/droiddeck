@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "DroidDeck contributors",
+  "classifications": ["DroidDeck", "Plugin"],
+  "identity": "DroidDeck.Plugin.Page",
+  "name": "DroidDeck plugin: page",
+  "description": "A DroidDeck plugin that contributes a navigation page built with the host UI kit.",
+  "shortName": "droiddeck-plugin-page",
+  "tags": {
+    "language": "C#",
+    "type": "project"
+  },
+  "sourceName": "DroidDeckPlugin",
+  "defaultName": "PagePlugin",
+  "preferNameDirectory": true,
+  "primaryOutputs": [
+    {
+      "path": "DroidDeckPlugin.csproj"
+    }
+  ],
+  "symbols": {
+    "pluginId": {
+      "type": "parameter",
+      "datatype": "text",
+      "displayName": "Plugin id",
+      "description": "The unique plugin id: lowercase letters, digits, dots, and dashes.",
+      "defaultValue": "com.example.myplugin",
+      "replaces": "com.example.myplugin"
+    },
+    "sdkVersion": {
+      "type": "parameter",
+      "datatype": "text",
+      "displayName": "DroidDeck plugin SDK version",
+      "description": "The DroidDeck.Plugin.Abstractions and DroidDeck.Plugin.UI package version.",
+      "defaultValue": "1.0.0",
+      "replaces": "__DROIDDECK_SDK_VERSION__"
+    },
+    "windowsAppSdkVersion": {
+      "type": "parameter",
+      "datatype": "text",
+      "displayName": "Windows App SDK version",
+      "description": "The Microsoft.WindowsAppSDK package version.",
+      "defaultValue": "2.5.1",
+      "replaces": "__DROIDDECK_WINDOWSAPPSDK_VERSION__"
+    }
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "DroidDeck contributors",
+  "classifications": ["DroidDeck", "Plugin"],
+  "identity": "DroidDeck.Plugin.Command",
+  "name": "DroidDeck plugin: command",
+  "description": "A DroidDeck plugin that contributes a command palette command.",
+  "shortName": "droiddeck-plugin-command",
+  "tags": {
+    "language": "C#",
+    "type": "project"
+  },
+  "sourceName": "DroidDeckPlugin",
+  "defaultName": "CommandPlugin",
+  "preferNameDirectory": true,
+  "primaryOutputs": [
+    {
+      "path": "DroidDeckPlugin.csproj"
+    }
+  ],
+  "symbols": {
+    "pluginId": {
+      "type": "parameter",
+      "datatype": "text",
+      "displayName": "Plugin id",
+      "description": "The unique plugin id: lowercase letters, digits, dots, and dashes.",
+      "defaultValue": "com.example.myplugin",
+      "replaces": "com.example.myplugin"
+    },
+    "sdkVersion": {
+      "type": "parameter",
+      "datatype": "text",
+      "displayName": "DroidDeck plugin SDK version",
+      "description": "The DroidDeck.Plugin.Abstractions package version.",
+      "defaultValue": "1.0.0",
+      "replaces": "__DROIDDECK_SDK_VERSION__"
+    }
+  }
+}

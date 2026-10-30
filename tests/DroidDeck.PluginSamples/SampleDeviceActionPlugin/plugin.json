@@ -1,0 +1,15 @@
+{
+  "id": "com.example.sample.device-actions",
+  "name": "Sample Device Action Plugin",
+  "version": "1.0.0",
+  "author": "DroidDeck",
+  "description": "A sample plugin that contributes a device action gated by the host confirmation prompt.",
+  "apiVersion": "1.0",
+  "minHostVersion": "0.1.0",
+  "entryAssembly": "SampleDeviceActionPlugin.dll",
+  "entryType": "SampleDeviceActionPlugin.SampleDeviceActionPlugin",
+  "capabilities": [
+    "device-action"
+  ],
+  "license": "MIT"
+}
