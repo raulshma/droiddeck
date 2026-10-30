@@ -94,6 +94,12 @@ public interface IConfigurationService
     Task UseProfileAsync(string? profileId, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Re-reads the active profile layer from disk so edits made outside the
+    /// configuration service take effect without restarting.
+    /// </summary>
+    Task ReloadProfileAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Replaces the run-configuration layer with the given run configuration, or clears
     /// the layer with <see langword="null"/>. Publishes a new snapshot without per-path events.
     /// </summary>

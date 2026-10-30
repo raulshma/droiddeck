@@ -357,6 +357,9 @@ public partial class App : Application, IDisposable
         services.AddSingleton(provider => new KeybindingMap(
             provider.GetRequiredService<ICommandRegistry>(),
             Path.Combine(_paths.DataDirectory, "keybindings.json")));
+        services.AddSingleton<DroidDeck.Core.Profiles.ProfileService>();
+        services.AddSingleton<DroidDeck.Core.Features.FeatureVisibilityService>();
+        services.AddSingleton<DroidDeck.Core.Themes.ThemeManager>();
 
         services.AddSingleton<SessionWorkspace>();
         services.AddSingleton<IProjectStore>(provider => new JsonProjectStore(

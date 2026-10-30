@@ -8,8 +8,11 @@ using DroidDeck.Core;
 using DroidDeck.Core.Commands;
 using DroidDeck.Core.Configuration;
 using DroidDeck.Core.Diagnostics;
+using DroidDeck.Core.Features;
 using DroidDeck.Core.Infrastructure;
+using DroidDeck.Core.Profiles;
 using DroidDeck.Core.Sessions;
+using DroidDeck.Core.Themes;
 using DroidDeck.Core.Toolchain;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -33,6 +36,9 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
     private readonly AppPaths _paths;
     private readonly ICommandRegistry _commands;
     private readonly KeybindingMap _keybindings;
+    private readonly ThemeManager _themes;
+    private readonly ProfileService _profiles;
+    private readonly FeatureVisibilityService _features;
     private readonly ILogger<SettingsPage> _logger;
     private readonly DispatcherQueue _dispatcher;
     private readonly ConfigurationHealthService _health;
@@ -52,6 +58,9 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         AppPaths paths,
         ICommandRegistry commands,
         KeybindingMap keybindings,
+        ThemeManager themes,
+        ProfileService profiles,
+        FeatureVisibilityService features,
         ILogger<SettingsPage> logger)
     {
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
@@ -62,6 +71,9 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
         _commands = commands ?? throw new ArgumentNullException(nameof(commands));
         _keybindings = keybindings ?? throw new ArgumentNullException(nameof(keybindings));
+        _themes = themes ?? throw new ArgumentNullException(nameof(themes));
+        _profiles = profiles ?? throw new ArgumentNullException(nameof(profiles));
+        _features = features ?? throw new ArgumentNullException(nameof(features));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         _health = new ConfigurationHealthService(configuration, toolchain);
@@ -102,6 +114,9 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         {
             var settings = _configuration.Current.Settings;
             ThemeCombo.SelectedItem = settings.Appearance.Theme;
+            AccentBox.Text = _themes.AccentOverride ?? string.Empty;
+            FontBox.Text = _themes.FontOverride ?? string.Empty;
+            ReducedMotionToggle.IsOn = _themes.IsReducedMotion;
             foreach (var row in _toolPaths)
             {
                 row.Path = GetConfiguredPath(settings.Tools, row.Kind) ?? string.Empty;
@@ -142,8 +157,11 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         LoadNoticeBar.Message = notice?.Message ?? string.Empty;
         UpdateToolchainStatus();
         RefreshShortcutList();
+        RefreshFeatureList();
         UpdateSearchResults();
         _ = RefreshHealthAsync();
+        _ = RefreshThemeFilesAsync();
+        _ = RefreshProfilesAsync();
     }
 
     private void OnCommandsChanged(object? sender, EventArgs e) =>
@@ -159,9 +177,27 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
                 command.Id,
                 command.Title,
                 command.Category,
-                _keybindings.GetEffectiveShortcut(command)?.ToString() ?? "Not set",
-                _keybindings.GetOverride(command.Id) is not null))
+                _keybindings.GetEffectiveChord(command)?.ToString() ?? "Not set",
+                _keybindings.GetOverrideChord(command.Id) is not null))
             .ToArray();
+
+        var conflicts = _keybindings.FindChordConflicts();
+        if (conflicts.Count > 0)
+        {
+            ShortcutConflictBar.Title = "Shortcut conflicts";
+            ShortcutConflictBar.Message = string.Join(
+                " ",
+                conflicts.Select(conflict =>
+                    $"{conflict.Chord} is used by " +
+                    string.Join(", ", conflict.Commands.Select(static command => $"'{command.Title}'")) + "."));
+            ShortcutConflictBar.Tag = "conflicts";
+            ShortcutConflictBar.IsOpen = true;
+        }
+        else if (Equals(ShortcutConflictBar.Tag, "conflicts"))
+        {
+            ShortcutConflictBar.IsOpen = false;
+            ShortcutConflictBar.Tag = null;
+        }
     }
 
     private void OnConfigurationChanged(object? sender, ConfigChangedEventArgs e)
@@ -794,23 +830,25 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
             return;
         }
 
-        var dialog = new ShortcutCaptureDialog(command, _keybindings.GetEffectiveShortcut(command));
+        var dialog = new ShortcutCaptureDialog(command, _keybindings.GetEffectiveChord(command));
         if (await ShowDialogAsync(dialog) != ContentDialogResult.Primary ||
-            dialog.CapturedShortcut is not { } gesture)
+            dialog.CapturedChord is not { } chord)
         {
             return;
         }
 
-        var outcome = _keybindings.SetOverride(command.Id, gesture);
+        var outcome = _keybindings.SetOverride(command.Id, chord);
         if (!outcome.Applied)
         {
-            ShortcutConflictBar.Message = $"{gesture} is already used by " +
+            ShortcutConflictBar.Title = "Shortcut conflict";
+            ShortcutConflictBar.Message = $"{chord} is already used by " +
                 $"'{outcome.ConflictingWith?.Title ?? "another command"}'. Reset that shortcut first, then try again.";
+            ShortcutConflictBar.Tag = "user";
             ShortcutConflictBar.IsOpen = true;
             return;
         }
 
-        await SaveKeybindingsAsync($"'{command.Title}' now uses {gesture}.");
+        await SaveKeybindingsAsync($"'{command.Title}' now uses {chord}.");
     }
 
     private async void OnResetShortcutClick(object sender, RoutedEventArgs e)
@@ -836,6 +874,7 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         {
             await _keybindings.SaveAsync();
             ShortcutConflictBar.IsOpen = false;
+            ShortcutConflictBar.Tag = null;
             RefreshShortcutList();
             ShowAction(message);
         }
@@ -843,6 +882,85 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
             exception is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
             ReportFailure("Saving the keyboard shortcut", exception);
+        }
+    }
+
+    private async void OnExportKeybindingsClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var picker = new FileSavePicker
+            {
+                SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
+                SuggestedFileName = $"droiddeck-shortcuts-{DateTime.Now:yyyyMMdd-HHmmss}",
+                DefaultFileExtension = ".json",
+            };
+            picker.FileTypeChoices.Add("JSON", new List<string> { ".json" });
+            InitializePicker(picker);
+            var file = await picker.PickSaveFileAsync();
+            if (file is null)
+            {
+                return;
+            }
+
+            await File.WriteAllTextAsync(file.Path, _keybindings.Export());
+            ShowAction("Keyboard shortcuts exported.");
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or COMException or InvalidOperationException)
+        {
+            ReportFailure("Exporting keyboard shortcuts", exception);
+        }
+    }
+
+    private async void OnImportKeybindingsClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var picker = new FileOpenPicker
+            {
+                SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
+                ViewMode = PickerViewMode.List,
+            };
+            picker.FileTypeFilter.Add(".json");
+            InitializePicker(picker);
+            var file = await picker.PickSingleFileAsync();
+            if (file is null)
+            {
+                return;
+            }
+
+            var result = _keybindings.Import(await File.ReadAllTextAsync(file.Path));
+            if (result.Skipped.Count == 0 && result.Conflicts.Count == 0)
+            {
+                await SaveKeybindingsAsync($"Imported {result.Applied.Count} shortcut(s).");
+                return;
+            }
+
+            var details = new List<string>();
+            if (result.Conflicts.Count > 0)
+            {
+                details.Add(
+                    $"{result.Conflicts.Count} shortcut(s) were rejected because another command already uses them: " +
+                    string.Join(", ", result.Conflicts.Select(conflict => conflict.Chord.ToString())) + ".");
+            }
+
+            if (result.Skipped.Count > 0)
+            {
+                details.Add($"{result.Skipped.Count} entry(ies) were skipped because the command is unknown.");
+            }
+
+            await SaveKeybindingsAsync(
+                $"Imported {result.Applied.Count} shortcut(s). " + string.Join(" ", details));
+        }
+        catch (KeybindingImportException exception)
+        {
+            ShowAction($"The shortcuts file could not be imported: {exception.Message}", isError: true);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or COMException or InvalidOperationException)
+        {
+            ReportFailure("Importing keyboard shortcuts", exception);
         }
     }
 
@@ -1226,6 +1344,586 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         {
             ReportFailure("Changing the theme", exception);
         }
+    }
+
+    private async Task RefreshThemeFilesAsync()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        try
+        {
+            var themes = await _themes.Catalog.ListAsync();
+            var choices = new List<ThemeChoice> { new(null, "Theme file (none)") };
+            choices.AddRange(themes.Select(theme => new ThemeChoice(theme.Id, theme.Name)));
+            var selected = _themes.SelectedThemeId;
+            _initializing = true;
+            try
+            {
+                ThemeFileCombo.ItemsSource = choices;
+                ThemeFileCombo.SelectedItem = choices.FirstOrDefault(choice =>
+                    string.Equals(choice.Id, selected, StringComparison.OrdinalIgnoreCase)) ?? choices[0];
+            }
+            finally
+            {
+                _initializing = false;
+            }
+
+            ThemeFileStatusText.Text = selected is null
+                ? "The base theme palette is used; pick a theme file for custom colors, fonts, and log colors."
+                : $"Theme file '{selected}' is applied.";
+            DeleteThemeButton.IsEnabled = selected is not null && ThemeCatalog.FindBuiltIn(selected) is null;
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            ReportFailure("Loading theme files", exception);
+        }
+    }
+
+    private async void OnThemeFileChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initializing || ThemeFileCombo.SelectedItem is not ThemeChoice choice)
+        {
+            return;
+        }
+
+        try
+        {
+            if (choice.Id is null)
+            {
+                await _configuration.ResetAsync(SettingsPaths.ThemeId);
+                ThemeFileStatusText.Text = "The base theme palette is used.";
+                DeleteThemeButton.IsEnabled = false;
+            }
+            else
+            {
+                var applied = await _themes.ApplyAsync(choice.Id);
+                ThemeFileStatusText.Text = $"Theme file '{applied.Name}' is applied.";
+                DeleteThemeButton.IsEnabled = ThemeCatalog.FindBuiltIn(choice.Id) is null;
+            }
+
+            App.Instance.Window?.ApplyShellTheme();
+        }
+        catch (ThemeValidationException exception)
+        {
+            ThemeFileStatusText.Text = ExplainContrast(exception.Result);
+            ShowAction("The theme file has unreadable colors.", isError: true);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException)
+        {
+            ReportFailure("Applying the theme file", exception);
+        }
+    }
+
+    private async void OnImportThemeClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var picker = new FileOpenPicker
+            {
+                SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
+                ViewMode = PickerViewMode.List,
+            };
+            picker.FileTypeFilter.Add(".json");
+            InitializePicker(picker);
+            var file = await picker.PickSingleFileAsync();
+            if (file is null)
+            {
+                return;
+            }
+
+            var applied = await _themes.ImportAsync(await File.ReadAllTextAsync(file.Path));
+            App.Instance.Window?.ApplyShellTheme();
+            await RefreshThemeFilesAsync();
+            ShowAction($"Imported and applied theme '{applied.Name}'.");
+        }
+        catch (ThemeValidationException exception)
+        {
+            ShowAction(ExplainContrast(exception.Result), isError: true);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or COMException or
+                ArgumentException or InvalidOperationException)
+        {
+            ReportFailure("Importing the theme", exception);
+        }
+    }
+
+    private async void OnExportThemeClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var theme = _themes.GetCurrent();
+            var picker = new FileSavePicker
+            {
+                SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
+                SuggestedFileName = $"droiddeck-theme-{theme.Id}-{DateTime.Now:yyyyMMdd-HHmmss}",
+                DefaultFileExtension = ".json",
+            };
+            picker.FileTypeChoices.Add("JSON", new List<string> { ".json" });
+            InitializePicker(picker);
+            var file = await picker.PickSaveFileAsync();
+            if (file is null)
+            {
+                return;
+            }
+
+            await File.WriteAllTextAsync(file.Path, ThemeManager.Export(theme));
+            ShowAction($"Exported theme '{theme.Name}'.");
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or COMException or InvalidOperationException)
+        {
+            ReportFailure("Exporting the theme", exception);
+        }
+    }
+
+    private async void OnDeleteThemeClick(object sender, RoutedEventArgs e)
+    {
+        if (ThemeFileCombo.SelectedItem is not ThemeChoice { Id: not null } choice)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!_themes.Catalog.Delete(choice.Id))
+            {
+                ShowAction("Built-in themes cannot be deleted.", isError: true);
+                return;
+            }
+
+            await _configuration.ResetAsync(SettingsPaths.ThemeId);
+            App.Instance.Window?.ApplyShellTheme();
+            await RefreshThemeFilesAsync();
+            ShowAction("The custom theme was deleted; the base palette is used again.");
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            ReportFailure("Deleting the theme", exception);
+        }
+    }
+
+    private async void OnApplyAccentClick(object sender, RoutedEventArgs e)
+    {
+        var color = AccentBox.Text.Trim();
+        if (!ThemeContrast.TryParseColor(color, out _, out _, out _))
+        {
+            AccentStatusText.Text = "Use a #RRGGBB color, for example #0078D4.";
+            return;
+        }
+
+        try
+        {
+            await _themes.SetAccentAsync(color);
+            App.Instance.Window?.ApplyShellTheme();
+            AccentStatusText.Text = $"Accent {color.ToUpperInvariant()} applies on top of the theme file.";
+            ShowAction("Accent color saved.");
+        }
+        catch (ThemeValidationException exception)
+        {
+            AccentStatusText.Text = ExplainContrast(exception.Result);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            ReportFailure("Saving the accent color", exception);
+        }
+    }
+
+    private async void OnClearAccentClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await _themes.SetAccentAsync(null);
+            App.Instance.Window?.ApplyShellTheme();
+            AccentBox.Text = string.Empty;
+            AccentStatusText.Text = "The theme file accent is used.";
+            ShowAction("Accent color reset to the theme value.");
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            ReportFailure("Resetting the accent color", exception);
+        }
+    }
+
+    private async void OnApplyFontClick(object sender, RoutedEventArgs e)
+    {
+        var family = FontBox.Text.Trim();
+        try
+        {
+            await _themes.SetFontAsync(family.Length == 0 ? null : family);
+            App.Instance.Window?.ApplyShellTheme();
+            ShowAction(family.Length == 0
+                ? "The theme font is used."
+                : $"UI font set to {family}.");
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            ReportFailure("Saving the UI font", exception);
+        }
+    }
+
+    private async void OnClearFontClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await _themes.SetFontAsync(null);
+            App.Instance.Window?.ApplyShellTheme();
+            FontBox.Text = string.Empty;
+            ShowAction("The theme font is used.");
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            ReportFailure("Resetting the UI font", exception);
+        }
+    }
+
+    private async void OnReducedMotionToggled(object sender, RoutedEventArgs e)
+    {
+        if (_initializing)
+        {
+            return;
+        }
+
+        try
+        {
+            await _themes.SetReducedMotionAsync(ReducedMotionToggle.IsOn);
+            ShowAction(ReducedMotionToggle.IsOn
+                ? "Motion is reduced where the interface animates."
+                : "Full motion is used.");
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            ReportFailure("Saving the motion preference", exception);
+        }
+    }
+
+    private static string ExplainContrast(ThemeValidationResult result) =>
+        "The theme cannot be applied: " + string.Join(
+            " ",
+            result.Findings
+                .Where(static finding => finding.IsError)
+                .Select(static finding => finding.Explanation));
+
+    private async Task RefreshProfilesAsync()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        try
+        {
+            var profiles = await _profiles.ListAsync();
+            var active = _profiles.GetActiveProfileId();
+            ProfileList.ItemsSource = profiles
+                .Select(profile => new ProfileRow(profile, string.Equals(profile.Id, active, StringComparison.OrdinalIgnoreCase)))
+                .ToArray();
+            DeactivateProfileButton.IsEnabled = active is not null;
+            ProfileStatusText.Text = active is null
+                ? "Global settings are in effect."
+                : $"Profile '{profiles.FirstOrDefault(profile => string.Equals(profile.Id, active, StringComparison.OrdinalIgnoreCase))?.Name ?? active}' is in effect.";
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            ReportFailure("Loading profiles", exception);
+        }
+    }
+
+    private async Task<string?> PromptForTextAsync(string title, string label, string initial)
+    {
+        var box = new TextBox { Text = initial, MinWidth = 320 };
+        var dialog = new ContentDialog
+        {
+            Title = title,
+            Content = new StackPanel
+            {
+                Spacing = 8,
+                Children =
+                {
+                    new TextBlock { Text = label, TextWrapping = TextWrapping.Wrap },
+                    box,
+                },
+            },
+            PrimaryButtonText = "Save",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+        };
+        return await ShowDialogAsync(dialog) == ContentDialogResult.Primary ? box.Text.Trim() : null;
+    }
+
+    private async void OnCreateProfileClick(object sender, RoutedEventArgs e)
+    {
+        var name = await PromptForTextAsync(
+            "New profile",
+            "Profiles store settings that layer over the global values. Name the workflow this profile is for.",
+            string.Empty);
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return;
+        }
+
+        try
+        {
+            await _profiles.CreateAsync(name);
+            await RefreshProfilesAsync();
+            ShowAction($"Profile '{name}' was created. Edit its settings while it is applied.");
+        }
+        catch (Exception exception) when (
+            exception is ProfileException or IOException or UnauthorizedAccessException)
+        {
+            ShowAction($"The profile could not be created: {exception.Message}", isError: true);
+        }
+    }
+
+    private async void OnImportProfileClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var picker = new FileOpenPicker
+            {
+                SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
+                ViewMode = PickerViewMode.List,
+            };
+            picker.FileTypeFilter.Add(".json");
+            InitializePicker(picker);
+            var file = await picker.PickSingleFileAsync();
+            if (file is null)
+            {
+                return;
+            }
+
+            var result = await _profiles.ImportAsync(await File.ReadAllTextAsync(file.Path));
+            await RefreshProfilesAsync();
+            ProfileStatusText.Text = result.ExcludedPaths.Count == 0
+                ? $"Imported profile '{result.Metadata.Name}'."
+                : $"Imported profile '{result.Metadata.Name}'. {result.ExcludedPaths.Count} secret value(s) were not imported: " +
+                    string.Join(", ", result.ExcludedPaths) + ".";
+            ShowAction("Profile imported.");
+        }
+        catch (ProfileException exception)
+        {
+            ShowAction($"The profile could not be imported: {exception.Message}", isError: true);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or COMException or InvalidOperationException)
+        {
+            ReportFailure("Importing the profile", exception);
+        }
+    }
+
+    private async void OnDeactivateProfileClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await _profiles.ApplyAsync(null);
+            await RefreshProfilesAsync();
+            ShowAction("Global settings are in effect again.");
+        }
+        catch (Exception exception) when (
+            exception is ProfileException or IOException or UnauthorizedAccessException)
+        {
+            ReportFailure("Deactivating the profile", exception);
+        }
+    }
+
+    private async void OnApplyProfileClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not ProfileRow row)
+        {
+            return;
+        }
+
+        try
+        {
+            await _profiles.ApplyAsync(row.Id);
+            await RefreshProfilesAsync();
+            ShowAction($"Profile '{row.Name}' is in effect.");
+        }
+        catch (Exception exception) when (
+            exception is ProfileException or IOException or UnauthorizedAccessException)
+        {
+            ReportFailure("Applying the profile", exception);
+        }
+    }
+
+    private async void OnExportProfileClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not ProfileRow row)
+        {
+            return;
+        }
+
+        try
+        {
+            var picker = new FileSavePicker
+            {
+                SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
+                SuggestedFileName = $"droiddeck-profile-{row.Id}-{DateTime.Now:yyyyMMdd-HHmmss}",
+                DefaultFileExtension = ".json",
+            };
+            picker.FileTypeChoices.Add("JSON", new List<string> { ".json" });
+            InitializePicker(picker);
+            var file = await picker.PickSaveFileAsync();
+            if (file is null)
+            {
+                return;
+            }
+
+            await File.WriteAllTextAsync(file.Path, await _profiles.ExportAsync(row.Id));
+            ShowAction($"Exported profile '{row.Name}' without secrets.");
+        }
+        catch (Exception exception) when (
+            exception is ProfileException or IOException or UnauthorizedAccessException or COMException or InvalidOperationException)
+        {
+            ReportFailure("Exporting the profile", exception);
+        }
+    }
+
+    private async void OnRenameProfileClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not ProfileRow row)
+        {
+            return;
+        }
+
+        var name = await PromptForTextAsync("Rename profile", "The new name for this profile.", row.Name);
+        if (string.IsNullOrWhiteSpace(name) || name == row.Name)
+        {
+            return;
+        }
+
+        try
+        {
+            await _profiles.UpdateMetadataAsync(row.Id, name);
+            await RefreshProfilesAsync();
+            ShowAction($"Profile renamed to '{name}'.");
+        }
+        catch (Exception exception) when (
+            exception is ProfileException or IOException or UnauthorizedAccessException)
+        {
+            ShowAction($"The profile could not be renamed: {exception.Message}", isError: true);
+        }
+    }
+
+    private async void OnDuplicateProfileClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not ProfileRow row)
+        {
+            return;
+        }
+
+        try
+        {
+            var copy = await _profiles.DuplicateAsync(row.Id);
+            await RefreshProfilesAsync();
+            ShowAction($"Created profile '{copy.Name}'.");
+        }
+        catch (Exception exception) when (
+            exception is ProfileException or IOException or UnauthorizedAccessException)
+        {
+            ShowAction($"The profile could not be duplicated: {exception.Message}", isError: true);
+        }
+    }
+
+    private async void OnDeleteProfileClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not ProfileRow row)
+        {
+            return;
+        }
+
+        if (await ConfirmApplyAsync(
+                "Delete profile",
+                $"Delete '{row.Name}'? The settings stored in the profile are removed; global settings are unaffected.") !=
+            ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        try
+        {
+            await _profiles.DeleteAsync(row.Id);
+            await RefreshProfilesAsync();
+            ShowAction($"Profile '{row.Name}' was deleted.");
+        }
+        catch (Exception exception) when (
+            exception is ProfileException or IOException or UnauthorizedAccessException)
+        {
+            ShowAction($"The profile could not be deleted: {exception.Message}", isError: true);
+        }
+    }
+
+    private void RefreshFeatureList()
+    {
+        FeatureList.ItemsSource = _features.Features
+            .Select(feature => new FeatureRow(
+                feature,
+                _features.GetBadge(feature.Id),
+                !_features.IsVisible(feature.Id)))
+            .ToArray();
+    }
+
+    private async void OnFeatureToggleClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not FeatureRow row)
+        {
+            return;
+        }
+
+        try
+        {
+            if (row.IsHidden)
+            {
+                await _features.ShowAsync(row.Id);
+                ShowAction($"'{row.Name}' is visible again; its configuration was kept.");
+            }
+            else
+            {
+                await _features.HideAsync(row.Id);
+                ShowAction($"'{row.Name}' is hidden from navigation. Show it here at any time.");
+            }
+
+            RefreshFeatureList();
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException or IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            ReportFailure("Changing feature visibility", exception);
+        }
+    }
+
+    private async void OnShowAllFeaturesClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await _features.ShowAllAsync();
+            RefreshFeatureList();
+            ShowAction("Every hidden feature is visible again.");
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            ReportFailure("Restoring feature visibility", exception);
+        }
+    }
+
+    /// <summary>One theme file choice in the theme picker.</summary>
+    public sealed record ThemeChoice(string? Id, string Label)
+    {
+        /// <inheritdoc />
+        public override string ToString() => Label;
     }
 
     private async void OnSaveToolPathClick(object sender, RoutedEventArgs e)

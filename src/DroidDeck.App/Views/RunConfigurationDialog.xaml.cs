@@ -1,5 +1,7 @@
 using System.Collections.ObjectModel;
 using DroidDeck.Core.Devices;
+using DroidDeck.Core.Features;
+using DroidDeck.Core.Profiles;
 using DroidDeck.Core.Projects;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -50,51 +52,9 @@ public sealed partial class RunConfigurationDialog : ContentDialog
                 .Select(device => new DeviceChoice(device.Serial, $"{device.DisplayName} · {device.Serial}"))
                 .ToArray();
 
-            NameBox.Text = configuration.Name;
-            KindCombo.SelectedItem = configuration.Kind;
-            ModuleCombo.Text = configuration.ModuleName ?? string.Empty;
-            VariantCombo.Text = configuration.VariantName ?? string.Empty;
-            DeviceCombo.Text = configuration.DeviceSerial ?? string.Empty;
-
-            BuildTaskBox.Text = configuration.Build.Task ?? string.Empty;
-            BuildArgumentsBox.Text = string.Join(Environment.NewLine, configuration.Build.Arguments);
-            BuildEnvironmentBox.Text = FormatEnvironment(configuration.Build.Environment);
-            JavaHomeBox.Text = configuration.Build.JavaHome ?? string.Empty;
-            TargetFrameworkBox.Text = configuration.Build.TargetFramework ?? string.Empty;
-            BuildTimeoutBox.Value = configuration.Build.TimeoutSeconds;
-            BuildWorkingDirectoryBox.Text = configuration.Build.WorkingDirectory ?? string.Empty;
-            CleanCheck.IsChecked = configuration.Build.Clean;
-            SkipBuildCheck.IsChecked = configuration.Build.Skip;
-
-            ArtifactGlobBox.Text = configuration.Artifact.Glob;
-            ArtifactPackageBox.Text = configuration.Artifact.PackageName ?? string.Empty;
-            IncludeSplitsCheck.IsChecked = configuration.Artifact.IncludeSplits;
-            InspectAapt2Check.IsChecked = configuration.Artifact.InspectWithAapt2;
-
-            ReplaceCheck.IsChecked = configuration.Install.Replace;
-            TestOnlyCheck.IsChecked = configuration.Install.TestOnly;
-            GrantPermissionsCheck.IsChecked = configuration.Install.GrantPermissions;
-            AllowDowngradeCheck.IsChecked = configuration.Install.AllowDowngrade;
-            InstallUserBox.Text = configuration.Install.User ?? string.Empty;
-            InstallArgumentsBox.Text = string.Join(Environment.NewLine, configuration.Install.ExtraArguments);
-
-            LaunchPackageBox.Text = configuration.Launch.PackageName ?? string.Empty;
-            LaunchActivityBox.Text = configuration.Launch.Activity ?? string.Empty;
-            LaunchActionBox.Text = configuration.Launch.Action ?? string.Empty;
-            LaunchDataBox.Text = configuration.Launch.Data ?? string.Empty;
-            LaunchArgumentsBox.Text = string.Join(Environment.NewLine, configuration.Launch.ExtraArguments);
-            WaitLaunchCheck.IsChecked = configuration.Launch.Wait;
-            StopBeforeLaunchCheck.IsChecked = configuration.Launch.StopBeforeLaunch;
-            WaitForDebuggerCheck.IsChecked = configuration.Launch.WaitForDebugger;
-
-            LogBuffersBox.Text = string.Join(", ", configuration.Logs.Buffers);
-            LogMaxLinesBox.Value = configuration.Logs.MaxLines;
-            AttachLogsCheck.IsChecked = configuration.Logs.Attach;
-            ClearLogsCheck.IsChecked = configuration.Logs.ClearBeforeLaunch;
-            AppOnlyLogsCheck.IsChecked = configuration.Logs.AppOnly;
-
-            ScreenModeCombo.SelectedItem = configuration.Screen.Mode;
-            AutoOpenScreenCheck.IsChecked = configuration.Screen.AutoOpen;
+            PresetCombo.ItemsSource = PresetChoice.ForProject(_project);
+            CapabilityText.Text = DescribeCapability(_project.Kind);
+            LoadFromConfiguration(configuration);
 
             foreach (var step in configuration.Steps)
             {
@@ -111,6 +71,90 @@ public sealed partial class RunConfigurationDialog : ContentDialog
 
     /// <summary>Gets the edited configuration. It is only applied after the dialog is accepted.</summary>
     public RunConfiguration Configuration { get; }
+
+    private void LoadFromConfiguration(RunConfiguration configuration)
+    {
+        NameBox.Text = configuration.Name;
+        KindCombo.SelectedItem = configuration.Kind;
+        ModuleCombo.Text = configuration.ModuleName ?? string.Empty;
+        VariantCombo.Text = configuration.VariantName ?? string.Empty;
+        DeviceCombo.Text = configuration.DeviceSerial ?? string.Empty;
+
+        BuildTaskBox.Text = configuration.Build.Task ?? string.Empty;
+        BuildArgumentsBox.Text = string.Join(Environment.NewLine, configuration.Build.Arguments);
+        BuildEnvironmentBox.Text = FormatEnvironment(configuration.Build.Environment);
+        JavaHomeBox.Text = configuration.Build.JavaHome ?? string.Empty;
+        TargetFrameworkBox.Text = configuration.Build.TargetFramework ?? string.Empty;
+        BuildTimeoutBox.Value = configuration.Build.TimeoutSeconds;
+        BuildWorkingDirectoryBox.Text = configuration.Build.WorkingDirectory ?? string.Empty;
+        CleanCheck.IsChecked = configuration.Build.Clean;
+        SkipBuildCheck.IsChecked = configuration.Build.Skip;
+
+        ArtifactGlobBox.Text = configuration.Artifact.Glob;
+        ArtifactPackageBox.Text = configuration.Artifact.PackageName ?? string.Empty;
+        IncludeSplitsCheck.IsChecked = configuration.Artifact.IncludeSplits;
+        InspectAapt2Check.IsChecked = configuration.Artifact.InspectWithAapt2;
+
+        ReplaceCheck.IsChecked = configuration.Install.Replace;
+        TestOnlyCheck.IsChecked = configuration.Install.TestOnly;
+        GrantPermissionsCheck.IsChecked = configuration.Install.GrantPermissions;
+        AllowDowngradeCheck.IsChecked = configuration.Install.AllowDowngrade;
+        InstallUserBox.Text = configuration.Install.User ?? string.Empty;
+        InstallArgumentsBox.Text = string.Join(Environment.NewLine, configuration.Install.ExtraArguments);
+
+        LaunchPackageBox.Text = configuration.Launch.PackageName ?? string.Empty;
+        LaunchActivityBox.Text = configuration.Launch.Activity ?? string.Empty;
+        LaunchActionBox.Text = configuration.Launch.Action ?? string.Empty;
+        LaunchDataBox.Text = configuration.Launch.Data ?? string.Empty;
+        LaunchArgumentsBox.Text = string.Join(Environment.NewLine, configuration.Launch.ExtraArguments);
+        WaitLaunchCheck.IsChecked = configuration.Launch.Wait;
+        StopBeforeLaunchCheck.IsChecked = configuration.Launch.StopBeforeLaunch;
+        WaitForDebuggerCheck.IsChecked = configuration.Launch.WaitForDebugger;
+
+        LogBuffersBox.Text = string.Join(", ", configuration.Logs.Buffers);
+        LogMaxLinesBox.Value = configuration.Logs.MaxLines;
+        AttachLogsCheck.IsChecked = configuration.Logs.Attach;
+        ClearLogsCheck.IsChecked = configuration.Logs.ClearBeforeLaunch;
+        AppOnlyLogsCheck.IsChecked = configuration.Logs.AppOnly;
+
+        ScreenModeCombo.SelectedItem = configuration.Screen.Mode;
+        AutoOpenScreenCheck.IsChecked = configuration.Screen.AutoOpen;
+    }
+
+    private static string DescribeCapability(ProjectKind kind)
+    {
+        var badge = CapabilityBadges.For(RunConfigurationPresetLibrary.GetCapability(kind));
+        return $"{badge.Title}: {badge.Description}";
+    }
+
+    private void OnPresetChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initializing || PresetCombo.SelectedItem is not PresetChoice { Id: not null } choice)
+        {
+            return;
+        }
+
+        var preset = RunConfigurationPresetLibrary.Create(choice.Id, _project);
+        Configuration.Name = preset.Name;
+        Configuration.Kind = preset.Kind;
+        Configuration.ModuleName = preset.ModuleName;
+        Configuration.VariantName = preset.VariantName;
+        Configuration.DeviceSerial = Configuration.DeviceSerial ?? preset.DeviceSerial;
+        Configuration.Build = preset.Build;
+        Configuration.Artifact = preset.Artifact;
+        Configuration.Install = preset.Install;
+        Configuration.Launch = preset.Launch;
+        Configuration.Logs = preset.Logs;
+        Configuration.Screen = preset.Screen;
+        Configuration.Steps = preset.Steps;
+
+        LoadFromConfiguration(Configuration);
+        _steps.Clear();
+        foreach (var step in Configuration.Steps)
+        {
+            _steps.Add(new StepRow(step));
+        }
+    }
 
     private void OnVariantChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -421,6 +465,32 @@ public sealed partial class RunConfigurationDialog : ContentDialog
 
         /// <summary>Gets the display label.</summary>
         public string Label { get; }
+    }
+
+    /// <summary>One preset choice in the preset picker.</summary>
+    public sealed class PresetChoice
+    {
+        /// <summary>Creates a preset choice for an identifier and label.</summary>
+        public PresetChoice(string? id, string label)
+        {
+            Id = id;
+            Label = label;
+        }
+
+        /// <summary>Gets the preset identifier, or <see langword="null"/> for no preset.</summary>
+        public string? Id { get; }
+
+        /// <summary>Gets the display label.</summary>
+        public string Label { get; }
+
+        /// <summary>Builds the preset choices suggested for a project.</summary>
+        public static IReadOnlyList<PresetChoice> ForProject(ProjectModel project)
+        {
+            var choices = new List<PresetChoice> { new(null, "No preset (configure from scratch)") };
+            choices.AddRange(RunConfigurationPresetLibrary.Suggest(project.Kind)
+                .Select(preset => new PresetChoice(preset.Id, $"{preset.Name} — {preset.Description}")));
+            return choices;
+        }
     }
 
     /// <summary>One validation message.</summary>

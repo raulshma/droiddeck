@@ -1,4 +1,7 @@
+using DroidDeck.Core.Commands;
+using Microsoft.UI.Input;
 using Windows.System;
+using Windows.UI.Core;
 
 namespace DroidDeck.App.Commands;
 
@@ -82,4 +85,34 @@ internal static class ShortcutKeys
         VirtualKey.Shift or VirtualKey.LeftShift or VirtualKey.RightShift or
         VirtualKey.Menu or VirtualKey.LeftMenu or VirtualKey.RightMenu or
         VirtualKey.LeftWindows or VirtualKey.RightWindows;
+
+    /// <summary>Reads the modifier keys currently held on the UI thread.</summary>
+    public static KeyModifiers CurrentModifiers()
+    {
+        KeyModifiers modifiers = KeyModifiers.None;
+        if (IsDown(VirtualKey.Control) || IsDown(VirtualKey.LeftControl) || IsDown(VirtualKey.RightControl))
+        {
+            modifiers |= KeyModifiers.Control;
+        }
+
+        if (IsDown(VirtualKey.Shift) || IsDown(VirtualKey.LeftShift) || IsDown(VirtualKey.RightShift))
+        {
+            modifiers |= KeyModifiers.Shift;
+        }
+
+        if (IsDown(VirtualKey.Menu) || IsDown(VirtualKey.LeftMenu) || IsDown(VirtualKey.RightMenu))
+        {
+            modifiers |= KeyModifiers.Alt;
+        }
+
+        if (IsDown(VirtualKey.LeftWindows) || IsDown(VirtualKey.RightWindows))
+        {
+            modifiers |= KeyModifiers.Windows;
+        }
+
+        return modifiers;
+    }
+
+    private static bool IsDown(VirtualKey key) =>
+        InputKeyboardSource.GetKeyStateForCurrentThread(key).HasFlag(CoreVirtualKeyStates.Down);
 }

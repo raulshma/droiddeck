@@ -323,6 +323,25 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
     }
 
     /// <inheritdoc />
+    public async Task ReloadProfileAsync(CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            await EnsureLoadedLockedAsync(cancellationToken).ConfigureAwait(false);
+            _loadedProfileId = null;
+            await LoadProfileLockedAsync(ResolveActiveProfileId(), cancellationToken).ConfigureAwait(false);
+            _current = BuildSnapshot();
+            NotifyTokensLocked();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <inheritdoc />
     public async Task SetRunConfigurationAsync(
         RunConfiguration? configuration,
         CancellationToken cancellationToken = default)

@@ -2,6 +2,9 @@
   "schemaVersion": 1,
   "appearance": {
     "theme": "system",
+    "themeId": null,
+    "accentColor": null,
+    "fontFamily": null,
     "density": "comfortable",
     "motion": "full"
   },
@@ -29,7 +32,8 @@
   },
   "features": {
     "developerMode": false,
-    "safeMode": false
+    "safeMode": false,
+    "hidden": []
   },
   "window": {
     "width": 1280,

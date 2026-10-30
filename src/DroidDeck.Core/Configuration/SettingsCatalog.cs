@@ -245,6 +245,15 @@ public sealed class SettingsCatalog
             "Follows the operating system or forces one appearance.",
             SettingsValueKind.Enum, SettingsLevel.Basic,
             options: ["system", "light", "dark"], keywords: ["appearance", "color scheme"]);
+        Add(entries, "appearance", "themeId", "Theme file",
+            "Selects a built-in or custom theme with color tokens, fonts, and log colors.",
+            SettingsValueKind.Text, SettingsLevel.Advanced, keywords: ["appearance", "custom theme"]);
+        Add(entries, "appearance", "accentColor", "Accent color",
+            "Overrides the theme accent after contrast validation.",
+            SettingsValueKind.Text, SettingsLevel.Advanced, keywords: ["appearance", "color"]);
+        Add(entries, "appearance", "fontFamily", "UI font",
+            "Overrides the theme font family.",
+            SettingsValueKind.Text, SettingsLevel.Advanced, keywords: ["appearance", "typography"]);
         Add(entries, "appearance", "density", "Density",
             "Spacing between rows and cards across the app.",
             SettingsValueKind.Enum, SettingsLevel.Basic,
@@ -308,6 +317,9 @@ public sealed class SettingsCatalog
             "Starts DroidDeck without third-party plugins.",
             SettingsValueKind.Boolean, SettingsLevel.Advanced,
             restartRequired: true, keywords: ["plugins", "troubleshooting"]);
+        Add(entries, "features", "hidden", "Hidden features",
+            "Navigation, toolbox, home, and stack features hidden in Customize mode.",
+            SettingsValueKind.List, SettingsLevel.Advanced, keywords: ["customize", "navigation"]);
 
         Add(entries, "window", "width", "Window width",
             "Restored window width in effective pixels.", SettingsValueKind.Number, SettingsLevel.Expert);

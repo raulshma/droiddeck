@@ -34,6 +34,11 @@
             FontSize="12"
             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
             TextWrapping="Wrap"
-            Text="Use one key with optional Ctrl, Shift, and Alt modifiers. Esc closes this dialog." />
+            Text="Use one key with optional Ctrl, Shift, and Alt modifiers. Press up to three key combinations in a row for a sequence such as Ctrl+K Ctrl+C. Esc closes this dialog." />
+        <Button
+            x:Name="ClearStepsButton"
+            Content="Clear capture"
+            Click="OnClearStepsClick"
+            AutomationProperties.AutomationId="ShortcutCaptureClear" />
     </StackPanel>
 </ContentDialog>

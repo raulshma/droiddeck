@@ -17,6 +17,17 @@
                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                 TextWrapping="Wrap" />
 
+            <StackPanel Spacing="4">
+                <TextBlock x:Name="CapabilityText" FontSize="12" TextWrapping="Wrap" />
+                <ComboBox
+                    x:Name="PresetCombo"
+                    Header="Start from a preset"
+                    DisplayMemberPath="Label"
+                    HorizontalAlignment="Stretch"
+                    SelectionChanged="OnPresetChanged"
+                    AutomationProperties.AutomationId="RunConfigPresetCombo" />
+            </StackPanel>
+
             <Grid ColumnSpacing="12" RowSpacing="8">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />

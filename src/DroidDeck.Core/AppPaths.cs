@@ -42,6 +42,15 @@ public sealed class AppPaths
     /// <summary>Gets the project document directory.</summary>
     public string ProjectsDirectory => Path.Combine(DataDirectory, "projects");
 
+    /// <summary>Gets the named settings profile directory.</summary>
+    public string ProfilesDirectory => Path.Combine(DataDirectory, "profiles");
+
+    /// <summary>Gets the built-in and user run-configuration preset directory.</summary>
+    public string PresetsDirectory => Path.Combine(DataDirectory, "presets");
+
+    /// <summary>Gets the custom theme file directory.</summary>
+    public string ThemesDirectory => Path.Combine(DataDirectory, "themes");
+
     /// <summary>Gets the saved log filter directory.</summary>
     public string FiltersDirectory => Path.Combine(DataDirectory, "filters");
 
@@ -99,6 +108,9 @@ public sealed class AppPaths
         Directory.CreateDirectory(DevicesDirectory);
         Directory.CreateDirectory(SessionsDirectory);
         Directory.CreateDirectory(ProjectsDirectory);
+        Directory.CreateDirectory(ProfilesDirectory);
+        Directory.CreateDirectory(PresetsDirectory);
+        Directory.CreateDirectory(ThemesDirectory);
         Directory.CreateDirectory(FiltersDirectory);
         Directory.CreateDirectory(WirelessDirectory);
         Directory.CreateDirectory(ScreenshotsDirectory);

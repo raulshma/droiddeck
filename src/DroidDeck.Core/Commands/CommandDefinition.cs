@@ -23,6 +23,9 @@ public sealed record CommandDefinition(
     /// <summary>Gets or sets the factory default shortcut, when the command has one.</summary>
     public KeyGesture? DefaultShortcut { get; init; }
 
+    /// <summary>Gets or sets a factory default chord, when the command needs more than one gesture.</summary>
+    public KeyChord? DefaultChord { get; init; }
+
     /// <summary>Gets or sets the hook that reports whether the command currently applies.</summary>
     public Func<bool>? IsEnabledPredicate { get; init; }
 

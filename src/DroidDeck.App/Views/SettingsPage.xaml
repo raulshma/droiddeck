@@ -253,6 +253,244 @@
                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                             TextWrapping="Wrap" />
                     </StackPanel>
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Theme file" Style="{StaticResource FieldLabelStyle}" />
+                        <ComboBox
+                            x:Name="ThemeFileCombo"
+                            Width="220"
+                            SelectionChanged="OnThemeFileChanged"
+                            AutomationProperties.AutomationId="ThemeFileSelector" />
+                        <TextBlock
+                            x:Name="ThemeFileStatusText"
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextWrapping="Wrap" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button
+                                Content="Import theme…"
+                                Click="OnImportThemeClick"
+                                AutomationProperties.AutomationId="ThemeImportButton" />
+                            <Button
+                                Content="Export theme…"
+                                Click="OnExportThemeClick"
+                                AutomationProperties.AutomationId="ThemeExportButton" />
+                            <Button
+                                x:Name="DeleteThemeButton"
+                                Content="Delete custom theme"
+                                Click="OnDeleteThemeClick"
+                                AutomationProperties.AutomationId="ThemeDeleteButton" />
+                        </StackPanel>
+                        <TextBlock
+                            Text="Theme files define color tokens, log colors, and fonts. Contrast validation rejects unreadable combinations, and changes apply immediately."
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Accent color" Style="{StaticResource FieldLabelStyle}" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBox
+                                x:Name="AccentBox"
+                                Width="140"
+                                PlaceholderText="#RRGGBB"
+                                AutomationProperties.AutomationId="ThemeAccentBox" />
+                            <Button
+                                Content="Apply accent"
+                                Click="OnApplyAccentClick"
+                                AutomationProperties.AutomationId="ThemeAccentApply" />
+                            <Button
+                                Content="Use theme accent"
+                                Click="OnClearAccentClick"
+                                AutomationProperties.AutomationId="ThemeAccentClear" />
+                        </StackPanel>
+                        <TextBlock
+                            x:Name="AccentStatusText"
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="UI font" Style="{StaticResource FieldLabelStyle}" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBox
+                                x:Name="FontBox"
+                                Width="220"
+                                PlaceholderText="Segoe UI Variable"
+                                AutomationProperties.AutomationId="ThemeFontBox" />
+                            <Button
+                                Content="Apply font"
+                                Click="OnApplyFontClick"
+                                AutomationProperties.AutomationId="ThemeFontApply" />
+                            <Button
+                                Content="Use theme font"
+                                Click="OnClearFontClick"
+                                AutomationProperties.AutomationId="ThemeFontClear" />
+                        </StackPanel>
+                    </StackPanel>
+                    <ToggleSwitch
+                        x:Name="ReducedMotionToggle"
+                        Header="Reduced motion"
+                        OnContent="Reduced"
+                        OffContent="Full"
+                        Toggled="OnReducedMotionToggled"
+                        AutomationProperties.AutomationId="ReducedMotionToggle" />
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorderStyle}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="Profiles" Style="{StaticResource SectionHeaderStyle}" />
+                    <TextBlock
+                        Text="A profile layers settings over the global values for one workflow. Applying it changes the effective settings immediately, and exports never include secrets."
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button
+                            Content="New profile"
+                            Click="OnCreateProfileClick"
+                            AutomationProperties.AutomationId="ProfileCreateButton" />
+                        <Button
+                            Content="Import profile…"
+                            Click="OnImportProfileClick"
+                            AutomationProperties.AutomationId="ProfileImportButton" />
+                        <Button
+                            x:Name="DeactivateProfileButton"
+                            Content="Use global settings"
+                            Click="OnDeactivateProfileClick"
+                            IsEnabled="False"
+                            AutomationProperties.AutomationId="ProfileDeactivateButton" />
+                    </StackPanel>
+                    <ItemsControl x:Name="ProfileList" AutomationProperties.AutomationId="ProfileList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="viewModels:ProfileRow">
+                                <Grid Padding="0,6" ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Spacing="2">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <TextBlock
+                                                Text="{x:Bind Name}"
+                                                FontWeight="SemiBold"
+                                                AutomationProperties.AutomationId="{x:Bind NameId}" />
+                                            <TextBlock
+                                                Text="{x:Bind ActiveBadge}"
+                                                FontWeight="SemiBold"
+                                                FontSize="12"
+                                                Foreground="{ThemeResource SystemAccentColor}"
+                                                Visibility="{x:Bind ActiveVisibility}" />
+                                        </StackPanel>
+                                        <TextBlock
+                                            Text="{x:Bind Detail}"
+                                            FontSize="12"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Top">
+                                        <Button
+                                            Content="Apply"
+                                            Click="OnApplyProfileClick"
+                                            Visibility="{x:Bind ApplyVisibility}"
+                                            AutomationProperties.AutomationId="{x:Bind ApplyId}" />
+                                        <Button
+                                            Content="Export"
+                                            Click="OnExportProfileClick"
+                                            AutomationProperties.AutomationId="{x:Bind ExportId}" />
+                                        <Button
+                                            Content="More"
+                                            AutomationProperties.AutomationId="{x:Bind MoreId}">
+                                            <Button.Flyout>
+                                                <MenuFlyout>
+                                                    <MenuFlyoutItem
+                                                        Text="Rename"
+                                                        Click="OnRenameProfileClick"
+                                                        AutomationProperties.AutomationId="{x:Bind RenameId}" />
+                                                    <MenuFlyoutItem
+                                                        Text="Duplicate"
+                                                        Click="OnDuplicateProfileClick"
+                                                        AutomationProperties.AutomationId="{x:Bind DuplicateId}" />
+                                                    <MenuFlyoutItem
+                                                        Text="Delete"
+                                                        Click="OnDeleteProfileClick"
+                                                        AutomationProperties.AutomationId="{x:Bind DeleteId}" />
+                                                </MenuFlyout>
+                                            </Button.Flyout>
+                                        </Button>
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock
+                        x:Name="ProfileStatusText"
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap"
+                        AutomationProperties.AutomationId="ProfileStatus" />
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorderStyle}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="Customize" Style="{StaticResource SectionHeaderStyle}" />
+                    <TextBlock
+                        Text="Hide navigation areas you do not use. Hiding keeps every setting and piece of data, and the feature reappears the moment it is shown again."
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button
+                            Content="Show everything"
+                            Click="OnShowAllFeaturesClick"
+                            AutomationProperties.AutomationId="FeatureShowAllButton" />
+                    </StackPanel>
+                    <ItemsControl x:Name="FeatureList" AutomationProperties.AutomationId="FeatureList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="viewModels:FeatureRow">
+                                <Grid Padding="0,6" ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Spacing="2">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" />
+                                            <Border
+                                                Padding="6,1"
+                                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                                BorderThickness="1"
+                                                CornerRadius="4">
+                                                <TextBlock
+                                                    Text="{x:Bind Badge}"
+                                                    FontSize="12"
+                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                    AutomationProperties.AutomationId="{x:Bind BadgeId}" />
+                                            </Border>
+                                        </StackPanel>
+                                        <TextBlock
+                                            Text="{x:Bind Detail}"
+                                            FontSize="12"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <TextBlock
+                                        Grid.Column="1"
+                                        Text="{x:Bind Category}"
+                                        FontSize="12"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        VerticalAlignment="Center" />
+                                    <Button
+                                        Grid.Column="2"
+                                        Content="{x:Bind ToggleLabel}"
+                                        Click="OnFeatureToggleClick"
+                                        AutomationProperties.AutomationId="{x:Bind ToggleId}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
                 </StackPanel>
             </Border>
 
@@ -596,10 +834,20 @@
                 <StackPanel Spacing="10">
                     <TextBlock Text="Keyboard shortcuts" Style="{StaticResource SectionHeaderStyle}" />
                     <TextBlock
-                        Text="Commands are also available from the command palette (Ctrl+K by default). Click Change and press a key combination to remap a shortcut. A shortcut that is already used by another command is rejected; reset that command first."
+                        Text="Commands are also available from the command palette (Ctrl+K by default). Click Change and press a key combination — press up to three combinations in a row for a sequence such as Ctrl+K Ctrl+C. A combination that is already used by another command is rejected; reset that command first."
                         FontSize="12"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                         TextWrapping="Wrap" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button
+                            Content="Import shortcuts…"
+                            Click="OnImportKeybindingsClick"
+                            AutomationProperties.AutomationId="ShortcutImportButton" />
+                        <Button
+                            Content="Export shortcuts…"
+                            Click="OnExportKeybindingsClick"
+                            AutomationProperties.AutomationId="ShortcutExportButton" />
+                    </StackPanel>
                     <InfoBar
                         x:Name="ShortcutConflictBar"
                         Severity="Warning"

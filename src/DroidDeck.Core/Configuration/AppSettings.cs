@@ -263,6 +263,15 @@ public sealed class AppearanceSettings
     /// <summary>Gets or sets the theme.</summary>
     public AppTheme Theme { get; set; } = AppTheme.System;
 
+    /// <summary>Gets or sets the selected built-in or custom theme identifier.</summary>
+    public string? ThemeId { get; set; }
+
+    /// <summary>Gets or sets the accent color override, or <see langword="null"/> for the theme accent.</summary>
+    public string? AccentColor { get; set; }
+
+    /// <summary>Gets or sets the UI font family override, or <see langword="null"/> for the theme font.</summary>
+    public string? FontFamily { get; set; }
+
     /// <summary>Gets or sets the density preset.</summary>
     public string Density { get; set; } = "comfortable";
 
@@ -360,6 +369,9 @@ public sealed class FeatureSettings
 
     /// <summary>Gets or sets whether safe mode is enabled.</summary>
     public bool SafeMode { get; set; }
+
+    /// <summary>Gets or sets the identifiers of features hidden in Customize mode.</summary>
+    public List<string> Hidden { get; set; } = [];
 
     /// <summary>Gets or sets unknown keys preserved for forward compatibility.</summary>
     [JsonExtensionData]
@@ -462,6 +474,15 @@ public static class SettingsPaths
     /// <summary>Theme path.</summary>
     public const string Theme = "appearance.theme";
 
+    /// <summary>Selected theme identifier path.</summary>
+    public const string ThemeId = "appearance.themeId";
+
+    /// <summary>Accent color override path.</summary>
+    public const string AccentColor = "appearance.accentColor";
+
+    /// <summary>UI font family override path.</summary>
+    public const string FontFamily = "appearance.fontFamily";
+
     /// <summary>Density path.</summary>
     public const string Density = "appearance.density";
 
@@ -533,6 +554,9 @@ public static class SettingsPaths
 
     /// <summary>Safe mode path.</summary>
     public const string SafeMode = "features.safeMode";
+
+    /// <summary>Hidden feature identifiers path.</summary>
+    public const string HiddenFeatures = "features.hidden";
 
     /// <summary>Monorepo scan depth path.</summary>
     public const string ProjectScanDepth = "projects.scanDepth";

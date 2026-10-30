@@ -8,11 +8,13 @@ using DroidDeck.Core.Commands;
 using DroidDeck.Core.Configuration;
 using DroidDeck.Core.Devices;
 using DroidDeck.Core.Diagnostics;
+using DroidDeck.Core.Features;
 using DroidDeck.Core.Infrastructure;
 using DroidDeck.Core.Notifications;
 using DroidDeck.Core.Resources;
 using DroidDeck.Core.Runs;
 using DroidDeck.Core.Screen;
+using DroidDeck.Core.Themes;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI;
@@ -64,6 +66,22 @@ public sealed partial class MainWindow : Window
     private static readonly string[] MenuCategoryOrder =
         ["App", "Navigate", "Device", "Run", "Screen", "Plugins", "Built-in"];
 
+    // Maps navigation tags to the FeatureCatalog identifiers hidden in
+    // Customize mode. Tags without an entry are always visible.
+    private static readonly Dictionary<string, string> NavigationFeatureIds =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["home"] = "nav.home",
+            ["devices"] = "nav.devices",
+            ["projects"] = "nav.projects",
+            ["session"] = "nav.sessions",
+            ["devices/performance"] = "nav.performance",
+            ["devices/inspector"] = "nav.inspector",
+            ["devices/mirror"] = "nav.mirror",
+            ["history"] = "nav.history",
+            ["settings"] = "nav.settings",
+        };
+
     private readonly IServiceProvider _services;
     private readonly IDeviceService _devices;
     private readonly IDiagnosticsService _diagnostics;
@@ -77,6 +95,9 @@ public sealed partial class MainWindow : Window
     private readonly KeybindingMap _keybindings;
     private readonly ShellCommandCatalog _commandCatalog;
     private readonly AppThemeService _themeService;
+    private readonly ThemeManager _themeManager;
+    private readonly FeatureVisibilityService _features;
+    private readonly ChordRouter _chords = new();
     private readonly ILogger<MainWindow> _logger;
     private readonly Dictionary<string, Page> _pages = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<KeyboardAccelerator> _accelerators = [];
@@ -103,6 +124,8 @@ public sealed partial class MainWindow : Window
         ICommandRegistry commands,
         KeybindingMap keybindings,
         AppThemeService themeService,
+        ThemeManager themeManager,
+        FeatureVisibilityService features,
         ILogger<MainWindow> logger)
     {
         _services = services ?? throw new ArgumentNullException(nameof(services));
@@ -117,6 +140,8 @@ public sealed partial class MainWindow : Window
         _commands = commands ?? throw new ArgumentNullException(nameof(commands));
         _keybindings = keybindings ?? throw new ArgumentNullException(nameof(keybindings));
         _themeService = themeService ?? throw new ArgumentNullException(nameof(themeService));
+        _themeManager = themeManager ?? throw new ArgumentNullException(nameof(themeManager));
+        _features = features ?? throw new ArgumentNullException(nameof(features));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
         InitializeComponent();
@@ -130,6 +155,7 @@ public sealed partial class MainWindow : Window
         _devices.DevicesChanged += OnDevicesChanged;
         _notifications.NotificationRaised += OnNotificationRaised;
         _resourceGuard.WarningRaised += OnResourceWarningRaised;
+        _configuration.Changed += OnConfigurationChanged;
         AppWindow.Closing += OnAppWindowClosing;
         Closed += OnClosed;
 
@@ -142,6 +168,7 @@ public sealed partial class MainWindow : Window
         RegisterAccelerators();
         _commands.Changed += OnCommandSetChanged;
         _keybindings.Changed += OnCommandSetChanged;
+        _themeManager.Changed += OnThemeManagerChanged;
 
         _statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         _statusTimer.Tick += (_, _) => UpdateStatus();
@@ -153,7 +180,8 @@ public sealed partial class MainWindow : Window
             StatusMessageText.Text = string.Empty;
         };
 
-        ApplyTheme(_configuration.Current.Settings.Appearance.Theme);
+        ApplyShellTheme();
+        UpdateFeatureVisibility();
         RestorePlacement();
         UpdateStatus();
         Navigate(_configuration.Current.Settings.Onboarding.Completed ? "home" : "onboarding");
@@ -310,7 +338,7 @@ public sealed partial class MainWindow : Window
                     IsEnabled = command.IsEnabled,
                 };
                 AutomationProperties.SetAutomationId(item, $"MenuCommand_{command.Id}");
-                var shortcut = _keybindings.GetEffectiveShortcut(command);
+                var shortcut = _keybindings.GetEffectiveChord(command);
                 if (shortcut is not null)
                 {
                     item.KeyboardAcceleratorTextOverride = shortcut.ToString();
@@ -340,29 +368,78 @@ public sealed partial class MainWindow : Window
         }
 
         _accelerators.Clear();
+        var chords = new List<(CommandDefinition Command, KeyChord Chord)>();
         foreach (var command in _commands.Commands)
         {
-            var gesture = _keybindings.GetEffectiveShortcut(command);
-            if (gesture is null || !ShortcutKeys.TryGetVirtualKey(gesture.Key, out var key))
+            var chord = _keybindings.GetEffectiveChord(command);
+            if (chord is null)
             {
                 continue;
             }
 
-            var accelerator = new KeyboardAccelerator
+            if (chord.IsSingleStep)
             {
-                Modifiers = ToVirtualKeyModifiers(gesture.Modifiers),
-                Key = key,
-            };
-            accelerator.Invoked += (sender, args) =>
+                var gesture = chord.Steps[0];
+                if (!ShortcutKeys.TryGetVirtualKey(gesture.Key, out var key))
+                {
+                    continue;
+                }
+
+                var accelerator = new KeyboardAccelerator
+                {
+                    Modifiers = ToVirtualKeyModifiers(gesture.Modifiers),
+                    Key = key,
+                };
+                accelerator.Invoked += (sender, args) =>
+                {
+                    args.Handled = true;
+                    _ = ExecuteCommandAsync(command);
+                };
+                RootGrid.KeyboardAccelerators.Add(accelerator);
+                _accelerators.Add(accelerator);
+            }
+            else
             {
-                args.Handled = true;
-                _ = ExecuteCommandAsync(command);
-            };
-            RootGrid.KeyboardAccelerators.Add(accelerator);
-            _accelerators.Add(accelerator);
+                chords.Add((command, chord));
+            }
         }
 
+        _chords.Rebuild(chords);
         SetAcceleratorsEnabled(_palette is null || !_palette.IsOpen);
+    }
+
+    private void OnRootKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (_palette is { IsOpen: true })
+        {
+            return;
+        }
+
+        // Chord steps must never swallow ordinary typing in text fields; a
+        // chord like G A only fires when no text input has focus.
+        if (FocusManager.GetFocusedElement() is TextBox or AutoSuggestBox or NumberBox)
+        {
+            _chords.Reset();
+            return;
+        }
+
+        if (ShortcutKeys.IsModifier(e.Key))
+        {
+            return;
+        }
+
+        if (!ShortcutKeys.TryGetToken(e.Key, out var token))
+        {
+            _chords.Reset();
+            return;
+        }
+
+        var command = _chords.OfferKey(new KeyGesture(ShortcutKeys.CurrentModifiers(), token));
+        if (command is not null)
+        {
+            e.Handled = true;
+            _ = ExecuteCommandAsync(command);
+        }
     }
 
     private void SetAcceleratorsEnabled(bool enabled)
@@ -416,16 +493,91 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    /// <summary>Applies the requested theme to the shell.</summary>
+    /// <summary>Applies the requested base theme to the shell.</summary>
     public void ApplyTheme(AppTheme theme)
     {
         _themeService.Update(theme);
-        RootGrid.RequestedTheme = theme switch
+        ApplyShellTheme();
+    }
+
+    /// <summary>
+    /// Resolves the effective theme from the theme manager and applies its base
+    /// palette, accent, and font to the shell without a restart.
+    /// </summary>
+    public void ApplyShellTheme()
+    {
+        var preference = _configuration.Current.Settings.Appearance.Theme;
+        var systemBase = _themeService.IsHighContrast
+            ? ThemeBase.HighContrast
+            : Application.Current.RequestedTheme == ApplicationTheme.Dark
+                ? ThemeBase.Dark
+                : ThemeBase.Light;
+        var theme = _themeManager.GetCurrent(systemBase);
+        RootGrid.RequestedTheme = preference switch
         {
             AppTheme.Dark => ElementTheme.Dark,
             AppTheme.Light => ElementTheme.Light,
-            _ => ElementTheme.Default,
+            _ => theme.Base switch
+            {
+                ThemeBase.Dark => ElementTheme.Dark,
+                ThemeBase.Light => ElementTheme.Light,
+                _ => ElementTheme.Default,
+            },
         };
+        ApplyThemeTokens(theme);
+    }
+
+    private static void ApplyThemeTokens(ThemeDefinition theme)
+    {
+        var resources = Application.Current.Resources;
+        if (ThemeContrast.TryParseColor(theme.Colors.Accent, out var red, out var green, out var blue))
+        {
+            var accent = Windows.UI.Color.FromArgb(255, red, green, blue);
+            resources["SystemAccentColor"] = accent;
+            resources["SystemAccentColorSecondary"] = accent;
+            resources["SystemAccentColorTertiary"] = accent;
+        }
+
+        // Controls pick their default font from this themed resource, so
+        // overriding it at application scope changes the shell font everywhere.
+        resources["ContentControlThemeFontFamily"] = new FontFamily(
+            string.IsNullOrWhiteSpace(theme.FontFamily) ? "Segoe UI Variable" : theme.FontFamily);
+    }
+
+    private void OnThemeManagerChanged(object? sender, EventArgs e) =>
+        DispatcherQueue.TryEnqueue(ApplyShellTheme);
+
+    /// <summary>Collapses navigation entries whose feature is hidden in Customize mode.</summary>
+    public void UpdateFeatureVisibility()
+    {
+        NavigationViewItem? hiddenSelection = null;
+        NavigationViewItem? firstVisible = null;
+        foreach (var item in EnumerateNavigationItems())
+        {
+            var isHidden = item.Tag is string key &&
+                NavigationFeatureIds.TryGetValue(key, out var featureId) &&
+                !_features.IsVisible(featureId);
+            item.Visibility = isHidden ? Visibility.Collapsed : Visibility.Visible;
+            if (isHidden && ReferenceEquals(Navigation.SelectedItem, item))
+            {
+                hiddenSelection = item;
+            }
+
+            firstVisible ??= isHidden ? null : item;
+        }
+
+        if (hiddenSelection is not null)
+        {
+            if (firstVisible?.Tag is string key && PageTypes.ContainsKey(key))
+            {
+                Navigate(key);
+            }
+            else
+            {
+                Navigation.SelectedItem = null;
+                PageHost.Content = null;
+            }
+        }
     }
 
     /// <summary>Computes the desktop rectangle of an element in effective pixels (DIPs).</summary>
@@ -526,6 +678,14 @@ public sealed partial class MainWindow : Window
     private void OnDevicesChanged(object? sender, DeviceListChangedEventArgs e)
     {
         DispatcherQueue.TryEnqueue(UpdateStatus);
+    }
+
+    private void OnConfigurationChanged(object? sender, ConfigChangedEventArgs e)
+    {
+        if (e.Path.StartsWith("features.hidden", StringComparison.OrdinalIgnoreCase))
+        {
+            DispatcherQueue.TryEnqueue(UpdateFeatureVisibility);
+        }
     }
 
     private void UpdateStatus()
@@ -908,6 +1068,8 @@ public sealed partial class MainWindow : Window
         _resourceGuard.WarningRaised -= OnResourceWarningRaised;
         _commands.Changed -= OnCommandSetChanged;
         _keybindings.Changed -= OnCommandSetChanged;
+        _themeManager.Changed -= OnThemeManagerChanged;
+        _configuration.Changed -= OnConfigurationChanged;
         _commandCatalog.Detach();
         AppWindow.Closing -= OnAppWindowClosing;
         foreach (var page in _pages.Values.OfType<IDisposable>())
