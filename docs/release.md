@@ -297,24 +297,20 @@ The in-app update check reads the latest stable GitHub release, so it ignores
 prereleases like `0.0.1-alpha`. Publishing a later prerelease does not prompt
 users on the alpha; testers upgrade by replacing the portable folder.
 
-## 1.0.0 candidate status (2026-10-31)
+## 0.0.1-alpha release status (2026-10-31)
 
-This records what was actually run while building the release gates. It is not a
-release sign-off; the pending rows must be completed on the reference machine and
-a clean VM before publishing.
+This records the evidence gathered for `0.0.1-alpha` from source commit
+`3a9f35c`. It is not a 1.0.0 sign-off; the deferred rows are published as known
+limitations in [`docs/releases/v0.0.1-alpha.md`](releases/v0.0.1-alpha.md).
 
 | Gate | Status | Evidence |
 | --- | --- | --- |
-| Size, no R2R | Pass | 232.8 MiB extracted and 90.5 MiB zipped; [report](perf/results/2026-10-31-size-nor2r.json). |
-| Size, R2R | Fail | 284.2 MiB, 34 MiB over budget; R2R disabled by [ADR 0003](adr/0003-ready-to-run-size-trade-off.md). |
-| Startup | Pass | No-R2R batches: [batch 1](perf/results/2026-10-31-startup-nor2r.json) median 564 ms/p95 648 ms, [batch 2](perf/results/2026-10-31-startup-nor2r-batch2.json) median 513 ms/p95 696 ms. R2R was faster but over size; see [ADR 0003](adr/0003-ready-to-run-size-trade-off.md). |
-| Automated budgets | Pass | Plugin load, UI/renderer creation, and logcat replay suites pass. |
-| Soak | Smoke only | Two-minute harness smoke passed with -0.1 percent memory and +1 handle ([report](perf/results/2026-10-31-soak-smoke.json)); `releaseEligible` is false. The eight-hour release soak is pending the reference workload. |
+| Size | Pass | 232.8 MiB extracted and 90.5 MiB zipped; [report](perf/results/2026-10-31-size-0.0.1-alpha.json). |
+| Startup | Pass | Median 562 ms, p95 627 ms over eight measured runs after two warmups on the reference machine; [report](perf/results/2026-10-31-startup-0.0.1-alpha.json). |
+| Automated suites | Pass | Release build with 0 warnings, 1,315 non-UI tests, and the plugin template suite passed. |
+| Size, R2R reference | Fail | 284.2 MiB, 34 MiB over budget; R2R stays disabled by [ADR 0003](adr/0003-ready-to-run-size-trade-off.md). |
+| Soak | Deferred | The eight-hour soak is deferred by the alpha policy; the two-minute harness smoke remains [here](perf/results/2026-10-31-soak-smoke.json) and is not release evidence. |
 | Security review | Complete | No open remediable high/medium finding; R-01 is a high-impact accepted risk among six in the [security review](security-review.md). |
-| Accessibility | Structural pass | Architecture tests pass; the hands-on Narrator, scaling, and pseudo-locale pass in [accessibility](accessibility.md) is pending a UI session. |
-| Clean machine | Pending | Requires Windows Sandbox or a clean VM with no .NET SDK; complete Section 8 there. |
-| Release notes and artifacts | Pending | Complete Sections 2 and 9 at tag time. |
-
-The eight-hour soak and the clean-machine check are environment-bound and were not
-run in the development session that created these gates. They remain release
-blockers until evidence is attached; the short soak is not an accepted substitute.
+| Accessibility | Deferred | Hands-on Narrator, scaling, and pseudo-locale pass deferred by the alpha policy; automated architecture and accessibility guards pass in CI. |
+| Clean machine | Deferred | Deferred by the alpha policy; testers exercise the portable folder, and the check returns before beta. |
+| Release notes and artifacts | Ready for tag | [Release notes](releases/v0.0.1-alpha.md) are drafted; the workflow builds and drafts the release from the tag. |

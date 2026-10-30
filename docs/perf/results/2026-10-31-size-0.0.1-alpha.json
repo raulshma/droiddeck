@@ -1,0 +1,19 @@
+{
+  "command": "size",
+  "timestampUtc": "2026-10-30T23:06:10.5964332+00:00",
+  "label": "0.0.1-alpha 3a9f35c no-r2r",
+  "passed": true,
+  "environment": {
+    "machineName": "reference-development-pc",
+    "osVersion": "Microsoft Windows NT 10.0.26300.0",
+    "processorCount": 18,
+    "dotnetVersion": "10.0.14",
+    "architecture": "X64"
+  },
+  "directory": "artifacts/publish/DroidDeck-0.0.1-alpha-win-x64",
+  "extractedBytes": 244151185,
+  "zipBytes": 94930102,
+  "maxExtractedBytes": 262144000,
+  "maxZipBytes": 125829120,
+  "failures": []
+}

@@ -63,7 +63,9 @@ growth are deterministic enough to gate directly.
 
 | Date | Command | Result | Notes |
 | --- | --- | --- | --- |
-| 2026-10-31 | size, no R2R | Pass (232.8 MiB extracted, 90.5 MiB zip) | Release publish candidate; see ADR 0003. |
+| 2026-10-31 | size, 0.0.1-alpha | Pass (232.8 MiB extracted, 90.5 MiB zip) | [Report](2026-10-31-size-0.0.1-alpha.json); source commit `3a9f35c`. |
+| 2026-10-31 | startup, 0.0.1-alpha | Pass (median 562 ms, p95 627 ms) | [Report](2026-10-31-startup-0.0.1-alpha.json); ten runs including two warmups at `3a9f35c`. |
+| 2026-10-31 | size, no R2R | Pass (232.8 MiB extracted, 90.5 MiB zip) | 1.0.0-candidate reference measurement; see ADR 0003. |
 | 2026-10-31 | size, R2R | Fail (284.2 MiB) | 34 MiB over the extracted budget; R2R disabled. |
 | 2026-10-31 | startup, no R2R | Pass (batch 1 median 564 ms, p95 648 ms; batch 2 median 513 ms, p95 696 ms) | Two batches of ten runs. |
 | 2026-10-31 | startup, R2R | Pass (batch 1 median 347 ms, p95 526 ms; batch 2 median 323 ms, p95 388 ms) | Consistently faster, but over the size budget. |

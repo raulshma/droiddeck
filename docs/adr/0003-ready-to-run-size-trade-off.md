@@ -12,8 +12,8 @@ under 250 MB and the zip under 120 MB.
 The 1.0.0 release candidate was measured on the primary development machine
 (Windows 11, 14-core CPU with 18 logical processors, 16 GB RAM, NVMe SSD) with
 the release-check timing defined as process start to the first main window,
-plugins disabled. Two batches of ten measured runs, preceded by two warmup runs,
-were taken because a developer machine is noisy:
+plugins disabled. Two batches of ten runs each, with the first two runs discarded
+as warmups, were taken because a developer machine is noisy:
 
 | Publish | Extracted size | Startup median (batch 1) | Startup median (batch 2) |
 | --- | --- | --- | --- |

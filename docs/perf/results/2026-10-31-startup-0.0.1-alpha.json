@@ -1,0 +1,34 @@
+{
+  "command": "startup",
+  "timestampUtc": "2026-10-30T23:08:55.4158886+00:00",
+  "label": "0.0.1-alpha 3a9f35c",
+  "passed": true,
+  "environment": {
+    "machineName": "reference-development-pc",
+    "osVersion": "Microsoft Windows NT 10.0.26300.0",
+    "processorCount": 18,
+    "dotnetVersion": "10.0.14",
+    "architecture": "X64"
+  },
+  "executable": "artifacts/publish/DroidDeck-0.0.1-alpha-win-x64/DroidDeck.exe",
+  "runs": 10,
+  "warmupRuns": 2,
+  "timeoutSeconds": 60,
+  "samplesMilliseconds": [
+    573.2112,
+    597.0266,
+    550.3895,
+    506.983,
+    512.6322,
+    515.3621,
+    639.2258,
+    603.958
+  ],
+  "timedOutRuns": [],
+  "medianMilliseconds": 561.80035,
+  "p95Milliseconds": 626.88207,
+  "maxMilliseconds": 639.2258,
+  "medianBudgetMilliseconds": 2000,
+  "p95BudgetMilliseconds": 3000,
+  "failures": []
+}
