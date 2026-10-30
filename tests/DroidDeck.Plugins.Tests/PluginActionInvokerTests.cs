@@ -175,6 +175,7 @@ public sealed class PluginActionInvokerTests
     {
         var health = new PluginHealthTracker();
         var invoker = new PluginActionInvoker(health, TimeSpan.FromMilliseconds(50));
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Exception? observedByPlugin = null;
 
         var result = await invoker.CreateViewAsync(PluginId, "view", async token =>
@@ -188,6 +189,8 @@ public sealed class PluginActionInvokerTests
                 observedByPlugin = exception;
             }
 
+            // Stay pending past the timeout so a late return cannot race the timeout result.
+            await release.Task;
             return "late";
         });
 
@@ -198,6 +201,7 @@ public sealed class PluginActionInvokerTests
         Assert.True(
             observedByPlugin is OperationCanceledException,
             $"Expected a cancellation, got {observedByPlugin?.GetType().Name}");
+        release.SetResult();
     }
 
     [Fact]
