@@ -2101,6 +2101,8 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
 
     private void OnOpenDiagnosticsClick(object sender, RoutedEventArgs e) => App.Instance.Navigate("diagnostics");
 
+    private void OnOpenAboutClick(object sender, RoutedEventArgs e) => App.Instance.Navigate("about");
+
     private void ShowAction(string message, bool isError = false)
     {
         ActionBar.Severity = isError ? InfoBarSeverity.Error : InfoBarSeverity.Success;

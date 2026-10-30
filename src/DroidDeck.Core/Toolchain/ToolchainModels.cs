@@ -152,6 +152,9 @@ public interface IToolchainService
     /// <summary>Runs a full toolchain check and updates the cache.</summary>
     Task<ToolchainSnapshot> CheckAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>Probes only scrcpy, without running the rest of the doctor.</summary>
+    Task<ToolInfo> ProbeScrcpyAsync(CancellationToken cancellationToken = default);
+
     /// <summary>Raised after a full check completes.</summary>
     event EventHandler<ToolchainSnapshot>? SnapshotChanged;
 }

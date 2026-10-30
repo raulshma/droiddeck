@@ -11,6 +11,9 @@
     <DebugType>embedded</DebugType>
     <DroidDeckWindowsTargetFramework>net10.0-windows10.0.26100.0</DroidDeckWindowsTargetFramework>
     <DroidDeckWindowsMinVersion>10.0.17763.0</DroidDeckWindowsMinVersion>
+    <DroidDeckWindowsAppSdkVersion>2.5.1</DroidDeckWindowsAppSdkVersion>
+    <DroidDeckVersion>1.0.0</DroidDeckVersion>
+    <Version>$(DroidDeckVersion)</Version>
     <RepoRoot>$(MSBuildThisFileDirectory)</RepoRoot>
   </PropertyGroup>
 </Project>

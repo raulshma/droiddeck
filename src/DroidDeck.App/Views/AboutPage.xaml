@@ -1,0 +1,240 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="DroidDeck.App.Views.AboutPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    AutomationProperties.AutomationId="AboutPage">
+
+    <Grid Padding="24" RowSpacing="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Spacing="2">
+            <TextBlock Text="About DroidDeck" Style="{StaticResource TitleTextBlockStyle}" />
+            <TextBlock
+                Text="Versions, licenses, local data locations, and diagnostics for this installation."
+                FontSize="12"
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+        </StackPanel>
+
+        <ScrollViewer Grid.Row="1">
+            <StackPanel Spacing="16" MaxWidth="920" HorizontalAlignment="Left">
+                <Border Style="{StaticResource CardBorderStyle}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="Versions" Style="{StaticResource SectionHeaderStyle}" />
+                        <Grid ColumnSpacing="24" RowSpacing="6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="180" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Text="DroidDeck" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBlock
+                                x:Name="VersionText"
+                                Grid.Column="1"
+                                Style="{StaticResource FieldValueStyle}"
+                                AutomationProperties.AutomationId="AboutVersionText" />
+                            <TextBlock Grid.Row="1" Text=".NET runtime" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBlock
+                                x:Name="RuntimeText"
+                                Grid.Row="1"
+                                Grid.Column="1"
+                                Style="{StaticResource FieldValueStyle}"
+                                AutomationProperties.AutomationId="AboutRuntimeText" />
+                            <TextBlock Grid.Row="2" Text="Windows App SDK" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBlock
+                                x:Name="WindowsAppSdkText"
+                                Grid.Row="2"
+                                Grid.Column="1"
+                                Style="{StaticResource FieldValueStyle}"
+                                AutomationProperties.AutomationId="AboutWindowsAppSdkText" />
+                            <TextBlock Grid.Row="3" Text="scrcpy" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBlock
+                                x:Name="ScrcpyVersionText"
+                                Grid.Row="3"
+                                Grid.Column="1"
+                                Style="{StaticResource FieldValueStyle}"
+                                AutomationProperties.AutomationId="AboutScrcpyText" />
+                            <TextBlock Grid.Row="4" Text="Windows" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBlock
+                                x:Name="OsText"
+                                Grid.Row="4"
+                                Grid.Column="1"
+                                Style="{StaticResource FieldValueStyle}"
+                                AutomationProperties.AutomationId="AboutOsText" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource CardBorderStyle}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="Updates" Style="{StaticResource SectionHeaderStyle}" />
+                        <TextBlock
+                            Text="Update checks are manual and off by default. DroidDeck never checks in the background and never downloads or installs an update."
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextWrapping="Wrap" />
+                        <ToggleSwitch
+                            x:Name="UpdateCheckToggle"
+                            Header="Allow manual update checks"
+                            OnContent="On"
+                            OffContent="Off"
+                            Toggled="OnUpdateCheckToggled"
+                            AutomationProperties.AutomationId="UpdateCheckToggle" />
+                        <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                            <Button
+                                x:Name="CheckUpdatesButton"
+                                Content="Check for updates now"
+                                IsEnabled="False"
+                                Click="OnCheckUpdatesClick"
+                                AutomationProperties.AutomationId="CheckUpdatesButton" />
+                            <ProgressRing
+                                x:Name="UpdateProgress"
+                                Width="18"
+                                Height="18"
+                                IsActive="False"
+                                AutomationProperties.Name="Checking for updates" />
+                            <Button
+                                x:Name="OpenReleaseButton"
+                                Content="Open release page"
+                                Visibility="Collapsed"
+                                Click="OnOpenReleaseClick"
+                                AutomationProperties.AutomationId="OpenReleaseButton" />
+                        </StackPanel>
+                        <InfoBar
+                            x:Name="UpdateResultBar"
+                            IsOpen="False"
+                            IsClosable="True"
+                            AutomationProperties.AutomationId="UpdateResultBar" />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource CardBorderStyle}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="Local data" Style="{StaticResource SectionHeaderStyle}" />
+                        <TextBlock
+                            x:Name="StorageModeText"
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextWrapping="Wrap" />
+                        <Grid ColumnSpacing="24" RowSpacing="6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="180" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Text="Data folder" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBlock
+                                x:Name="DataFolderText"
+                                Grid.Column="1"
+                                IsTextSelectionEnabled="True"
+                                TextWrapping="Wrap"
+                                AutomationProperties.AutomationId="AboutDataFolderText" />
+                            <TextBlock Grid.Row="1" Text="Logs" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBlock
+                                x:Name="LogsFolderText"
+                                Grid.Row="1"
+                                Grid.Column="1"
+                                IsTextSelectionEnabled="True"
+                                TextWrapping="Wrap" />
+                            <TextBlock Grid.Row="2" Text="Diagnostics" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBlock
+                                x:Name="DiagnosticsFolderText"
+                                Grid.Row="2"
+                                Grid.Column="1"
+                                IsTextSelectionEnabled="True"
+                                TextWrapping="Wrap" />
+                            <TextBlock Grid.Row="3" Text="Plugins" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBlock
+                                x:Name="PluginsFolderText"
+                                Grid.Row="3"
+                                Grid.Column="1"
+                                IsTextSelectionEnabled="True"
+                                TextWrapping="Wrap" />
+                        </Grid>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button
+                                Content="Open data folder"
+                                Click="OnOpenDataFolderClick"
+                                AutomationProperties.AutomationId="OpenDataFolderButton" />
+                            <Button
+                                Content="Copy data paths"
+                                Click="OnCopyDataPathsClick"
+                                AutomationProperties.AutomationId="CopyDataPathsButton" />
+                        </StackPanel>
+                        <TextBlock
+                            x:Name="StorageStatusText"
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            AutomationProperties.AutomationId="StorageStatusText" />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource CardBorderStyle}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="Diagnostics" Style="{StaticResource SectionHeaderStyle}" />
+                        <TextBlock
+                            Text="Diagnostics reports are generated locally and redacted before preview. Nothing is uploaded."
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextWrapping="Wrap" />
+                        <TextBlock
+                            x:Name="DiagnosticsIdText"
+                            FontSize="12"
+                            AutomationProperties.AutomationId="AboutDiagnosticsIdText" />
+                        <Button
+                            Content="Open diagnostics"
+                            Click="OnOpenDiagnosticsClick"
+                            AutomationProperties.AutomationId="AboutOpenDiagnosticsButton" />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource CardBorderStyle}">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Licenses, privacy, and security" Style="{StaticResource SectionHeaderStyle}" />
+                        <StackPanel Orientation="Horizontal" Spacing="4">
+                            <HyperlinkButton
+                                Content="DroidDeck license (MIT)"
+                                NavigateUri="https://github.com/raulshma/droiddeck/blob/main/LICENSE"
+                                AutomationProperties.AutomationId="LicenseLink" />
+                            <HyperlinkButton
+                                Content="Third-party notices"
+                                NavigateUri="https://github.com/raulshma/droiddeck/blob/main/Licenses/THIRD-PARTY-NOTICES.md"
+                                AutomationProperties.AutomationId="ThirdPartyNoticesLink" />
+                            <HyperlinkButton
+                                Content="Privacy"
+                                NavigateUri="https://github.com/raulshma/droiddeck/blob/main/docs/privacy.md"
+                                AutomationProperties.AutomationId="PrivacyLink" />
+                            <HyperlinkButton
+                                Content="Security policy"
+                                NavigateUri="https://github.com/raulshma/droiddeck/blob/main/docs/security.md"
+                                AutomationProperties.AutomationId="SecurityLink" />
+                            <HyperlinkButton
+                                Content="Documentation"
+                                NavigateUri="https://github.com/raulshma/droiddeck/blob/main/docs/index.md"
+                                AutomationProperties.AutomationId="DocsLink" />
+                        </StackPanel>
+                        <TextBlock
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextWrapping="Wrap"
+                            Text="Android is a trademark of Google LLC. DroidDeck is not affiliated with Google." />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Page>

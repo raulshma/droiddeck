@@ -1,0 +1,24 @@
+title: DroidDeck
+description: A local Windows control deck for Android devices.
+theme: minima
+markdown: kramdown
+show_excerpts: false
+
+plugins:
+  - jekyll-optional-front-matter
+  - jekyll-default-layout
+  - jekyll-relative-links
+  - jekyll-titles-from-headings
+
+header_pages:
+  - user-guide.md
+  - settings.md
+  - plugin-sdk/index.md
+  - catalog.md
+  - troubleshooting.md
+  - privacy.md
+  - security.md
+  - licensing.md
+
+exclude:
+  - README.md

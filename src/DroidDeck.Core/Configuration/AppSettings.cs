@@ -56,6 +56,9 @@ public sealed class AppSettings
     /// <summary>Gets or sets first-run onboarding state.</summary>
     public OnboardingSettings Onboarding { get; set; } = new();
 
+    /// <summary>Gets or sets update check settings.</summary>
+    public UpdateSettings Updates { get; set; } = new();
+
     /// <summary>Gets or sets multi-device run settings.</summary>
     public RunSettings Run { get; set; } = new();
 
@@ -251,6 +254,17 @@ public sealed class OnboardingSettings
 
     /// <summary>Gets or sets the step the user last reached ("tools", "project", or "device").</summary>
     public string Step { get; set; } = "tools";
+
+    /// <summary>Gets or sets unknown keys preserved for forward compatibility.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalSettings { get; set; }
+}
+
+/// <summary>Manual update check settings. DroidDeck never checks automatically.</summary>
+public sealed class UpdateSettings
+{
+    /// <summary>Gets or sets whether the user allows manual update checks from About.</summary>
+    public bool ManualCheckEnabled { get; set; }
 
     /// <summary>Gets or sets unknown keys preserved for forward compatibility.</summary>
     [JsonExtensionData]
@@ -602,6 +616,9 @@ public static class SettingsPaths
 
     /// <summary>Onboarding last reached step path.</summary>
     public const string OnboardingStep = "onboarding.step";
+
+    /// <summary>Manual update check opt-in path.</summary>
+    public const string UpdatesManualCheckEnabled = "updates.manualCheckEnabled";
 
     /// <summary>Multi-device concurrency limit path.</summary>
     public const string RunMaxConcurrentDevices = "run.maxConcurrentDevices";

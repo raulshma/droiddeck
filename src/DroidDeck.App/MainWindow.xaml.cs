@@ -63,6 +63,7 @@ public sealed partial class MainWindow : Window
             ["catalog"] = typeof(CatalogPage),
             ["settings"] = typeof(SettingsPage),
             ["diagnostics"] = typeof(DiagnosticsPage),
+            ["about"] = typeof(AboutPage),
         };
 
     private static readonly string[] MenuCategoryOrder =

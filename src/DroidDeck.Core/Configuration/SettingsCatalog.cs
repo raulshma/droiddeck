@@ -373,6 +373,10 @@ public sealed class SettingsCatalog
         Add(entries, "onboarding", "step", "Onboarding step",
             "The last first-run step reached.", SettingsValueKind.Text, SettingsLevel.Expert);
 
+        Add(entries, "updates", "manualCheckEnabled", "Manual update checks",
+            "Allows checking for a newer release from the About page. DroidDeck never checks automatically.",
+            SettingsValueKind.Boolean, SettingsLevel.Basic, keywords: ["updates", "version", "release"]);
+
         Add(entries, "run", "maxConcurrentDevices", "Concurrent devices",
             "How many devices a multi-device run mutates at once.",
             SettingsValueKind.WholeNumber, SettingsLevel.Advanced, keywords: ["parallel", "multi-device"]);
@@ -492,6 +496,7 @@ public sealed class SettingsCatalog
         "notifications" => "Notifications",
         "home" => "Home",
         "onboarding" => "Onboarding",
+        "updates" => "Updates",
         "run" => "Runs",
         "screen" => "Screen",
         "wireless" => "Wireless",

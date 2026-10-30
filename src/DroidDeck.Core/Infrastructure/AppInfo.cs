@@ -8,6 +8,12 @@ namespace DroidDeck.Core.Infrastructure;
 /// </summary>
 public static class AppInfo
 {
+    /// <summary>The project repository used for documentation and release links.</summary>
+    public const string RepositoryUrl = "https://github.com/raulshma/droiddeck";
+
+    /// <summary>The GitHub API endpoint that lists the latest published release.</summary>
+    public const string LatestReleaseApiUrl = "https://api.github.com/repos/raulshma/droiddeck/releases/latest";
+
     /// <summary>Gets the application version from the entry assembly.</summary>
     public static string Version
     {
@@ -33,4 +39,14 @@ public static class AppInfo
 
     /// <summary>Gets the process architecture.</summary>
     public static string Architecture => RuntimeInformation.ProcessArchitecture.ToString();
+
+    /// <summary>Gets the Windows App SDK version stamped into the entry assembly at build time.</summary>
+    public static string WindowsAppSdkVersion => ReadEntryMetadata("WindowsAppSdkVersion") ?? "unknown";
+
+    private static string? ReadEntryMetadata(string key)
+    {
+        var assembly = Assembly.GetEntryAssembly() ?? typeof(AppInfo).Assembly;
+        return assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
+            .FirstOrDefault(attribute => string.Equals(attribute.Key, key, StringComparison.Ordinal))?.Value;
+    }
 }

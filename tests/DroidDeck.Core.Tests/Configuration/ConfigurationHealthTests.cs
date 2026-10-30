@@ -167,6 +167,14 @@ public sealed class ConfigurationHealthTests
         public Task<ToolchainSnapshot> CheckAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(CachedSnapshot!);
 
+        public Task<ToolInfo> ProbeScrcpyAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(CachedSnapshot?.Get(ToolKind.Scrcpy) ?? new ToolInfo
+            {
+                Kind = ToolKind.Scrcpy,
+                DisplayName = "scrcpy",
+                IsAvailable = false,
+            });
+
         public event EventHandler<ToolchainSnapshot>? SnapshotChanged
         {
             add { }

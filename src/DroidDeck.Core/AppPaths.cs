@@ -9,14 +9,18 @@ public sealed class AppPaths
     public const string PortableMarkerFileName = "portable.marker";
 
     /// <summary>Creates paths rooted at an explicit data directory.</summary>
-    public AppPaths(string dataDirectory)
+    public AppPaths(string dataDirectory, bool isPortable = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(dataDirectory);
         DataDirectory = Path.GetFullPath(dataDirectory);
+        IsPortable = isPortable;
     }
 
     /// <summary>Gets the root data directory.</summary>
     public string DataDirectory { get; }
+
+    /// <summary>Gets whether data is stored beside the executable because a portable marker is present.</summary>
+    public bool IsPortable { get; }
 
     /// <summary>Gets the global settings file.</summary>
     public string SettingsFile => Path.Combine(DataDirectory, "settings.json");
@@ -98,7 +102,7 @@ public sealed class AppPaths
         var executableRoot = executableDirectory ?? AppContext.BaseDirectory;
         if (File.Exists(Path.Combine(executableRoot, PortableMarkerFileName)))
         {
-            return new AppPaths(Path.Combine(executableRoot, "data"));
+            return new AppPaths(Path.Combine(executableRoot, "data"), isPortable: true);
         }
 
         var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);

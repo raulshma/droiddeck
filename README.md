@@ -4,6 +4,19 @@ A local Windows control deck for Android devices: live ADB device tracking, tool
 diagnostics, settings, and an extensible plugin host. DroidDeck never uploads data;
 diagnostics reports are generated locally and redacted.
 
+## Documentation
+
+- [User guide](docs/user-guide.md)
+- [Settings reference](docs/settings.md)
+- [Plugin SDK](docs/plugin-sdk/index.md)
+- [Catalog schema](docs/catalog.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Privacy](docs/privacy.md) and [security](docs/security.md)
+- [Licensing](docs/licensing.md)
+
+The same pages build as a GitHub Pages site from `docs/` (see
+`.github/workflows/pages.yml`).
+
 ## Requirements
 
 - Windows 11 (or Windows 10 1809+)
@@ -73,7 +86,7 @@ Add a `portable.marker` file next to the executable to store settings and logs i
 - `src/DroidDeck.Adb` — ADB socket tracker, CLI fallback, device metadata
 - `src/DroidDeck.Projects`, `src/DroidDeck.Screen` — project scanning and runs, scrcpy mirroring and recording
 - `src/DroidDeck.Plugins`, `src/DroidDeck.Plugin.Abstractions` — plugin host and contracts
-- `src/DroidDeck.Plugin.UI` — scaffold for plugin-supplied UI in a later milestone
+- `src/DroidDeck.Plugin.UI` — host-approved component kit and renderers for plugin UI
 - `src/DroidDeck.Core` — configuration, process runner, toolchain, diagnostics
 - `tests/` — unit, architecture, fake ADB, and UI automation coverage
 
@@ -83,4 +96,11 @@ never reference the shell or UI projects, and plugin contracts stay on plain .NE
 ## CI
 
 GitHub Actions builds Debug and Release on Windows, runs the non-UI test suite in
-both configurations, and uploads the portable `win-x64` artifact.
+both configurations, and uploads the portable `win-x64` artifact. A separate workflow
+publishes the documentation to GitHub Pages.
+
+## License
+
+DroidDeck is released under the MIT License. See [LICENSE](LICENSE) and
+[third-party notices](Licenses/THIRD-PARTY-NOTICES.md). Android is a trademark of
+Google LLC; DroidDeck is not affiliated with Google.

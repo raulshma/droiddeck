@@ -30,6 +30,7 @@ using DroidDeck.Core.Sessions;
 using DroidDeck.Core.Toolbox;
 using DroidDeck.Core.Testing;
 using DroidDeck.Core.Toolchain;
+using DroidDeck.Core.Updates;
 using DroidDeck.Core.Wireless;
 using DroidDeck.Plugins;
 using DroidDeck.Plugins.BuiltIns;
@@ -388,6 +389,17 @@ public partial class App : Application, IDisposable
                 logger: loggerFactory.CreateLogger<DeviceService>());
         });
         services.AddSingleton<IDiagnosticsService, DiagnosticsService>();
+        services.AddSingleton(provider => new UpdateChecker(
+            new HttpClient(new SocketsHttpHandler
+            {
+                AutomaticDecompression = DecompressionMethods.All,
+                // Redirects are followed by hand so every hop is checked for HTTPS.
+                AllowAutoRedirect = false,
+            })
+            {
+                Timeout = TimeSpan.FromSeconds(15),
+            },
+            AppInfo.Version));
         services.AddSingleton<ICommandRegistry, CommandRegistry>();
         services.AddSingleton(provider => new KeybindingMap(
             provider.GetRequiredService<ICommandRegistry>(),
@@ -533,6 +545,7 @@ public partial class App : Application, IDisposable
         services.AddTransient<CatalogPage>();
         services.AddTransient<SettingsPage>();
         services.AddTransient<DiagnosticsPage>();
+        services.AddTransient<AboutPage>();
         services.AddTransient<DeviceToolsPage>();
         services.AddTransient<MirrorPage>();
         services.AddTransient<EmulatorsPage>();

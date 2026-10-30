@@ -922,6 +922,10 @@
                     <TextBlock x:Name="VersionText" Style="{StaticResource FieldValueStyle}" />
                     <TextBlock x:Name="RuntimeText" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     <TextBlock x:Name="OsText" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <Button
+                        Content="About, versions, and licenses"
+                        Click="OnOpenAboutClick"
+                        AutomationProperties.AutomationId="OpenAboutButton" />
                 </StackPanel>
             </Border>
         </StackPanel>

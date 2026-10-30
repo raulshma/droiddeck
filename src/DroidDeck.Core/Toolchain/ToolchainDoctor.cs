@@ -141,7 +141,7 @@ public sealed class ToolchainDoctor : IToolchainService, IDisposable
                 ProbeNodeAsync(tools.NodePath, cancellationToken),
                 ProbeNpmAsync(tools.NodePath, cancellationToken),
                 ProbeNpxAsync(tools.NodePath, cancellationToken),
-                ProbeScrcpyAsync(tools.ScrcpyPath, cancellationToken),
+                ProbeScrcpyToolAsync(tools.ScrcpyPath, cancellationToken),
                 Task.FromResult(ProbeUnity(tools.UnityPath)),
                 dotnetTask,
                 ProbeMauiAndroidWorkloadAsync(dotnetTask, cancellationToken),
@@ -476,7 +476,23 @@ public sealed class ToolchainDoctor : IToolchainService, IDisposable
             cancellationToken);
     }
 
-    private Task<ToolInfo> ProbeScrcpyAsync(string? overridePath, CancellationToken cancellationToken)
+    /// <inheritdoc />
+    public async Task<ToolInfo> ProbeScrcpyAsync(CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await ProbeScrcpyToolAsync(
+                _configuration.Current.Settings.Tools.ScrcpyPath,
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private Task<ToolInfo> ProbeScrcpyToolAsync(string? overridePath, CancellationToken cancellationToken)
     {
         var extras = new List<string>();
         if (!string.IsNullOrWhiteSpace(_environment.LocalApplicationData))

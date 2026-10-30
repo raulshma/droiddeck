@@ -29,6 +29,37 @@
   </ItemGroup>
 
   <ItemGroup>
+    <AssemblyMetadata Include="WindowsAppSdkVersion" Value="$(DroidDeckWindowsAppSdkVersion)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="$(RepoRoot)LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(RepoRoot)Licenses\**\*" Link="Licenses\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <Target Name="CopyWindowsAppSdkNotices" AfterTargets="Build">
+    <Copy SourceFiles="$(NuGetPackageRoot)microsoft.windowsappsdk\$(DroidDeckWindowsAppSdkVersion)\license.txt"
+          DestinationFiles="$(OutDir)Licenses\WINDOWSAPPSDK-LICENSE.txt"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(NuGetPackageRoot)microsoft.windowsappsdk\$(DroidDeckWindowsAppSdkVersion)\license.txt')" />
+    <Copy SourceFiles="$(NuGetPackageRoot)microsoft.windowsappsdk\$(DroidDeckWindowsAppSdkVersion)\NOTICE.txt"
+          DestinationFiles="$(OutDir)Licenses\WINDOWSAPPSDK-NOTICES.txt"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(NuGetPackageRoot)microsoft.windowsappsdk\$(DroidDeckWindowsAppSdkVersion)\NOTICE.txt')" />
+  </Target>
+
+  <Target Name="CopyWindowsAppSdkNoticesToPublish" AfterTargets="Publish">
+    <Copy SourceFiles="$(NuGetPackageRoot)microsoft.windowsappsdk\$(DroidDeckWindowsAppSdkVersion)\license.txt"
+          DestinationFiles="$(PublishDir)Licenses\WINDOWSAPPSDK-LICENSE.txt"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(NuGetPackageRoot)microsoft.windowsappsdk\$(DroidDeckWindowsAppSdkVersion)\license.txt')" />
+    <Copy SourceFiles="$(NuGetPackageRoot)microsoft.windowsappsdk\$(DroidDeckWindowsAppSdkVersion)\NOTICE.txt"
+          DestinationFiles="$(PublishDir)Licenses\WINDOWSAPPSDK-NOTICES.txt"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(NuGetPackageRoot)microsoft.windowsappsdk\$(DroidDeckWindowsAppSdkVersion)\NOTICE.txt')" />
+  </Target>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="Microsoft.Extensions.Logging" />
     <PackageReference Include="Microsoft.WindowsAppSDK" />

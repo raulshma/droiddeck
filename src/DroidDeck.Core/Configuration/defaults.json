@@ -16,9 +16,11 @@
     "javaHome": null,
     "gradlePath": null,
     "flutterPath": null,
+    "dartPath": null,
     "nodePath": null,
     "scrcpyPath": null,
-    "unityPath": null
+    "unityPath": null,
+    "dotNetPath": null
   },
   "logging": {
     "level": "information",
@@ -79,6 +81,9 @@
   "onboarding": {
     "completed": false,
     "step": "tools"
+  },
+  "updates": {
+    "manualCheckEnabled": false
   },
   "run": {
     "maxConcurrentDevices": 3,
