@@ -180,6 +180,12 @@ public sealed partial class RunConfigurationDialog : ContentDialog
             ArtifactGlobBox.Text = variant.ArtifactGlob;
         }
 
+        if (!string.IsNullOrWhiteSpace(variant.ApplicationId))
+        {
+            ArtifactPackageBox.Text = variant.ApplicationId;
+            LaunchPackageBox.Text = variant.ApplicationId;
+        }
+
         if (!string.IsNullOrWhiteSpace(variant.ModuleName))
         {
             ModuleCombo.Text = variant.ModuleName;

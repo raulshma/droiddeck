@@ -86,23 +86,28 @@ public static class RunConfigurationPresetLibrary
             IsDefault = true,
         };
 
+        var variant = project?.Variants.FirstOrDefault(static variant => variant.IsDefault);
         if (project is not null)
         {
-            configuration.Artifact.PackageName = project.ApplicationId;
-            configuration.Launch.PackageName = project.ApplicationId;
+            var packageName = variant?.ApplicationId ?? project.ApplicationId;
+            configuration.Artifact.PackageName = packageName;
+            configuration.Launch.PackageName = packageName;
             configuration.Launch.Activity = project.LauncherActivity;
-            configuration.ModuleName = project.Modules
+            configuration.ModuleName = variant?.ModuleName ?? project.Modules
                 .FirstOrDefault(static module => module.Type == ProjectModuleType.Application)
                 ?.Name;
-            configuration.VariantName = project.Variants.FirstOrDefault(static variant => variant.IsDefault)
-                ?.Name;
+            configuration.VariantName = variant?.Name;
         }
 
         switch (preset.Kind)
         {
             case RunConfigurationKind.Gradle:
-                configuration.Build.Task = BuildTask(configuration.ModuleName, "assembleDebug");
-                configuration.Artifact.Glob = "**/build/outputs/apk/debug/*.apk";
+                configuration.Build.Task = !string.IsNullOrWhiteSpace(variant?.BuildTask)
+                    ? variant.BuildTask
+                    : BuildTask(configuration.ModuleName, "assembleDebug");
+                configuration.Artifact.Glob = !string.IsNullOrWhiteSpace(variant?.ArtifactGlob)
+                    ? variant.ArtifactGlob
+                    : "**/build/outputs/apk/debug/*.apk";
                 configuration.Screen.Mode = ScreenMode.Embedded;
                 break;
 

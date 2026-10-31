@@ -71,6 +71,70 @@ internal static partial class ProjectSource
         return trim ? value.Trim() : value;
     }
 
+    /// <summary>Removes line comments so declaration scans do not read commented-out code.</summary>
+    internal static string StripLineComments(string text) => LineCommentRegex().Replace(text, string.Empty);
+
+    /// <summary>
+    /// Returns the body of the first <c>blockName { ... }</c> block, without the braces, or
+    /// <see langword="null"/> when the block is missing. Nested braces are matched.
+    /// </summary>
+    internal static string? ExtractBlockBody(string? text, string blockName)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        var search = 0;
+        while (search < text.Length)
+        {
+            var start = text.IndexOf(blockName, search, StringComparison.Ordinal);
+            if (start < 0)
+            {
+                return null;
+            }
+
+            search = start + blockName.Length;
+            if (start > 0 && (char.IsLetterOrDigit(text[start - 1]) || text[start - 1] == '_'))
+            {
+                continue;
+            }
+
+            var brace = search;
+            while (brace < text.Length && char.IsWhiteSpace(text[brace]))
+            {
+                brace++;
+            }
+
+            if (brace >= text.Length || text[brace] != '{')
+            {
+                continue;
+            }
+
+            var depth = 0;
+            var end = brace;
+            for (; end < text.Length; end++)
+            {
+                if (text[end] == '{')
+                {
+                    depth++;
+                }
+                else if (text[end] == '}')
+                {
+                    depth--;
+                    if (depth == 0)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            return end < text.Length ? text[(brace + 1)..end] : text[(brace + 1)..];
+        }
+
+        return null;
+    }
+
     /// <summary>Matches a Gradle or Kotlin DSL application ID declaration.</summary>
     [GeneratedRegex(
         @"applicationId\s*=?\s*[""'](?<value>[^""']+)[""']",
@@ -84,4 +148,14 @@ internal static partial class ProjectSource
         RegexOptions.CultureInvariant,
         matchTimeoutMilliseconds: 1000)]
     internal static partial Regex NamespacePattern();
+
+    /// <summary>Matches an Android application ID suffix declaration.</summary>
+    [GeneratedRegex(
+        @"applicationIdSuffix\s*=?\s*[""'](?<value>[^""']+)[""']",
+        RegexOptions.CultureInvariant,
+        matchTimeoutMilliseconds: 1000)]
+    internal static partial Regex ApplicationIdSuffixPattern();
+
+    [GeneratedRegex(@"//[^\r\n]*", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex LineCommentRegex();
 }

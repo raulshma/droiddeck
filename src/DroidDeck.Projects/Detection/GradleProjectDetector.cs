@@ -45,7 +45,11 @@ public sealed partial class GradleProjectDetector : IProjectDetector
         var evidence = new List<DetectionEvidence>();
         var warnings = new List<string>();
         var settingsText = await ProjectSource.ReadTextAsync(settingsFile, cancellationToken).ConfigureAwait(false);
-        var moduleDirectories = ParseModuleDirectories(settingsText);
+        var pluginResolver = await GradlePluginResolver
+            .LoadAsync(root, settingsText, cancellationToken)
+            .ConfigureAwait(false);
+        var moduleDirectories = ParseModuleDirectories(
+            settingsText is null ? null : ProjectSource.StripLineComments(settingsText));
         if (settingsFile is not null)
         {
             evidence.Add(new DetectionEvidence
@@ -98,11 +102,7 @@ public sealed partial class GradleProjectDetector : IProjectDetector
         }
 
         var versionCatalog = Path.Combine(root, "gradle", "libs.versions.toml");
-        var catalogText = File.Exists(versionCatalog)
-            ? await ProjectSource.ReadTextAsync(versionCatalog, cancellationToken).ConfigureAwait(false)
-            : null;
-        var catalog = catalogText is null ? null : VersionCatalog.Parse(catalogText);
-        if (catalog is not null)
+        if (File.Exists(versionCatalog))
         {
             evidence.Add(new DetectionEvidence
             {
@@ -132,7 +132,7 @@ public sealed partial class GradleProjectDetector : IProjectDetector
                 continue;
             }
 
-            var module = ParseModule(moduleName, relativePath, buildFile, buildText, root);
+            var module = ParseModule(moduleName, relativePath, buildFile, buildText, root, pluginResolver);
             modules.Add(module);
             moduleBuildTexts[module.Path] = buildText;
             if (module.IsKotlinMultiplatform)
@@ -170,21 +170,21 @@ public sealed partial class GradleProjectDetector : IProjectDetector
             }
         }
 
-        if (modules.Count == 0)
+        var rootApplied = pluginResolver.Expand(pluginResolver.ParseUses(rootBuildText));
+        if (modules.Count == 0 && rootBuildFile is not null && rootBuildText is not null &&
+            (rootApplied.Contains(GradlePluginResolver.AndroidApplicationPlugin) ||
+             rootApplied.Contains(GradlePluginResolver.AndroidLibraryPlugin) ||
+             rootApplied.Contains(GradlePluginResolver.KotlinMultiplatformPlugin) ||
+             rootApplied.Contains(GradlePluginResolver.AndroidKmpLibraryPlugin)))
         {
-            if (rootBuildText is not null &&
-                (ContainsPlugin(rootBuildText, "com.android.application") ||
-                 ContainsPlugin(rootBuildText, "com.android.library")))
-            {
-                var rootModule = ParseModule(":", ".", rootBuildFile!, rootBuildText, root);
-                modules.Add(rootModule);
-                moduleBuildTexts[rootModule.Path] = rootBuildText;
-            }
+            var rootModule = ParseModule(":", ".", rootBuildFile, rootBuildText, root, pluginResolver);
+            modules.Add(rootModule);
+            moduleBuildTexts[rootModule.Path] = rootBuildText;
         }
 
         var applicationModule = modules.FirstOrDefault(module => module.Type == ProjectModuleType.Application);
         var isKmp = modules.Any(module => module.IsKotlinMultiplatform);
-        var isComposeMultiplatform = ContainsPlugin(rootBuildText, "org.jetbrains.compose") ||
+        var isComposeMultiplatform = rootApplied.Contains(GradlePluginResolver.ComposeMultiplatformPlugin) ||
                                      modules.Any(module => module.IsComposeMultiplatform);
         if (isComposeMultiplatform)
         {
@@ -203,26 +203,16 @@ public sealed partial class GradleProjectDetector : IProjectDetector
         project.IsComposeMultiplatform = isComposeMultiplatform;
         project.Modules = modules;
         project.ApplicationModule = applicationModule?.Name;
-        project.ApplicationId = applicationModule?.ApplicationId;
+        project.ApplicationId = applicationModule?.ApplicationId ?? applicationModule?.Namespace;
         project.Namespace = applicationModule?.Namespace;
-        project.AgpVersion = catalog?.AgpVersion ?? ParsePluginVersion(rootBuildText, "com.android.application") ??
-            modules.Select(module => module.AgpVersion).FirstOrDefault(version => version is not null);
-        project.KotlinVersion = catalog?.KotlinVersion ??
-            ParsePluginVersion(rootBuildText, "org.jetbrains.kotlin.android") ??
-            modules.Select(module => module.KotlinVersion).FirstOrDefault(version => version is not null);
-
-        foreach (var module in modules)
-        {
-            if (project.AgpVersion is null && module.AgpVersion is not null)
-            {
-                project.AgpVersion = module.AgpVersion;
-            }
-
-            if (project.KotlinVersion is null && module.KotlinVersion is not null)
-            {
-                project.KotlinVersion = module.KotlinVersion;
-            }
-        }
+        project.AgpVersion = pluginResolver.AgpVersion ??
+            modules.Select(module => module.AgpVersion).FirstOrDefault(version => version is not null) ??
+            ParsePluginVersion(rootBuildText, GradlePluginResolver.AndroidApplicationPlugin) ??
+            ParsePluginVersion(rootBuildText, GradlePluginResolver.AndroidLibraryPlugin);
+        project.KotlinVersion = pluginResolver.KotlinVersion ??
+            modules.Select(module => module.KotlinVersion).FirstOrDefault(version => version is not null) ??
+            ParsePluginVersion(rootBuildText, GradlePluginResolver.KotlinMultiplatformPlugin) ??
+            ParsePluginVersion(rootBuildText, "org.jetbrains.kotlin.android");
 
         if (applicationModule is not null)
         {
@@ -287,31 +277,85 @@ public sealed partial class GradleProjectDetector : IProjectDetector
         string relativePath,
         string buildFile,
         string buildText,
-        string root)
+        string root,
+        GradlePluginResolver pluginResolver)
     {
-        var isKmp = ContainsKmpPlugin(buildText);
-        var isApplication = ContainsPlugin(buildText, "com.android.application");
-        var isLibrary = ContainsPlugin(buildText, "com.android.library");
-        var module = new ProjectModule
+        var uses = pluginResolver.ParseUses(buildText);
+        var applied = pluginResolver.Expand(uses);
+        var moduleDirectory = Path.GetDirectoryName(buildFile) ?? root;
+        var isKmpLibrary = applied.Contains(GradlePluginResolver.AndroidKmpLibraryPlugin);
+        var isKmp = isKmpLibrary ||
+                    applied.Contains(GradlePluginResolver.KotlinMultiplatformPlugin) ||
+                    Directory.Exists(Path.Combine(moduleDirectory, "src", "commonMain"));
+        var isApplication = applied.Contains(GradlePluginResolver.AndroidApplicationPlugin);
+        var isLibrary = applied.Contains(GradlePluginResolver.AndroidLibraryPlugin) || isKmpLibrary;
+        var applicationId = ProjectSource.MatchValue(
+            ProjectSource.ApplicationIdPattern(),
+            ProjectSource.ExtractBlockBody(buildText, "defaultConfig") ?? buildText,
+            trim: true);
+        if (!IsValidApplicationId(applicationId))
+        {
+            applicationId = null;
+        }
+
+        if (!isApplication && !isLibrary && applicationId is not null)
+        {
+            // A declared application ID is the remaining signal when a convention plugin
+            // applies com.android.application outside the module script.
+            isApplication = true;
+        }
+
+        return new ProjectModule
         {
             Name = moduleName,
             Path = relativePath.Replace('\\', '/'),
             BuildFile = Path.GetRelativePath(root, buildFile).Replace('\\', '/'),
             IsKotlinMultiplatform = isKmp,
-            HasAndroidTarget = isKmp && ContainsAndroidTarget(buildText),
+            HasAndroidTarget = isKmp &&
+                               (isKmpLibrary ||
+                                ContainsKmpAndroidBlock(buildText) ||
+                                ContainsAndroidTarget(buildText) ||
+                                Directory.Exists(Path.Combine(moduleDirectory, "src", "androidMain"))),
             Type = isApplication
                 ? ProjectModuleType.Application
                 : isLibrary || isKmp
                     ? ProjectModuleType.Library
                     : ProjectModuleType.Unknown,
-            ApplicationId = ProjectSource.MatchValue(ProjectSource.ApplicationIdPattern(), buildText, trim: false),
-            Namespace = ProjectSource.MatchValue(ProjectSource.NamespacePattern(), buildText, trim: false),
-            IsComposeMultiplatform = ContainsPlugin(buildText, "org.jetbrains.compose"),
-            AgpVersion = ParsePluginVersion(buildText, "com.android.application"),
-            KotlinVersion = ParsePluginVersion(buildText, "org.jetbrains.kotlin"),
+            ApplicationId = applicationId,
+            Namespace = ProjectSource.MatchValue(ProjectSource.NamespacePattern(), buildText, trim: true),
+            IsComposeMultiplatform = applied.Contains(GradlePluginResolver.ComposeMultiplatformPlugin),
+            AgpVersion = FirstPluginVersion(
+                uses,
+                pluginResolver,
+                GradlePluginResolver.AndroidApplicationPlugin,
+                GradlePluginResolver.AndroidLibraryPlugin,
+                GradlePluginResolver.AndroidKmpLibraryPlugin),
+            KotlinVersion = FirstPluginVersion(
+                uses,
+                pluginResolver,
+                GradlePluginResolver.KotlinMultiplatformPlugin,
+                "org.jetbrains.kotlin.android",
+                "org.jetbrains.kotlin.jvm"),
         };
+    }
 
-        return module;
+    private static string? FirstPluginVersion(
+        IReadOnlyList<GradlePluginUse> uses,
+        GradlePluginResolver pluginResolver,
+        params string[] pluginIds)
+    {
+        foreach (var pluginId in pluginIds)
+        {
+            var declared = uses.FirstOrDefault(use =>
+                string.Equals(use.Id, pluginId, StringComparison.OrdinalIgnoreCase));
+            var version = declared?.Version ?? pluginResolver.GetVersion(pluginId);
+            if (!string.IsNullOrWhiteSpace(version))
+            {
+                return version;
+            }
+        }
+
+        return null;
     }
 
     private static List<ProjectVariant> BuildVariants(
@@ -322,28 +366,47 @@ public sealed partial class GradleProjectDetector : IProjectDetector
         foreach (var module in modules.Where(module => module.Type == ProjectModuleType.Application))
         {
             moduleBuildTexts.TryGetValue(module.Path, out var buildText);
-            var buildTypes = ParseBuildTypes(buildText);
-            var flavors = ParseFlavors(buildText);
-            var flavorDimensions = flavors.Count == 0 ? new List<string?> { null } : flavors.Cast<string?>().ToList();
-            foreach (var flavor in flavorDimensions)
+            var text = buildText is null ? null : ProjectSource.StripLineComments(buildText);
+            var buildTypes = ParseBuildTypes(text);
+            var flavors = ParseFlavors(text);
+            if (flavors.Count == 0)
+            {
+                flavors.Add(new VariantBlock(null, null, null, false));
+            }
+
+            var defaultFlavor = flavors
+                .FirstOrDefault(flavor => flavor.IsDefaultFlavor && flavor.Name is not null)
+                ?.Name;
+            var hasDefault = variants.Any(variant => variant.IsDefault);
+            var baseId = module.ApplicationId ?? module.Namespace;
+            var modulePath = module.Path == "." ? string.Empty : module.Path + "/";
+            var taskPrefix = module.Name is ":" or "" ? string.Empty : module.Name + ":";
+            foreach (var flavor in flavors)
             {
                 foreach (var buildType in buildTypes)
                 {
-                    var name = flavor is null ? buildType : flavor + Capitalize(buildType);
-                    var buildTypeFolder = buildType.ToLowerInvariant();
-                    var flavorFolder = flavor is null ? string.Empty : flavor.ToLowerInvariant() + "/";
-                    var modulePath = module.Path == "." ? string.Empty : module.Path + "/";
+                    var buildTypeName = buildType.Name!;
+                    var name = flavor.Name is null
+                        ? buildTypeName
+                        : flavor.Name + Capitalize(buildTypeName);
+                    var flavorFolder = flavor.Name is null ? string.Empty : flavor.Name.ToLowerInvariant() + "/";
+                    var isDefault = !hasDefault &&
+                                    string.Equals(buildTypeName, "debug", StringComparison.OrdinalIgnoreCase) &&
+                                    (defaultFlavor is null ||
+                                     string.Equals(flavor.Name, defaultFlavor, StringComparison.OrdinalIgnoreCase));
+                    hasDefault |= isDefault;
                     variants.Add(new ProjectVariant
                     {
                         Name = name,
                         ModuleName = module.Name,
-                        BuildType = buildType,
-                        Flavors = flavor is null ? [] : [flavor],
-                        BuildTask = $"assemble{Capitalize(name)}",
-                        ArtifactGlob = $"{modulePath}build/outputs/apk/{flavorFolder}{buildTypeFolder}/*.apk",
+                        BuildType = buildTypeName,
+                        Flavors = flavor.Name is null ? [] : [flavor.Name],
+                        BuildTask = $"{taskPrefix}assemble{Capitalize(name)}",
+                        ArtifactGlob =
+                            $"{modulePath}build/outputs/apk/{flavorFolder}{buildTypeName.ToLowerInvariant()}/*.apk",
+                        ApplicationId = ComposeApplicationId(baseId, flavor, buildType),
                         Source = DetectionSource.Detected,
-                        IsDefault = string.Equals(buildType, "debug", StringComparison.OrdinalIgnoreCase) &&
-                                    (flavor is null || variants.Count == 0),
+                        IsDefault = isDefault,
                     });
                 }
             }
@@ -357,82 +420,125 @@ public sealed partial class GradleProjectDetector : IProjectDetector
         return variants;
     }
 
-    private static List<string> ParseBuildTypes(string? buildText)
+    private static string? ComposeApplicationId(
+        string? baseId,
+        VariantBlock flavor,
+        VariantBlock buildType)
     {
-        var names = buildText is null ? new List<string>() : ExtractBlockNames(buildText, "buildTypes");
-        names.Add("debug");
-        names.Add("release");
-        return names
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Where(name => name.Length > 0 && !IsBlockKeyword(name))
-            .OrderBy(name => name.Equals("debug", StringComparison.OrdinalIgnoreCase)
+        var applicationId = flavor.ApplicationId ?? baseId;
+        if (string.IsNullOrWhiteSpace(applicationId))
+        {
+            return null;
+        }
+
+        return applicationId +
+               (flavor.ApplicationIdSuffix ?? string.Empty) +
+               (buildType.ApplicationIdSuffix ?? string.Empty);
+    }
+
+    private static List<VariantBlock> ParseBuildTypes(string? text)
+    {
+        var blocks = ParseVariantBlocks(text, "buildTypes")
+            .Where(block => block.Name is not null && !IsBlockKeyword(block.Name))
+            .ToList();
+        foreach (var implicitType in new[] { "debug", "release" })
+        {
+            if (!blocks.Any(block => string.Equals(block.Name, implicitType, StringComparison.OrdinalIgnoreCase)))
+            {
+                blocks.Add(new VariantBlock(implicitType, null, null, false));
+            }
+        }
+
+        return blocks
+            .OrderBy(block => string.Equals(block.Name, "debug", StringComparison.OrdinalIgnoreCase)
                 ? 0
-                : name.Equals("release", StringComparison.OrdinalIgnoreCase)
+                : string.Equals(block.Name, "release", StringComparison.OrdinalIgnoreCase)
                     ? 1
                     : 2)
-            .ThenBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(block => block.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 
-    private static List<string> ParseFlavors(string? buildText)
-    {
-        if (buildText is null)
-        {
-            return [];
-        }
-
-        return ExtractBlockNames(buildText, "productFlavors")
-            .Where(name => name.Length > 0 && !IsBlockKeyword(name))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
+    private static List<VariantBlock> ParseFlavors(string? text) =>
+        ParseVariantBlocks(text, "productFlavors")
+            .Where(block => block.Name is not null && !IsBlockKeyword(block.Name))
             .ToList();
-    }
 
-    internal static List<string> ExtractBlockNames(string text, string blockName)
+    private static List<VariantBlock> ParseVariantBlocks(string? text, string blockName)
     {
-        var names = new List<string>();
-        var start = text.IndexOf(blockName, StringComparison.Ordinal);
-        if (start < 0)
+        var blocks = new List<VariantBlock>();
+        var body = ProjectSource.ExtractBlockBody(text, blockName);
+        if (body is null)
         {
-            return names;
-        }
-
-        var brace = text.IndexOf('{', start);
-        if (brace < 0)
-        {
-            return names;
+            return blocks;
         }
 
         var depth = 0;
-        var end = brace;
-        for (; end < text.Length; end++)
+        var sawBrace = false;
+        string? name = null;
+        var blockText = new StringBuilder();
+        foreach (var rawLine in body.Split('\n'))
         {
-            if (text[end] == '{')
+            if (depth == 0 && name is null)
             {
-                depth++;
-            }
-            else if (text[end] == '}')
-            {
-                depth--;
-                if (depth == 0)
+                var match = BlockNameRegex().Match(rawLine.Trim());
+                if (!match.Success)
                 {
-                    break;
+                    continue;
+                }
+
+                name = match.Groups["name"].Value;
+                sawBrace = false;
+                blockText.Clear();
+            }
+
+            blockText.AppendLine(rawLine);
+            foreach (var character in rawLine)
+            {
+                if (character == '{')
+                {
+                    depth++;
+                    sawBrace = true;
+                }
+                else if (character == '}')
+                {
+                    depth--;
                 }
             }
-        }
 
-        var body = text[(brace + 1)..Math.Min(end, text.Length)];
-        foreach (var line in body.Split('\n'))
-        {
-            var trimmed = line.Trim();
-            var match = BlockNameRegex().Match(trimmed);
-            if (match.Success)
+            if (name is not null && sawBrace && depth == 0)
             {
-                names.Add(match.Groups["name"].Value);
+                blocks.Add(CreateVariantBlock(name, blockText.ToString()));
+                name = null;
+                blockText.Clear();
             }
         }
 
-        return names;
+        return blocks;
     }
+
+    private static VariantBlock CreateVariantBlock(string name, string text)
+    {
+        var applicationId = ProjectSource.MatchValue(
+            ProjectSource.ApplicationIdPattern(),
+            text,
+            trim: true);
+        var suffix = ProjectSource.MatchValue(
+            ProjectSource.ApplicationIdSuffixPattern(),
+            text,
+            trim: true);
+        return new VariantBlock(
+            name,
+            IsValidApplicationId(applicationId) ? applicationId : null,
+            IsValidApplicationIdSuffix(suffix) ? suffix : null,
+            VariantDefaultRegex().IsMatch(text));
+    }
+
+    private static bool IsValidApplicationId(string? value) =>
+        !string.IsNullOrWhiteSpace(value) && ApplicationIdValidationRegex().IsMatch(value);
+
+    private static bool IsValidApplicationIdSuffix(string? value) =>
+        !string.IsNullOrWhiteSpace(value) && ApplicationIdSuffixValidationRegex().IsMatch(value);
 
     private static List<(string Name, string Path)> ParseModuleDirectories(string? settingsText)
     {
@@ -509,6 +615,7 @@ public sealed partial class GradleProjectDetector : IProjectDetector
             .Where(module => module.Type == ProjectModuleType.Application)
             .Select(module => module.Name)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var qualifyNames = applicationModules.Count > 1;
         foreach (var variant in project.Variants)
         {
             if (variant.ModuleName is null || !applicationModules.Contains(variant.ModuleName))
@@ -516,10 +623,13 @@ public sealed partial class GradleProjectDetector : IProjectDetector
                 continue;
             }
 
+            var packageName = variant.ApplicationId ?? project.ApplicationId;
             var configuration = new RunConfiguration
             {
-                Id = $"gradle-{Sanitize(variant.Name)}",
-                Name = variant.Name,
+                Id = CreateVariantConfigurationId(variant),
+                Name = qualifyNames
+                    ? $"{ModuleDisplayName(variant.ModuleName)} {variant.Name}"
+                    : variant.Name,
                 Kind = RunConfigurationKind.Gradle,
                 VariantName = variant.Name,
                 ModuleName = variant.ModuleName,
@@ -531,11 +641,11 @@ public sealed partial class GradleProjectDetector : IProjectDetector
                 Artifact = new ArtifactConfiguration
                 {
                     Glob = variant.ArtifactGlob ?? string.Empty,
-                    PackageName = project.ApplicationId,
+                    PackageName = packageName,
                 },
                 Launch = new LaunchConfiguration
                 {
-                    PackageName = project.ApplicationId,
+                    PackageName = packageName,
                     Activity = project.LauncherActivity,
                 },
             };
@@ -559,24 +669,26 @@ public sealed partial class GradleProjectDetector : IProjectDetector
         return configurations;
     }
 
-    private static bool ContainsPlugin(string? text, string plugin)
-    {
-        if (string.IsNullOrEmpty(text))
-        {
-            return false;
-        }
-
-        return text.Contains(plugin, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool ContainsKmpPlugin(string text) =>
-        text.Contains("org.jetbrains.kotlin.multiplatform", StringComparison.OrdinalIgnoreCase) ||
-        text.Contains("kotlin(\"multiplatform\")", StringComparison.OrdinalIgnoreCase) ||
-        text.Contains("kotlin('multiplatform')", StringComparison.OrdinalIgnoreCase);
-
     private static bool ContainsAndroidTarget(string text) =>
         text.Contains("androidTarget", StringComparison.OrdinalIgnoreCase) ||
         text.Contains("android()", StringComparison.OrdinalIgnoreCase);
+
+    private static bool ContainsKmpAndroidBlock(string text) =>
+        ProjectSource.ExtractBlockBody(text, "kotlin") is { } kotlinBlock &&
+        KmpAndroidBlockRegex().IsMatch(kotlinBlock);
+
+    private static string CreateVariantConfigurationId(ProjectVariant variant)
+    {
+        var parts = new[] { variant.ModuleName, variant.Name }
+            .Where(part => !string.IsNullOrWhiteSpace(part))
+            .Select(part => Sanitize(part!))
+            .Where(part => part.Length > 0);
+        var suffix = string.Join('-', parts);
+        return suffix.Length == 0 ? "gradle-default" : $"gradle-{suffix}";
+    }
+
+    private static string ModuleDisplayName(string moduleName) =>
+        moduleName.TrimStart(':').Replace(':', '/');
 
     private static string? ParseWrapperVersion(string text)
     {
@@ -617,7 +729,10 @@ public sealed partial class GradleProjectDetector : IProjectDetector
         return builder.ToString().Trim('-');
     }
 
-    [GeneratedRegex(@"include\s*\(?\s*(?<names>[^)\r\n]+)", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    [GeneratedRegex(
+        @"\binclude(?!Build|Flat|Group|Module|Version)\s*\(?\s*(?<names>[^)\r\n]+)",
+        RegexOptions.CultureInvariant,
+        matchTimeoutMilliseconds: 1000)]
     private static partial Regex IncludeRegex();
 
     [GeneratedRegex(
@@ -638,79 +753,27 @@ public sealed partial class GradleProjectDetector : IProjectDetector
         matchTimeoutMilliseconds: 1000)]
     private static partial Regex WrapperVersionRegex();
 
-    private sealed class VersionCatalog
-    {
-        public string? AgpVersion { get; private init; }
+    [GeneratedRegex(
+        @"^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$",
+        RegexOptions.CultureInvariant,
+        matchTimeoutMilliseconds: 1000)]
+    private static partial Regex ApplicationIdValidationRegex();
 
-        public string? KotlinVersion { get; private init; }
+    [GeneratedRegex(
+        @"^(?:\.[A-Za-z0-9_]+)+$",
+        RegexOptions.CultureInvariant,
+        matchTimeoutMilliseconds: 1000)]
+    private static partial Regex ApplicationIdSuffixValidationRegex();
 
-        public static VersionCatalog Parse(string text)
-        {
-            var versions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            string? agp = null;
-            string? kotlin = null;
-            var section = string.Empty;
-            foreach (var rawLine in text.Split('\n'))
-            {
-                var line = rawLine.Trim();
-                if (line.StartsWith('[') && line.EndsWith(']'))
-                {
-                    section = line[1..^1].Trim();
-                    continue;
-                }
+    [GeneratedRegex(@"\bandroid\s*\{", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex KmpAndroidBlockRegex();
 
-                if (line.Length == 0 || line.StartsWith('#'))
-                {
-                    continue;
-                }
+    [GeneratedRegex(@"\bisDefault\s*=?\s*true\b", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex VariantDefaultRegex();
 
-                var equals = line.IndexOf('=');
-                if (equals <= 0)
-                {
-                    continue;
-                }
-
-                var key = line[..equals].Trim().Trim('"', '\'');
-                var value = line[(equals + 1)..].Trim().Trim(',');
-                if (section.Equals("versions", StringComparison.OrdinalIgnoreCase))
-                {
-                    versions[key] = value.Trim('"', '\'');
-                }
-                else if (section.Equals("plugins", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (value.Contains("com.android.application", StringComparison.OrdinalIgnoreCase))
-                    {
-                        agp = ResolveVersion(value, versions);
-                    }
-                    else if (value.Contains("org.jetbrains.kotlin", StringComparison.OrdinalIgnoreCase) &&
-                             !value.Contains("compose", StringComparison.OrdinalIgnoreCase))
-                    {
-                        kotlin = ResolveVersion(value, versions);
-                    }
-                }
-            }
-
-            return new VersionCatalog { AgpVersion = agp, KotlinVersion = kotlin };
-        }
-
-        private static string? ResolveVersion(string value, Dictionary<string, string> versions)
-        {
-            var reference = Regex.Match(
-                value,
-                @"version\.ref\s*=\s*[""'](?<key>[^""']+)[""']",
-                RegexOptions.CultureInvariant,
-                TimeSpan.FromSeconds(1));
-            if (reference.Success && versions.TryGetValue(reference.Groups["key"].Value, out var resolved))
-            {
-                return resolved;
-            }
-
-            var literal = Regex.Match(
-                value,
-                @"version\s*=\s*[""'](?<version>[^""']+)[""']",
-                RegexOptions.CultureInvariant,
-                TimeSpan.FromSeconds(1));
-            return literal.Success ? literal.Groups["version"].Value : null;
-        }
-    }
+    private sealed record VariantBlock(
+        string? Name,
+        string? ApplicationId,
+        string? ApplicationIdSuffix,
+        bool IsDefaultFlavor);
 }

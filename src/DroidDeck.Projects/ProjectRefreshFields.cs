@@ -116,7 +116,9 @@ internal static class ProjectRefreshFields
             "variants",
             project => project.Variants,
             (target, detected) => target.Variants = detected.Variants,
-            variants => string.Join(", ", variants.Select(variant => variant.Name))),
+            variants => string.Join(", ", variants.Select(variant => variant.ApplicationId is null
+                ? variant.Name
+                : $"{variant.Name} ({variant.ApplicationId})"))),
         new ProjectRefreshField<List<ApkFileReference>>(
             "apkFiles",
             project => project.ApkFiles,

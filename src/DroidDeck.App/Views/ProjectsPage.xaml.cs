@@ -1114,7 +1114,7 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
                 ProjectKind.Cordova => RunConfigurationKind.Cordova,
                 _ => RunConfigurationKind.Gradle,
             },
-            ModuleName = project.ApplicationModule,
+            ModuleName = variant?.ModuleName ?? project.ApplicationModule,
             VariantName = variant?.Name,
             Build = new BuildConfiguration
             {
@@ -1133,11 +1133,11 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
             {
                 Glob = variant?.ArtifactGlob
                        ?? (project.ApkFiles.FirstOrDefault()?.Path ?? string.Empty),
-                PackageName = project.ApplicationId,
+                PackageName = variant?.ApplicationId ?? project.ApplicationId,
             },
             Launch = new LaunchConfiguration
             {
-                PackageName = project.ApplicationId,
+                PackageName = variant?.ApplicationId ?? project.ApplicationId,
                 Activity = project.LauncherActivity,
             },
         };

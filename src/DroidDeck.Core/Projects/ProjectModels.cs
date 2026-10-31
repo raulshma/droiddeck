@@ -192,6 +192,9 @@ public sealed class ProjectVariant
     /// <summary>Gets or sets the APK glob for the variant.</summary>
     public string? ArtifactGlob { get; set; }
 
+    /// <summary>Gets or sets the application ID the variant installs as, including flavor and build type suffixes.</summary>
+    public string? ApplicationId { get; set; }
+
     /// <summary>Gets or sets where the variant was detected or edited.</summary>
     public DetectionSource Source { get; set; } = DetectionSource.Detected;
 
