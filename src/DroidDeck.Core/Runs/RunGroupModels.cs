@@ -146,6 +146,13 @@ public sealed class MultiDeviceRunRequest
     public RunOptions Options { get; init; } = new();
 }
 
+/// <summary>
+/// A started multi-device run: the group it registered and its eventual result.
+/// </summary>
+/// <param name="Group">The group, already visible in <see cref="IMultiDeviceRunService.Groups"/>.</param>
+/// <param name="Completion">Completes with the final group once every child has finished.</param>
+public sealed record MultiDeviceRunHandle(RunGroup Group, Task<RunGroup> Completion);
+
 /// <summary>Describes a change to a run group.</summary>
 public sealed class RunGroupChangedEventArgs : EventArgs
 {
@@ -161,6 +168,12 @@ public interface IMultiDeviceRunService
 {
     /// <summary>Gets the in-memory groups, newest first.</summary>
     IReadOnlyList<RunGroup> Groups { get; }
+
+    /// <summary>
+    /// Starts the run, registers its group, and returns it before any device
+    /// work begins, so callers can navigate to the group they started.
+    /// </summary>
+    MultiDeviceRunHandle Start(MultiDeviceRunRequest request, CancellationToken cancellationToken = default);
 
     /// <summary>Runs the project on every selected device.</summary>
     Task<RunGroup> RunAsync(MultiDeviceRunRequest request, CancellationToken cancellationToken = default);

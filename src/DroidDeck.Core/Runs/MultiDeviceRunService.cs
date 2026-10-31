@@ -55,6 +55,12 @@ public sealed class MultiDeviceRunService : IMultiDeviceRunService, IDisposable
 
     /// <inheritdoc />
     public async Task<RunGroup> RunAsync(MultiDeviceRunRequest request, CancellationToken cancellationToken = default)
+        => await Start(request, cancellationToken).Completion.ConfigureAwait(false);
+
+    /// <inheritdoc />
+    public MultiDeviceRunHandle Start(
+        MultiDeviceRunRequest request,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -78,6 +84,16 @@ public sealed class MultiDeviceRunService : IMultiDeviceRunService, IDisposable
 
         ApplyConcurrencyLimit();
         RaiseChanged(group);
+        return new MultiDeviceRunHandle(group, ExecuteAsync(request, group, devices, context, cancellationToken));
+    }
+
+    private async Task<RunGroup> ExecuteAsync(
+        MultiDeviceRunRequest request,
+        RunGroup group,
+        DeviceInfo[] devices,
+        GroupContext context,
+        CancellationToken cancellationToken)
+    {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, context.Cancellation.Token);
         context.Linked = linked;
         try

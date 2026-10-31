@@ -19,7 +19,7 @@ namespace DroidDeck.Core.Runs;
 /// Executes the build, artifact, install, launch, custom step, and logcat pipeline
 /// for one project configuration on one device.
 /// </summary>
-public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
+public sealed class RunSessionService : IRunSessionService, IRunSessionFinalizationEffects, IAsyncDisposable
 {
     private const int MaxBuildOutputLines = 100_000;
     private const int MaxStepOutputTailLines = 200;
@@ -37,6 +37,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
     private readonly IDeviceOperationCoordinator? _coordinator;
     private readonly IPluginRegistry? _plugins;
     private readonly ILogger<RunSessionService> _logger;
+    private readonly RunSessionFinalizer _finalizer;
     private readonly MetroSession.PortProbe? _metroProbe;
     private readonly MetroSession.ReloadSender? _metroReload;
     private readonly List<RunSession> _sessions = [];
@@ -74,6 +75,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         _logger = logger ?? NullLogger<RunSessionService>.Instance;
         _metroProbe = metroProbe;
         _metroReload = metroReload;
+        _finalizer = new RunSessionFinalizer(this);
     }
 
     /// <inheritdoc />
@@ -101,7 +103,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
     public event EventHandler<CrashDetectedEventArgs>? CrashDetected;
 
     /// <inheritdoc />
-    public async Task<RunSession> RunAsync(RunRequest request, CancellationToken cancellationToken = default)
+    public RunHandle Start(RunRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -114,10 +116,24 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         }
 
         RaiseChanged(session);
+        return new RunHandle(session, RunPipelineAsync(session, context, cancellationToken));
+    }
 
-        if (request.DryRun)
+    /// <inheritdoc />
+    public async Task<RunSession> RunAsync(RunRequest request, CancellationToken cancellationToken = default)
+    {
+        var handle = Start(request, cancellationToken);
+        return await handle.Completion.ConfigureAwait(false);
+    }
+
+    private async Task<RunSession> RunPipelineAsync(
+        RunSession session,
+        RunContext context,
+        CancellationToken cancellationToken)
+    {
+        if (context.Request.DryRun)
         {
-            await CompleteDryRunAsync(session, request).ConfigureAwait(false);
+            await CompleteDryRunAsync(session, context.Request).ConfigureAwait(false);
             return session;
         }
 
@@ -196,7 +212,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
 
         if (GetSessionState(session) == RunSessionState.Running)
         {
-            var finalized = await FinalizeSessionAsync(
+            var finalized = await _finalizer.FinalizeAsync(
                 session,
                 context,
                 new SessionOutcome
@@ -538,7 +554,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             session.StatusMessage = result.Message;
             if (flutter is null)
             {
-                finalized = await FinalizeSessionAsync(
+                finalized = await _finalizer.FinalizeAsync(
                     session,
                     context,
                     new SessionOutcome
@@ -611,7 +627,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             await flutter.DisposeAsync().ConfigureAwait(false);
             context.FlutterStep = step;
             step.OutputTail = JoinTail(context.FlutterTail);
-            await FinalizeSessionAsync(
+            await _finalizer.FinalizeAsync(
                 session,
                 context,
                 new SessionOutcome
@@ -949,7 +965,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             });
         }
 
-        await FinalizeSessionAsync(
+        await _finalizer.FinalizeAsync(
             session,
             context: null,
             new SessionOutcome
@@ -1078,7 +1094,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         await AttachLogcatAsync(context, cancellationToken).ConfigureAwait(false);
         if (customResult == CustomStepResult.PartiallyFailed)
         {
-            await FinalizeSessionAsync(
+            await _finalizer.FinalizeAsync(
                 session,
                 context,
                 new SessionOutcome
@@ -1096,7 +1112,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         if (context.LaunchWasSkipped)
         {
             await StopMetroAsync(context).ConfigureAwait(false);
-            await FinalizeSessionAsync(
+            await _finalizer.FinalizeAsync(
                 session,
                 context,
                 new SessionOutcome
@@ -2186,7 +2202,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
     private Task<bool> FinishCancelledAsync(RunContext context)
     {
         var message = context.StoppedByUser ? "The run was stopped by the user." : "The run was cancelled.";
-        return FinalizeSessionAsync(
+        return _finalizer.FinalizeAsync(
             context.Session,
             context,
             new SessionOutcome
@@ -2199,7 +2215,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
     }
 
     private Task<bool> FailSessionAsync(RunContext context, string message) =>
-        FinalizeSessionAsync(
+        _finalizer.FinalizeAsync(
             context.Session,
             context,
             new SessionOutcome
@@ -2215,7 +2231,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         RunStep step,
         string message,
         int? exitCode = null) =>
-        FinalizeSessionAsync(
+        _finalizer.FinalizeAsync(
             context.Session,
             context,
             new SessionOutcome
@@ -2227,128 +2243,42 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
                 ExitCode = exitCode,
             });
 
-    /// <summary>
-    /// Applies a terminal outcome to a session exactly once. The first caller wins; a racing
-    /// stop, cancellation, or timeout observes the finished session and leaves it untouched.
-    /// Resources are released before the transition, and the session lock is released before
-    /// observers are notified, so no handler can deadlock the service.
-    /// </summary>
-    /// <returns><see langword="true"/> when this call performed the session transition.</returns>
-    private async Task<bool> FinalizeSessionAsync(RunSession session, RunContext? context, SessionOutcome outcome)
+    async Task IRunSessionFinalizationEffects.ReleaseResourcesAsync(
+        RunContext? context,
+        SessionResourceDisposition disposition)
     {
-        if (context is not null)
-        {
-            switch (outcome.Resources)
-            {
-                case SessionResourceDisposition.StopAll:
-                    await StopFlutterAsync(context).ConfigureAwait(false);
-                    await StopMetroAsync(context).ConfigureAwait(false);
-                    await DetachLogcatAsync(context).ConfigureAwait(false);
-                    break;
-                case SessionResourceDisposition.StopMetro:
-                    await StopMetroAsync(context).ConfigureAwait(false);
-                    break;
-                case SessionResourceDisposition.LeaveRunning:
-                default:
-                    break;
-            }
-        }
-
-        if (!TryFinalizeSession(session, outcome))
-        {
-            return false;
-        }
-
-        RaiseChanged(session);
-        if (outcome.Persistence == SessionPersistence.Snapshot)
-        {
-            await SaveSnapshotAsync(session).ConfigureAwait(false);
-        }
-        else if (outcome.Persistence == SessionPersistence.SnapshotAndNotification)
-        {
-            await SaveAndNotifyAsync(session).ConfigureAwait(false);
-        }
-
-        return true;
-    }
-
-    /// <summary>
-    /// Performs the terminal transition under the session lock: running steps are swept into the
-    /// outcome, the failing step records its error and exit code, and the end time is set once.
-    /// A session that already finished is left completely untouched, including its steps.
-    /// </summary>
-    private static bool TryFinalizeSession(RunSession session, SessionOutcome outcome)
-    {
-        lock (session)
-        {
-            if (session.IsFinished)
-            {
-                return false;
-            }
-
-            var now = DateTimeOffset.UtcNow;
-            if (outcome.FailedStep is { } failedStep)
-            {
-                failedStep.State = RunStepState.Failed;
-                failedStep.EndedAt = now;
-                failedStep.Duration = failedStep.StartedAt is { } started ? now - started : null;
-                if (outcome.Error is not null)
-                {
-                    failedStep.Error = outcome.Error;
-                }
-
-                if (outcome.ExitCode is not null)
-                {
-                    failedStep.ExitCode = outcome.ExitCode;
-                }
-            }
-
-            SweepRunningSteps(session, outcome.RunningSteps, outcome.Error, now);
-            session.State = outcome.State;
-            if (outcome.Error is not null)
-            {
-                session.Error = outcome.Error;
-            }
-
-            session.StatusMessage = outcome.StatusMessage;
-            CompleteSession(session);
-            return true;
-        }
-    }
-
-    private static void SweepRunningSteps(
-        RunSession session,
-        RunningStepDisposition disposition,
-        string? error,
-        DateTimeOffset now)
-    {
-        if (disposition == RunningStepDisposition.Leave)
+        if (context is null)
         {
             return;
         }
 
-        foreach (var step in session.Steps)
+        switch (disposition)
         {
-            if (step.State != RunStepState.Running)
-            {
-                continue;
-            }
+            case SessionResourceDisposition.StopAll:
+                await StopFlutterAsync(context).ConfigureAwait(false);
+                await StopMetroAsync(context).ConfigureAwait(false);
+                await DetachLogcatAsync(context).ConfigureAwait(false);
+                break;
+            case SessionResourceDisposition.StopMetro:
+                await StopMetroAsync(context).ConfigureAwait(false);
+                break;
+            case SessionResourceDisposition.LeaveRunning:
+            default:
+                break;
+        }
+    }
 
-            if (disposition == RunningStepDisposition.Cancel)
-            {
-                step.State = RunStepState.Cancelled;
-            }
-            else
-            {
-                step.State = RunStepState.Failed;
-                if (error is not null)
-                {
-                    step.Error ??= error;
-                }
-            }
+    void IRunSessionFinalizationEffects.RaiseChanged(RunSession session) => RaiseChanged(session);
 
-            step.EndedAt = now;
-            step.Duration = step.StartedAt is { } started ? now - started : null;
+    async Task IRunSessionFinalizationEffects.PersistAsync(RunSession session, SessionPersistence persistence)
+    {
+        if (persistence == SessionPersistence.Snapshot)
+        {
+            await SaveSnapshotAsync(session).ConfigureAwait(false);
+        }
+        else if (persistence == SessionPersistence.SnapshotAndNotification)
+        {
+            await SaveAndNotifyAsync(session).ConfigureAwait(false);
         }
     }
 
@@ -2641,13 +2571,6 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         step.Duration = step.StartedAt is { } started ? now - started : null;
     }
 
-    private static void CompleteSession(RunSession session)
-    {
-        var now = DateTimeOffset.UtcNow;
-        session.EndedAt = now;
-        session.Duration = now >= session.StartedAt ? now - session.StartedAt : TimeSpan.Zero;
-    }
-
     private void RaiseChanged(RunSession session) =>
         SessionChanged?.Invoke(this, new RunSessionChangedEventArgs(session));
 
@@ -2694,45 +2617,6 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             },
         });
 
-    private sealed class RunContext
-    {
-        public RunContext(RunSession session, RunRequest request)
-        {
-            Session = session;
-            Request = request;
-        }
-
-        public RunSession Session { get; }
-
-        public RunRequest Request { get; }
-
-        public CancellationTokenSource Cancellation { get; } = new();
-
-        public CancellationTokenSource? Linked { get; set; }
-
-        public ILogcatSession? Logcat { get; set; }
-
-        public FlutterRunSession? Flutter { get; set; }
-
-        public RunStep? FlutterStep { get; set; }
-
-        public Queue<string> FlutterTail { get; } = new();
-
-        public MetroSession? Metro { get; set; }
-
-        public RunStep? MetroStep { get; set; }
-
-        public Queue<string> MetroTail { get; } = new();
-
-        public EventHandler<LogEntriesEventArgs>? EntriesHandler { get; set; }
-
-        public EventHandler<CrashDetectedEventArgs>? CrashHandler { get; set; }
-
-        public bool StoppedByUser { get; set; }
-
-        public bool LaunchWasSkipped { get; set; }
-    }
-
     private enum CustomStepResult
     {
         Succeeded,
@@ -2745,73 +2629,6 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         Continue,
         PartiallyFailed,
         Terminal,
-    }
-
-    /// <summary>What happens to the steps that are still running when a session is finalized.</summary>
-    private enum RunningStepDisposition
-    {
-        /// <summary>Running steps keep their current state.</summary>
-        Leave,
-
-        /// <summary>Running steps are marked as cancelled.</summary>
-        Cancel,
-
-        /// <summary>Running steps are marked as failed with the session error.</summary>
-        Fail,
-    }
-
-    /// <summary>Which child processes a terminal transition stops before it completes.</summary>
-    private enum SessionResourceDisposition
-    {
-        /// <summary>Stop Flutter, Metro, and logcat.</summary>
-        StopAll,
-
-        /// <summary>Stop Metro only, keeping an attached Flutter session and logcat running.</summary>
-        StopMetro,
-
-        /// <summary>Leave every child process running, for outcomes where the app stays live.</summary>
-        LeaveRunning,
-    }
-
-    /// <summary>What is written when a session reaches its terminal state.</summary>
-    private enum SessionPersistence
-    {
-        /// <summary>Only the in-memory session changes; nothing is written or notified.</summary>
-        None,
-
-        /// <summary>The session snapshot is saved without a session notification.</summary>
-        Snapshot,
-
-        /// <summary>The snapshot is saved and the session notification is raised.</summary>
-        SnapshotAndNotification,
-    }
-
-    /// <summary>One terminal transition applied by <see cref="FinalizeSessionAsync"/>.</summary>
-    private sealed class SessionOutcome
-    {
-        /// <summary>Gets the terminal session state.</summary>
-        public RunSessionState State { get; init; }
-
-        /// <summary>Gets the error text, or null to keep the error already recorded.</summary>
-        public string? Error { get; init; }
-
-        /// <summary>Gets the status message shown for the finished session.</summary>
-        public required string StatusMessage { get; init; }
-
-        /// <summary>Gets what happens to steps that are still running.</summary>
-        public RunningStepDisposition RunningSteps { get; init; }
-
-        /// <summary>Gets the step whose failure triggered the transition.</summary>
-        public RunStep? FailedStep { get; init; }
-
-        /// <summary>Gets the exit code recorded on the failed step.</summary>
-        public int? ExitCode { get; init; }
-
-        /// <summary>Gets which child processes are stopped before the transition.</summary>
-        public SessionResourceDisposition Resources { get; init; } = SessionResourceDisposition.StopAll;
-
-        /// <summary>Gets what is persisted after the transition.</summary>
-        public SessionPersistence Persistence { get; init; } = SessionPersistence.SnapshotAndNotification;
     }
 
     private sealed class MetroLease

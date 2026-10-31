@@ -391,18 +391,6 @@ public static class RunConfigurationValidator
                     "An Android target framework is required, such as net9.0-android."));
             }
         }
-        else if (configuration.Kind == RunConfigurationKind.ReactNative)
-        {
-            if (string.IsNullOrWhiteSpace(configuration.Build.Task))
-            {
-                errors.Add(new("build.task", "A Gradle task is required for the android host build."));
-            }
-
-            if (string.IsNullOrWhiteSpace(configuration.Artifact.Glob))
-            {
-                errors.Add(new("artifact.glob", "An artifact glob is required so the built APK can be found."));
-            }
-        }
         else if (configuration.Kind == RunConfigurationKind.Apk)
         {
             if (project.ApkFiles.Count == 0 && string.IsNullOrWhiteSpace(configuration.Artifact.Glob))

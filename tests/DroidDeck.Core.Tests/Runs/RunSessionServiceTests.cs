@@ -631,6 +631,32 @@ public sealed class RunSessionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Start_RegistersTheSessionAndRaisesSessionChangedBeforeReturning()
+    {
+        await using var service = CreateService();
+        var changes = new List<RunSession>();
+        service.SessionChanged += (_, args) => changes.Add(args.Session);
+        var configuration = new RunConfiguration
+        {
+            Name = "preview",
+            Kind = RunConfigurationKind.Custom,
+        };
+
+        var handle = service.Start(CreateRequest(configuration, dryRun: true));
+
+        Assert.NotEmpty(changes);
+        Assert.Same(handle.Session, changes[0]);
+        Assert.Contains(handle.Session, changes);
+        Assert.Same(handle.Session, Assert.Single(service.Sessions));
+        Assert.Same(handle.Session, service.GetSession(handle.Session.Id));
+
+        var completed = await handle.Completion;
+
+        Assert.Same(handle.Session, completed);
+        Assert.Equal(RunSessionState.Succeeded, completed.State);
+    }
+
+    [Fact]
     public async Task FailedRun_RaisesChangedBeforeSavingAndNotifying()
     {
         var order = new List<string>();
@@ -1255,7 +1281,8 @@ public sealed class RunSessionServiceTests : IDisposable
         RunConfiguration configuration,
         DeviceInfo? device = null,
         RunOptions? options = null,
-        ProjectKind projectKind = ProjectKind.Custom)
+        ProjectKind projectKind = ProjectKind.Custom,
+        bool dryRun = false)
     {
         var project = new ProjectModel
         {
@@ -1281,6 +1308,7 @@ public sealed class RunSessionServiceTests : IDisposable
             Device = device ?? new DeviceInfo { Serial = "emulator-5554" },
             DeviceSerial = device?.Serial ?? "emulator-5554",
             Options = options ?? new RunOptions(),
+            DryRun = dryRun,
         };
     }
 

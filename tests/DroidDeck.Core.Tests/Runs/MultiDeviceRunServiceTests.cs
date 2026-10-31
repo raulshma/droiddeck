@@ -119,6 +119,27 @@ public sealed class MultiDeviceRunServiceTests
     }
 
     [Fact]
+    public async Task Start_ReturnsTheRegisteredGroupBeforeAnyDeviceRuns()
+    {
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sessions = new FakeRunSessions { RunGate = gate.Task };
+        using var coordinator = new DeviceOperationCoordinator();
+        using var service = new MultiDeviceRunService(sessions, coordinator);
+
+        var handle = service.Start(CreateRequest(Devices("a", "b")));
+
+        Assert.Same(handle.Group, Assert.Single(service.Groups));
+        Assert.Equal(["a", "b"], handle.Group.Devices.Select(device => device.Serial));
+        Assert.False(handle.Completion.IsCompleted);
+
+        gate.SetResult();
+        var completed = await handle.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Same(handle.Group, completed);
+        Assert.Equal(RunGroupState.Succeeded, completed.State);
+    }
+
+    [Fact]
     public async Task RunAsync_FailsAllDevicesWhenTheFirstBuildProducesNoArtifact()
     {
         var sessions = new FakeRunSessions { ProduceArtifact = false };
@@ -194,48 +215,60 @@ public sealed class MultiDeviceRunServiceTests
             remove { }
         }
 
-        public async Task<RunSession> RunAsync(RunRequest request, CancellationToken cancellationToken = default)
+        public RunHandle Start(RunRequest request, CancellationToken cancellationToken = default)
         {
             Requests.Add(request);
             var current = Interlocked.Increment(ref _active);
             MaxConcurrent = Math.Max(MaxConcurrent, current);
             Started.TrySetResult();
+
+            var serial = request.DeviceSerial ?? request.Device?.Serial ?? string.Empty;
+            var session = new RunSession
+            {
+                ProjectId = request.Project.Id,
+                ProjectName = request.Project.Name,
+                ProjectRoot = request.Project.RootPath,
+                ConfigurationId = request.Configuration.Id,
+                ConfigurationName = request.Configuration.Name,
+                DeviceSerial = serial,
+                DeviceName = request.Device?.Model ?? serial,
+                GroupId = request.GroupId,
+                State = FailingSerials.Contains(serial) ? RunSessionState.Failed : RunSessionState.Succeeded,
+                Error = FailingSerials.Contains(serial) ? "INSTALL_FAILED_INSUFFICIENT_STORAGE" : null,
+                PackageName = "com.example.app",
+                Activity = "com.example.app.MainActivity",
+            };
+            if (ProduceArtifact)
+            {
+                session.ArtifactPath = "/tmp/app.apk";
+                session.ArtifactFiles = ["/tmp/app.apk"];
+            }
+
+            _sessions.Add(session);
+            SessionChanged?.Invoke(this, new RunSessionChangedEventArgs(session));
+            return new RunHandle(session, CompleteAsync(session, cancellationToken));
+        }
+
+        public async Task<RunSession> RunAsync(RunRequest request, CancellationToken cancellationToken = default)
+        {
+            var handle = Start(request, cancellationToken);
+            return await handle.Completion.ConfigureAwait(false);
+        }
+
+        private async Task<RunSession> CompleteAsync(RunSession session, CancellationToken cancellationToken)
+        {
             try
             {
                 if (RunGate is { } gate)
                 {
-                    await gate.WaitAsync(cancellationToken);
+                    await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 }
 
                 if (Delay > TimeSpan.Zero)
                 {
-                    await Task.Delay(Delay, cancellationToken);
+                    await Task.Delay(Delay, cancellationToken).ConfigureAwait(false);
                 }
 
-                var serial = request.DeviceSerial ?? request.Device?.Serial ?? string.Empty;
-                var session = new RunSession
-                {
-                    ProjectId = request.Project.Id,
-                    ProjectName = request.Project.Name,
-                    ProjectRoot = request.Project.RootPath,
-                    ConfigurationId = request.Configuration.Id,
-                    ConfigurationName = request.Configuration.Name,
-                    DeviceSerial = serial,
-                    DeviceName = request.Device?.Model ?? serial,
-                    GroupId = request.GroupId,
-                    State = FailingSerials.Contains(serial) ? RunSessionState.Failed : RunSessionState.Succeeded,
-                    Error = FailingSerials.Contains(serial) ? "INSTALL_FAILED_INSUFFICIENT_STORAGE" : null,
-                    PackageName = "com.example.app",
-                    Activity = "com.example.app.MainActivity",
-                };
-                if (ProduceArtifact)
-                {
-                    session.ArtifactPath = "/tmp/app.apk";
-                    session.ArtifactFiles = ["/tmp/app.apk"];
-                }
-
-                _sessions.Add(session);
-                SessionChanged?.Invoke(this, new RunSessionChangedEventArgs(session));
                 return session;
             }
             finally

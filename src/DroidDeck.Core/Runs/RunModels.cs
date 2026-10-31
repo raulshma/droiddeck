@@ -278,6 +278,13 @@ public sealed class RunSession
         or RunSessionState.Cancelled or RunSessionState.PartiallyFailed;
 }
 
+/// <summary>
+/// A run that has been started. The session is registered and <see cref="IRunSessionService.SessionChanged"/>
+/// has already been raised when the service returns this handle; <see cref="Completion"/> finishes when the
+/// run reaches a terminal state.
+/// </summary>
+public sealed record RunHandle(RunSession Session, Task<RunSession> Completion);
+
 /// <summary>A request to run a project configuration.</summary>
 public sealed class RunRequest
 {
@@ -393,7 +400,15 @@ public interface IRunSessionService
     /// <summary>Gets the in-memory sessions, newest first.</summary>
     IReadOnlyList<RunSession> Sessions { get; }
 
-    /// <summary>Starts a run and returns once the session reaches Running, Succeeded, or a terminal state.</summary>
+    /// <summary>
+    /// Starts a run, registering the session and raising <see cref="SessionChanged"/> before returning.
+    /// </summary>
+    /// <param name="request">The run request.</param>
+    /// <param name="cancellationToken">Cancels the run.</param>
+    /// <returns>The started session and a completion task that finishes when the run reaches a terminal state.</returns>
+    RunHandle Start(RunRequest request, CancellationToken cancellationToken = default);
+
+    /// <summary>Starts a run and returns after it reaches a terminal state.</summary>
     Task<RunSession> RunAsync(RunRequest request, CancellationToken cancellationToken = default);
 
     /// <summary>Gets a session by identifier.</summary>
