@@ -12,7 +12,7 @@
     <DroidDeckWindowsTargetFramework>net10.0-windows10.0.26100.0</DroidDeckWindowsTargetFramework>
     <DroidDeckWindowsMinVersion>10.0.17763.0</DroidDeckWindowsMinVersion>
     <DroidDeckWindowsAppSdkVersion>2.5.1</DroidDeckWindowsAppSdkVersion>
-    <DroidDeckVersion>0.0.1-alpha</DroidDeckVersion>
+    <DroidDeckVersion>0.0.2-alpha</DroidDeckVersion>
     <Version>$(DroidDeckVersion)</Version>
     <DroidDeckRepositoryUrl>https://github.com/raulshma/droiddeck</DroidDeckRepositoryUrl>
     <RepoRoot>$(MSBuildThisFileDirectory)</RepoRoot>

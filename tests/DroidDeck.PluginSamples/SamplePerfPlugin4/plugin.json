@@ -5,7 +5,7 @@
   "author": "DroidDeck",
   "description": "A minimal plugin used by the five-plugin startup budget test.",
   "apiVersion": "1.0",
-  "minHostVersion": "0.0.1-alpha",
+  "minHostVersion": "0.0.2-alpha",
   "entryAssembly": "SamplePerfPlugin1.dll",
   "entryType": "SamplePerfPlugin1.PerfPlugin",
   "homepage": "https://github.com/raulshma/droiddeck",

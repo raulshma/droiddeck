@@ -5,7 +5,7 @@
   "author": "DroidDeck",
   "description": "A sample plugin that contributes a log detail renderer and a chart renderer to every View as menu.",
   "apiVersion": "1.0",
-  "minHostVersion": "0.0.1-alpha",
+  "minHostVersion": "0.0.2-alpha",
   "entryAssembly": "SampleRendererPlugin.dll",
   "entryType": "SampleRendererPlugin.SampleRendererPlugin",
   "capabilities": [

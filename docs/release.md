@@ -40,7 +40,7 @@ investigating a failure. Never rebuild a distributed artifact from a different
 commit.
 
 ```powershell
-$version = "0.0.1-alpha"
+$version = "0.0.2-alpha"
 git switch --detach "v$version"
 dotnet restore DroidDeck.slnx
 dotnet build DroidDeck.slnx -c Release --no-restore
@@ -67,7 +67,7 @@ The release workflow creates the zip with a single
 `DroidDeck-<version>-win-x64` folder and enforces both budgets:
 
 ```powershell
-$version = "0.0.1-alpha"
+$version = "0.0.2-alpha"
 Compress-Archive -Path "artifacts/publish/DroidDeck-$version-win-x64" `
   -DestinationPath "artifacts/DroidDeck-$version-win-x64.zip" -CompressionLevel Optimal
 
@@ -93,7 +93,7 @@ process start to the first main window with plugins disabled and an isolated dat
 directory, which is a repeatable proxy for cold start to interactive.
 
 ```powershell
-$version = "0.0.1-alpha"
+$version = "0.0.2-alpha"
 dotnet run --project tools/DroidDeck.ReleaseCheck -c Release -- `
   startup --exe "artifacts/publish/DroidDeck-$version-win-x64/DroidDeck.exe" `
   --runs 10 --warmup-runs 2 `
@@ -118,9 +118,11 @@ release decision.
 
 ## 5. Eight-hour soak
 
-Deferred for `0.0.1-alpha` under the [pre-1.0 alpha policy](#pre-10-alpha-policy)
-and listed as a known limitation in the release notes. Required again from the
-next alpha that changes long-running session, mirror, or log paths, and for 1.0.0.
+Deferred for `0.0.2-alpha` under the [pre-1.0 alpha policy](#pre-10-alpha-policy)
+and listed as a known limitation in the release notes. The supervised
+child-process refactor touches session and mirror paths, so this deferral is also
+recorded as an accepted risk; the soak is required again from the next alpha that
+changes those paths behaviourally, and for 1.0.0.
 
 Prepare the reference workload: three devices or emulators, continuous logcat at
 about 2,000 lines per second, two active mirrors, twenty runs, and repeated
@@ -178,7 +180,7 @@ Checklist:
 ## 7. Accessibility and compatibility
 
 The hands-on Narrator, scaling, and pseudo-locale pass is deferred for
-`0.0.1-alpha` under the [pre-1.0 alpha policy](#pre-10-alpha-policy) and listed
+`0.0.2-alpha` under the [pre-1.0 alpha policy](#pre-10-alpha-policy) and listed
 as a known limitation. The automated architecture and accessibility guard tests
 still run in CI. Windows 10 22H2 remains best effort; Windows 11 24H2 and 25H2
 are the supported targets.
@@ -199,7 +201,7 @@ Run the manual pass in [accessibility and languages](accessibility.md), then ver
 
 ## 8. Clean-machine portable check
 
-Deferred for `0.0.1-alpha` under the [pre-1.0 alpha policy](#pre-10-alpha-policy)
+Deferred for `0.0.2-alpha` under the [pre-1.0 alpha policy](#pre-10-alpha-policy)
 and listed as a known limitation. The alpha publishes the same self-contained
 portable folder that the 1.0.0 checklist verifies; run this section before the
 first beta.
@@ -278,10 +280,10 @@ limitations in the release notes.
 | CI green | Release workflow run link | Release engineer | Pending |
 | Size | `docs/perf/results/<date>-size-<version>.json` | Release engineer | Pending |
 | Startup | `docs/perf/results/<date>-startup-<version>.json` | Release engineer | Pending |
-| Eight-hour soak | Deferred by the [pre-1.0 alpha policy](#pre-10-alpha-policy); listed in release notes | Release engineer | Deferred for 0.0.1-alpha |
+| Eight-hour soak | Deferred by the [pre-1.0 alpha policy](#pre-10-alpha-policy); listed in release notes as an accepted risk | Release engineer | Deferred for 0.0.2-alpha |
 | Security review | [Security review](security-review.md) | Security reviewer | Reviewed, accepted risks recorded |
-| Accessibility | Deferred by the [pre-1.0 alpha policy](#pre-10-alpha-policy); automated guards in CI | Release engineer | Deferred for 0.0.1-alpha |
-| Clean machine | Deferred by the [pre-1.0 alpha policy](#pre-10-alpha-policy); listed in release notes | Release engineer | Deferred for 0.0.1-alpha |
+| Accessibility | Deferred by the [pre-1.0 alpha policy](#pre-10-alpha-policy); automated guards in CI | Release engineer | Deferred for 0.0.2-alpha |
+| Clean machine | Deferred by the [pre-1.0 alpha policy](#pre-10-alpha-policy); listed in release notes | Release engineer | Deferred for 0.0.2-alpha |
 | Release notes | `docs/releases/<tag>.md` | Release manager | Pending |
 
 A gate is complete only when its evidence is attached. Known issues are published

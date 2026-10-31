@@ -6,13 +6,13 @@ edits.
 
 ## Install
 
-The 0.0.1-alpha packages are attached to the
-[release](https://github.com/raulshma/droiddeck/releases/tag/v0.0.1-alpha), not
+The 0.0.2-alpha packages are attached to the
+[release](https://github.com/raulshma/droiddeck/releases/tag/v0.0.2-alpha), not
 NuGet.org. Download the `.nupkg` files into one folder, then install the
 template package from it:
 
 ```text
-dotnet new install <sdk-folder>\DroidDeck.Plugin.Templates.0.0.1-alpha.nupkg
+dotnet new install <sdk-folder>\DroidDeck.Plugin.Templates.0.0.2-alpha.nupkg
 ```
 
 ## Create a plugin

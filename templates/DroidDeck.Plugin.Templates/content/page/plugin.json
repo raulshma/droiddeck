@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "A DroidDeck plugin that contributes a navigation page.",
   "apiVersion": "1.0",
-  "minHostVersion": "0.0.1-alpha",
+  "minHostVersion": "0.0.2-alpha",
   "entryAssembly": "DroidDeckPlugin.dll",
   "entryType": "DroidDeckPlugin.DroidDeckPlugin",
   "capabilities": ["ui-page"]

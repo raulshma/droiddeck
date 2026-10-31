@@ -33,7 +33,7 @@ Sources are stored in `<data>\catalog\sources.json`, fetched catalogs are cached
         {
           "version": "1.2.0",
           "apiVersion": "1.0",
-          "minHostVersion": "0.0.1-alpha",
+          "minHostVersion": "0.0.2-alpha",
           "maxHostVersion": "1.9.9",
           "downloadUrl": "https://example.com/device-notes-1.2.0.ddplugin",
           "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
