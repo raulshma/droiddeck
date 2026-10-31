@@ -64,7 +64,10 @@ public sealed record PluginSettingsExport(
 /// <c>values</c> (all values, including unknown keys, which are preserved), and
 /// <c>secrets</c> (the names of secret fields that are set). Secret values never
 /// appear in the file: they live only in the secret store under the
-/// <c>&lt;pluginId&gt;.&lt;fieldKey&gt;</c> name.
+/// length-prefixed <c>_p&lt;pluginIdLength&gt;-&lt;pluginId&gt;.&lt;fieldKey&gt;</c>
+/// name. Secrets written by older versions under the ambiguous
+/// <c>&lt;pluginId&gt;.&lt;fieldKey&gt;</c> name are still read and are migrated to
+/// the current name when they are read, written, or removed.
 /// </summary>
 public sealed class SchemaPluginSettings : IPluginSettings, IDisposable
 {
@@ -111,7 +114,7 @@ public sealed class SchemaPluginSettings : IPluginSettings, IDisposable
     public PluginSettingsSchema Schema => _schema;
 
     /// <summary>Gets the DPAPI secret-store name of a secret field.</summary>
-    public string SecretName(string fieldKey) => BuildSecretName(_pluginId, fieldKey);
+    public string SecretName(string fieldKey) => PluginSecretName.Build(_pluginId, fieldKey);
 
     /// <inheritdoc />
     public async Task<string?> GetAsync(string key, CancellationToken cancellationToken = default)
@@ -126,7 +129,7 @@ public sealed class SchemaPluginSettings : IPluginSettings, IDisposable
             var field = _schema.Find(key);
             if (field is { Type: PluginSettingsFieldType.Secret })
             {
-                return await _secrets.GetAsync(SecretName(key), cancellationToken).ConfigureAwait(false);
+                return await ReadSecretAsync(key, cancellationToken).ConfigureAwait(false);
             }
 
             var node = state.Values[key] ?? field?.Default?.DeepClone();
@@ -170,7 +173,7 @@ public sealed class SchemaPluginSettings : IPluginSettings, IDisposable
             var field = _schema.Find(key);
             if (field is { Type: PluginSettingsFieldType.Secret })
             {
-                await _secrets.RemoveAsync(SecretName(key), cancellationToken).ConfigureAwait(false);
+                await RemoveSecretAsync(key, cancellationToken).ConfigureAwait(false);
                 changed = true;
             }
 
@@ -496,7 +499,7 @@ public sealed class SchemaPluginSettings : IPluginSettings, IDisposable
     {
         if (value is null)
         {
-            await _secrets.RemoveAsync(SecretName(key), cancellationToken).ConfigureAwait(false);
+            await RemoveSecretAsync(key, cancellationToken).ConfigureAwait(false);
             var (_, markers) = await LoadCoreAsync(cancellationToken).ConfigureAwait(false);
             if (markers.Remove(key))
             {
@@ -505,10 +508,89 @@ public sealed class SchemaPluginSettings : IPluginSettings, IDisposable
         }
         else
         {
-            await _secrets.SetAsync(SecretName(key), value, cancellationToken).ConfigureAwait(false);
+            await StoreSecretAsync(key, value, cancellationToken).ConfigureAwait(false);
             var (_, markers) = await LoadCoreAsync(cancellationToken).ConfigureAwait(false);
             markers.Add(key);
             await SaveCoreAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Reads a secret under the current name, falling back to the legacy
+    /// <c>&lt;pluginId&gt;.&lt;fieldKey&gt;</c> name so entries written by older
+    /// versions stay readable. A legacy hit is migrated to the current name and
+    /// the legacy alias is deleted. Callers must hold <see cref="_gate"/>.
+    /// </summary>
+    private async Task<string?> ReadSecretAsync(string key, CancellationToken cancellationToken)
+    {
+        var currentName = SecretName(key);
+        var value = await _secrets.GetAsync(currentName, cancellationToken).ConfigureAwait(false);
+        if (value is not null)
+        {
+            return value;
+        }
+
+        var legacyName = PluginSecretName.BuildLegacy(_pluginId, key);
+        if (legacyName is null)
+        {
+            return null;
+        }
+
+        value = await _secrets.GetAsync(legacyName, cancellationToken).ConfigureAwait(false);
+        if (value is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            await _secrets.SetAsync(currentName, value, cancellationToken).ConfigureAwait(false);
+            await _secrets.RemoveAsync(legacyName, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // A failed migration must not hide a readable secret; the next read
+            // tries again.
+            _logger.LogWarning(
+                exception,
+                "Could not migrate the legacy secret name for plugin {PluginId}.",
+                _pluginId);
+        }
+
+        return value;
+    }
+
+    /// <summary>
+    /// Deletes both the legacy and the current name of a secret, so a removal
+    /// never leaves an alias behind. The legacy alias goes first: if deleting
+    /// the current entry fails, the secret is still consistently reachable
+    /// under the current name rather than only under the legacy alias. Callers
+    /// must hold <see cref="_gate"/>.
+    /// </summary>
+    private async Task RemoveSecretAsync(string key, CancellationToken cancellationToken)
+    {
+        var legacyName = PluginSecretName.BuildLegacy(_pluginId, key);
+        if (legacyName is not null)
+        {
+            await _secrets.RemoveAsync(legacyName, cancellationToken).ConfigureAwait(false);
+        }
+
+        await _secrets.RemoveAsync(SecretName(key), cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Stores a secret under the current name and deletes the legacy entry, so
+    /// installations written by older versions migrate on their next write.
+    /// Callers must hold <see cref="_gate"/>.
+    /// </summary>
+    private async Task StoreSecretAsync(string key, string value, CancellationToken cancellationToken)
+    {
+        await _secrets.SetAsync(SecretName(key), value, cancellationToken).ConfigureAwait(false);
+
+        var legacyName = PluginSecretName.BuildLegacy(_pluginId, key);
+        if (legacyName is not null)
+        {
+            await _secrets.RemoveAsync(legacyName, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -686,7 +768,7 @@ public sealed class SchemaPluginSettings : IPluginSettings, IDisposable
 
             try
             {
-                await _secrets.SetAsync(SecretName(field.Key), secret, cancellationToken).ConfigureAwait(false);
+                await StoreSecretAsync(field.Key, secret, cancellationToken).ConfigureAwait(false);
                 markers.Add(field.Key);
                 if (_logger.IsEnabled(LogLevel.Information))
                 {
@@ -785,11 +867,11 @@ public sealed class SchemaPluginSettings : IPluginSettings, IDisposable
             return false;
         }
 
-        var value = await _secrets.GetAsync(SecretName(oldKey), cancellationToken).ConfigureAwait(false);
-        await _secrets.RemoveAsync(SecretName(oldKey), cancellationToken).ConfigureAwait(false);
+        var value = await ReadSecretAsync(oldKey, cancellationToken).ConfigureAwait(false);
+        await RemoveSecretAsync(oldKey, cancellationToken).ConfigureAwait(false);
         if (value is not null)
         {
-            await _secrets.SetAsync(SecretName(newKey), value, cancellationToken).ConfigureAwait(false);
+            await StoreSecretAsync(newKey, value, cancellationToken).ConfigureAwait(false);
         }
 
         markers.Add(newKey);
@@ -870,20 +952,5 @@ public sealed class SchemaPluginSettings : IPluginSettings, IDisposable
         {
             // Same as above: leave the file alone.
         }
-    }
-
-    private static string BuildSecretName(string pluginId, string fieldKey)
-    {
-        var name = $"{pluginId}.{fieldKey}";
-        if (name.Length > 128 ||
-            !name.All(static c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '-'))
-        {
-            throw new ArgumentException(
-                "The plugin id and field key must form a secret name of 1-128 characters of " +
-                    "letters, digits, dots, underscores, or hyphens.",
-                nameof(fieldKey));
-        }
-
-        return name;
     }
 }

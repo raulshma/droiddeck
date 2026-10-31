@@ -9,6 +9,9 @@ namespace DroidDeck.Plugins.Tests;
 public sealed class SchemaPluginSettingsTests : IDisposable
 {
     private const string PluginId = "com.example.sample";
+    private const string SecretSchema = """
+        { "version": 1, "properties": { "apiKey": { "type": "string", "format": "secret" } } }
+        """;
 
     private readonly TempDirectory _temp = new();
     private readonly DpapiSecretStore _secrets;
@@ -309,7 +312,7 @@ public sealed class SchemaPluginSettingsTests : IDisposable
         Assert.True(result.IsSaved);
         Assert.True(await settings.IsSecretSetAsync("apiKey"));
         Assert.Equal(secret, await settings.GetAsync("apiKey"));
-        Assert.Equal($"{PluginId}.apiKey", settings.SecretName("apiKey"));
+        Assert.Equal("_p18-com.example.sample.apiKey", settings.SecretName("apiKey"));
 
         // The plaintext never reaches the settings file or any backup of it.
         foreach (var file in Directory.EnumerateFiles(directory, "settings.json*", SearchOption.AllDirectories))
@@ -363,6 +366,7 @@ public sealed class SchemaPluginSettingsTests : IDisposable
         // The plaintext moved into the DPAPI store and is readable only there.
         Assert.True(await settings.IsSecretSetAsync("apiKey"));
         Assert.Equal(secret, await settings.GetAsync("apiKey"));
+        Assert.Equal(secret, await _secrets.GetAsync(settings.SecretName("apiKey")));
 
         // Saving rewrites the file without the plaintext, including the backup
         // the atomic write keeps of the previous contents.
@@ -418,6 +422,143 @@ public sealed class SchemaPluginSettingsTests : IDisposable
     }
 
     [Fact]
+    public async Task LegacySecretNamesAreReadAndMigratedOnAccess()
+    {
+        var directory = NewPluginDirectory();
+        const string secret = "legacy-store-secret-8812";
+        await _secrets.SetAsync($"{PluginId}.apiKey", secret);
+        await File.WriteAllTextAsync(
+            Path.Combine(directory, "settings.json"),
+            """{ "settingsVersion": 1, "values": {}, "secrets": ["apiKey"] }""");
+        using var settings = await CreateStoreAsync(SecretSchema, directory);
+
+        Assert.True(await settings.IsSecretSetAsync("apiKey"));
+        Assert.Equal(secret, await settings.GetAsync("apiKey"));
+        Assert.NotEqual($"{PluginId}.apiKey", settings.SecretName("apiKey"));
+
+        // Reading migrated the value to the current name and removed the alias.
+        Assert.Equal(secret, await _secrets.GetAsync(settings.SecretName("apiKey")));
+        Assert.Null(await _secrets.GetAsync($"{PluginId}.apiKey"));
+    }
+
+    [Fact]
+    public async Task LegacySecretsBeyondTheCurrentNameLimitStillMigrate()
+    {
+        var directory = NewPluginDirectory();
+        var pluginId = new string('p', 60);
+        var key = new string('k', 64);
+        const string secret = "legacy-oversized-secret-9913";
+        Assert.Equal(125, $"{pluginId}.{key}".Length);
+        await _secrets.SetAsync($"{pluginId}.{key}", secret);
+        await File.WriteAllTextAsync(
+            Path.Combine(directory, "settings.json"),
+            """{ "settingsVersion": 1, "values": {}, "secrets": ["KEY"] }""".Replace("KEY", key));
+        var schema = """{ "version": 1, "properties": { "KEY": { "type": "string", "format": "secret" } } }"""
+            .Replace("KEY", key);
+        using var settings = await CreateStoreAsync(schema, directory, pluginId);
+
+        Assert.True(await settings.IsSecretSetAsync(key));
+        Assert.Equal(secret, await settings.GetAsync(key));
+
+        // The length-prefixed name would exceed the store limit, so the read
+        // migrated the value to the stable hashed fallback instead.
+        var currentName = settings.SecretName(key);
+        Assert.StartsWith("_h", currentName, StringComparison.Ordinal);
+        Assert.True(PluginSecretName.IsValidName(currentName));
+        Assert.Equal(secret, await _secrets.GetAsync(currentName));
+        Assert.Null(await _secrets.GetAsync($"{pluginId}.{key}"));
+    }
+
+    [Fact]
+    public async Task WritingASecretMigratesItFromTheLegacyName()
+    {
+        var directory = NewPluginDirectory();
+        await _secrets.SetAsync($"{PluginId}.apiKey", "legacy-store-secret-3301");
+        using var settings = await CreateStoreAsync(SecretSchema, directory);
+
+        await settings.SetSecretAsync("apiKey", "current-store-secret-3302");
+
+        Assert.Equal(
+            "current-store-secret-3302",
+            await _secrets.GetAsync(settings.SecretName("apiKey")));
+        Assert.Null(await _secrets.GetAsync($"{PluginId}.apiKey"));
+        Assert.Equal(settings.SecretName("apiKey"), Assert.Single(await _secrets.ListNamesAsync()));
+    }
+
+    [Fact]
+    public async Task ClearingASecretDeletesTheCurrentAndLegacyEntries()
+    {
+        var directory = NewPluginDirectory();
+        using var settings = await CreateStoreAsync(SecretSchema, directory);
+        var currentName = settings.SecretName("apiKey");
+        await _secrets.SetAsync(currentName, "current-store-secret-4401");
+        await _secrets.SetAsync($"{PluginId}.apiKey", "legacy-store-secret-4402");
+
+        await settings.ClearSecretAsync("apiKey");
+
+        Assert.Null(await _secrets.GetAsync(currentName));
+        Assert.Null(await _secrets.GetAsync($"{PluginId}.apiKey"));
+        Assert.Empty(await _secrets.ListNamesAsync());
+    }
+
+    [Fact]
+    public async Task RemovalPathDeletesSecretsUnderTheCurrentScheme()
+    {
+        // Uninstall/removal cleanup removes each declared secret field through
+        // RemoveAsync; it must delete the current names, not only legacy aliases.
+        const string schema = """
+            { "version": 1, "properties": {
+                "apiKey": { "type": "string", "format": "secret" },
+                "token": { "type": "string", "format": "secret" }
+              } }
+            """;
+        var directory = NewPluginDirectory();
+        using var settings = await CreateStoreAsync(schema, directory);
+        foreach (var key in new[] { "apiKey", "token" })
+        {
+            await settings.SetSecretAsync(key, $"current-store-secret-{key}");
+            await _secrets.SetAsync($"{PluginId}.{key}", $"legacy-store-secret-{key}");
+        }
+
+        foreach (var field in settings.Schema.Fields)
+        {
+            await settings.RemoveAsync(field.Key);
+        }
+
+        Assert.Empty(await _secrets.ListNamesAsync());
+        Assert.False(await settings.IsSecretSetAsync("apiKey"));
+        Assert.False(await settings.IsSecretSetAsync("token"));
+    }
+
+    [Fact]
+    public async Task PluginsWithDottedIdsAndKeysCannotReadEachOthersSecrets()
+    {
+        var firstDirectory = _temp.CreateDirectory("plugins", "first");
+        var secondDirectory = _temp.CreateDirectory("plugins", "second");
+        using var first = await CreateStoreAsync(
+            """{ "version": 1, "properties": { "bar.apiKey": { "type": "string", "format": "secret" } } }""",
+            firstDirectory,
+            "com.foo");
+        using var second = await CreateStoreAsync(
+            """{ "version": 1, "properties": { "apiKey": { "type": "string", "format": "secret" } } }""",
+            secondDirectory,
+            "com.foo.bar");
+
+        await first.SetSecretAsync("bar.apiKey", "first-plugin-secret-6601");
+        await second.SetSecretAsync("apiKey", "second-plugin-secret-6602");
+
+        Assert.NotEqual(first.SecretName("bar.apiKey"), second.SecretName("apiKey"));
+        Assert.Equal("first-plugin-secret-6601", await first.GetAsync("bar.apiKey"));
+        Assert.Equal("second-plugin-secret-6602", await second.GetAsync("apiKey"));
+        Assert.Equal(
+            "first-plugin-secret-6601",
+            await _secrets.GetAsync(first.SecretName("bar.apiKey")));
+        Assert.Equal(
+            "second-plugin-secret-6602",
+            await _secrets.GetAsync(second.SecretName("apiKey")));
+    }
+
+    [Fact]
     public async Task SecretFieldsRejectPlainValueWritesAndPlainFieldsRejectSecretWrites()
     {
         using var settings = await CreateStoreAsync("""
@@ -454,6 +595,14 @@ public sealed class SchemaPluginSettingsTests : IDisposable
         Assert.Equal("legacy-secret-4711", await migrated.GetAsync("token"));
         Assert.False(await migrated.IsSecretSetAsync("apiKey"));
         Assert.Null(await _secrets.GetAsync($"{PluginId}.apiKey"));
+
+        // The rename moved the value to the current name of the new key and
+        // left no current-scheme or legacy entry behind for the old keys.
+        var tokenName = PluginSecretName.Build(PluginId, "token");
+        Assert.Equal("legacy-secret-4711", await _secrets.GetAsync(tokenName));
+        Assert.Null(await _secrets.GetAsync(PluginSecretName.Build(PluginId, "apiKey")));
+        Assert.Null(await _secrets.GetAsync($"{PluginId}.token"));
+        Assert.Equal(tokenName, Assert.Single(await _secrets.ListNamesAsync()));
 
         migrated.Dispose();
         var json = await File.ReadAllTextAsync(Path.Combine(directory, "settings.json"));
@@ -522,6 +671,12 @@ public sealed class SchemaPluginSettingsTests : IDisposable
         => await CreateStoreAsync(schemaJson, NewPluginDirectory());
 
     private async Task<SchemaPluginSettings> CreateStoreAsync(string schemaJson, string directory)
+        => await CreateStoreAsync(schemaJson, directory, pluginId: null);
+
+    private async Task<SchemaPluginSettings> CreateStoreAsync(
+        string schemaJson,
+        string directory,
+        string? pluginId)
     {
         await File.WriteAllTextAsync(
             Path.Combine(directory, PluginSettingsSchemaReader.FileName),
@@ -531,7 +686,7 @@ public sealed class SchemaPluginSettingsTests : IDisposable
         return new SchemaPluginSettings(
             Path.Combine(directory, "settings.json"),
             read.Schema!,
-            PluginId,
+            pluginId ?? PluginId,
             _secrets);
     }
 }

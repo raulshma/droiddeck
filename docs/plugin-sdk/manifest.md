@@ -260,7 +260,13 @@ The host stores plugin settings as `settings.json` in the plugin folder:
 `values` contains every value, including unknown keys, which are preserved
 across writes. Secret values never appear in the file; only their names are
 listed under `secrets`, and the values live in the host's DPAPI-backed secret
-store under `<pluginId>.<fieldKey>`.
+store under a plugin-scoped name derived from the plugin id and field key. The
+name is length-prefixed (`_p<pluginIdLength>-<pluginId>.<fieldKey>`) so dotted
+plugin ids such as `com.foo` and `com.foo.bar` cannot address the same secret.
+Names that would exceed the store's length limit fall back to a stable hashed
+name (`_h<sha256>`). Secrets written by older versions under
+`<pluginId>.<fieldKey>` are still found: reading one moves it to the current
+name, writing one also clears the legacy entry, and removing one deletes both.
 
 Writes through `IPluginSettings.SetAsync` are validated against the schema. An
 invalid write throws `PluginSettingsValidationException`, which carries one
