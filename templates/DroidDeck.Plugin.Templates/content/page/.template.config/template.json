@@ -32,7 +32,7 @@
       "datatype": "text",
       "displayName": "DroidDeck plugin SDK version",
       "description": "The DroidDeck.Plugin.Abstractions and DroidDeck.Plugin.UI package version.",
-      "defaultValue": "0.0.2-alpha",
+      "defaultValue": "0.1.0",
       "replaces": "__DROIDDECK_SDK_VERSION__"
     },
     "windowsAppSdkVersion": {

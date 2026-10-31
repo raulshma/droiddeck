@@ -28,12 +28,12 @@ the assembly name. If you maintain the project by hand, add:
 
 ## Package with the tool
 
-Install the tool once. The 0.0.2-alpha packages are attached to the
-[release](https://github.com/raulshma/droiddeck/releases/tag/v0.0.2-alpha), not
+Install the tool once. The 0.1.0 packages are attached to the
+[release](https://github.com/raulshma/droiddeck/releases/tag/v0.1.0), not
 NuGet.org; download the `.nupkg` files into `<sdk-folder>` first:
 
 ```text
-dotnet tool install --global DroidDeck.PluginPack --add-source <sdk-folder> --version 0.0.2-alpha
+dotnet tool install --global DroidDeck.PluginPack --add-source <sdk-folder> --version 0.1.0
 ```
 
 Package a build output folder:
@@ -160,7 +160,7 @@ for the document format and the full install flow.
 {
   "version": "1.0.0",
   "apiVersion": "1.0",
-  "minHostVersion": "0.0.2-alpha",
+  "minHostVersion": "0.1.0",
   "downloadUrl": "https://example.com/hello/com.example.hello-1.0.0.ddplugin",
   "sha256": "6a2f...9c41",
   "size": 18422,

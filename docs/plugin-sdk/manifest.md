@@ -14,7 +14,7 @@ even when the plugin code would not run.
   "author": "Example",
   "description": "Registers one command.",
   "apiVersion": "1.0",
-  "minHostVersion": "0.0.2-alpha",
+  "minHostVersion": "0.1.0",
   "maxHostVersion": null,
   "entryAssembly": "HelloPlugin.dll",
   "entryType": "HelloPlugin.HelloPlugin",

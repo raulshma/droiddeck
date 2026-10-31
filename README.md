@@ -4,15 +4,15 @@ A local Windows control deck for Android devices: live ADB device tracking, tool
 diagnostics, settings, and an extensible plugin host. DroidDeck never uploads data;
 diagnostics reports are generated locally and redacted.
 
-## Download the alpha
+## Download
 
-`0.0.2-alpha` is published on the
-[releases page](https://github.com/raulshma/droiddeck/releases/tag/v0.0.2-alpha).
-Download `DroidDeck-0.0.2-alpha-win-x64.zip`, verify it against
+`0.1.0` is published on the
+[releases page](https://github.com/raulshma/droiddeck/releases/tag/v0.1.0).
+Download `DroidDeck-0.1.0-win-x64.zip`, verify it against
 `SHA256SUMS.txt`, extract the folder, and run `DroidDeck.exe`. The portable build
 is self-contained and needs no .NET SDK or Windows App SDK runtime. It is
 unsigned, so Windows SmartScreen may warn; see the
-[release notes](docs/releases/v0.0.2-alpha.md) for limitations and checksum
+[release notes](docs/releases/v0.1.0.md) for limitations and checksum
 steps. The same release carries the plugin SDK packages and the SBOM.
 
 ## Documentation

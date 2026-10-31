@@ -30,8 +30,8 @@ Plugin API version: **1.0**. The ABI is stable within a major version.
 
 The contracts live in `src/DroidDeck.Plugin.Abstractions` (plain .NET) and
 `src/DroidDeck.Plugin.UI` (WinUI component kit). Both ship as NuGet packages.
-The 0.0.2-alpha packages are attached to the
-[release](https://github.com/raulshma/droiddeck/releases/tag/v0.0.2-alpha), not
+The 0.1.0 packages are attached to the
+[release](https://github.com/raulshma/droiddeck/releases/tag/v0.1.0), not
 NuGet.org; download them into one folder and add it as a package source.
 `DroidDeck.Architecture.Tests` enforces that plugin contracts stay free of shell
 references.
@@ -44,7 +44,7 @@ package, and create a plugin. Add `<sdk-folder>` to `NuGet.config` (see
 building:
 
 ```text
-dotnet new install <sdk-folder>\DroidDeck.Plugin.Templates.0.0.2-alpha.nupkg
+dotnet new install <sdk-folder>\DroidDeck.Plugin.Templates.0.1.0.nupkg
 dotnet new droiddeck-plugin-command -n HelloPlugin -o HelloPlugin --pluginId com.example.hello
 dotnet build HelloPlugin -c Release
 ```
@@ -56,7 +56,7 @@ edits.
 Package the build output:
 
 ```text
-dotnet tool install --global DroidDeck.PluginPack --add-source <sdk-folder> --version 0.0.2-alpha
+dotnet tool install --global DroidDeck.PluginPack --add-source <sdk-folder> --version 0.1.0
 droiddeck-plugin-pack HelloPlugin/bin/Release/net10.0 --output artifacts
 ```
 

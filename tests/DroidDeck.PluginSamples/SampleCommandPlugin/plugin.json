@@ -5,7 +5,7 @@
   "author": "DroidDeck",
   "description": "A sample plugin that demonstrates the command, device, run, log, highlight, and test extension points.",
   "apiVersion": "1.0",
-  "minHostVersion": "0.0.2-alpha",
+  "minHostVersion": "0.1.0",
   "entryAssembly": "SampleCommandPlugin.dll",
   "entryType": "SampleCommandPlugin.SamplePlugin",
   "capabilities": [

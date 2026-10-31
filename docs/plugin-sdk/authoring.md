@@ -7,12 +7,12 @@ are in the [manifest reference](manifest.md).
 
 ## 1. Create the project
 
-Install the templates once per machine. The 0.0.2-alpha packages are attached to
-the [release](https://github.com/raulshma/droiddeck/releases/tag/v0.0.2-alpha),
+Install the templates once per machine. The 0.1.0 packages are attached to
+the [release](https://github.com/raulshma/droiddeck/releases/tag/v0.1.0),
 not NuGet.org; download all four `.nupkg` files into one folder first:
 
 ```text
-dotnet new install <sdk-folder>\DroidDeck.Plugin.Templates.0.0.2-alpha.nupkg
+dotnet new install <sdk-folder>\DroidDeck.Plugin.Templates.0.1.0.nupkg
 ```
 
 Create a plugin from one of the four starters:
@@ -41,13 +41,13 @@ property and, for UI templates, the Windows App SDK version through
 a different version:
 
 ```text
-dotnet new droiddeck-plugin-page -n MetricsPage --pluginId com.example.metrics --sdkVersion 0.0.2-alpha
+dotnet new droiddeck-plugin-page -n MetricsPage --pluginId com.example.metrics --sdkVersion 0.1.0
 ```
 
 ### Adding the SDK to an existing project
 
 Add the folder that holds the release `.nupkg` files as a package source in
-`NuGet.config`, then reference the alpha version:
+`NuGet.config`, then reference the SDK version:
 
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
@@ -66,7 +66,7 @@ A non-UI plugin references the abstractions package only:
     <TargetFramework>net10.0</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="DroidDeck.Plugin.Abstractions" Version="0.0.2-alpha" />
+    <PackageReference Include="DroidDeck.Plugin.Abstractions" Version="0.1.0" />
   </ItemGroup>
 </Project>
 ```
@@ -81,8 +81,8 @@ A UI plugin targets Windows and references the component kit instead:
     <UseWinUI>true</UseWinUI>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="DroidDeck.Plugin.Abstractions" Version="0.0.2-alpha" />
-    <PackageReference Include="DroidDeck.Plugin.UI" Version="0.0.2-alpha" />
+    <PackageReference Include="DroidDeck.Plugin.Abstractions" Version="0.1.0" />
+    <PackageReference Include="DroidDeck.Plugin.UI" Version="0.1.0" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.5.1" />
   </ItemGroup>
 </Project>
@@ -513,7 +513,7 @@ The build output folder must contain `plugin.json`. Package it with the
 packaging tool:
 
 ```text
-dotnet tool install --global DroidDeck.PluginPack --add-source <sdk-folder> --version 0.0.2-alpha
+dotnet tool install --global DroidDeck.PluginPack --add-source <sdk-folder> --version 0.1.0
 droiddeck-plugin-pack HelloPlugin/bin/Release/net10.0 --output artifacts
 ```
 

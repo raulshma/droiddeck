@@ -8,7 +8,7 @@ sync: settings, logs, diagnostics, and plugin data stay on the computer.
 ## Start here
 
 - [User guide](user-guide.md) — install, connect a device, add a project, run, mirror, and troubleshoot.
-- [0.0.2-alpha release notes](releases/v0.0.2-alpha.md) — highlights, install, checksums, and known limitations.
+- [0.1.0 release notes](releases/v0.1.0.md) — highlights, install, checksums, and known limitations.
 - [Settings reference](settings.md) — every setting, its scope, and its default.
 - [Accessibility and languages](accessibility.md) — keyboard, Narrator, scaling, contrast, motion, and language options.
 - [Catalog schema](catalog.md) — how to publish a plugin catalog.
@@ -39,7 +39,7 @@ that folder.
 
 Release binaries are unsigned, so Windows SmartScreen may warn; verify the
 checksum before running. The current
-[0.0.2-alpha release notes](releases/v0.0.2-alpha.md) list the alpha limitations
+[0.1.0 release notes](releases/v0.1.0.md) list the alpha limitations
 and the bundled plugin SDK packages.
 
 Build and test commands live in the [repository README](https://github.com/raulshma/droiddeck#build-and-run).

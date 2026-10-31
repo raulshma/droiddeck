@@ -5,7 +5,7 @@
   "author": "DroidDeck",
   "description": "A sample plugin that contributes a device action gated by the host confirmation prompt.",
   "apiVersion": "1.0",
-  "minHostVersion": "0.0.2-alpha",
+  "minHostVersion": "0.1.0",
   "entryAssembly": "SampleDeviceActionPlugin.dll",
   "entryType": "SampleDeviceActionPlugin.SampleDeviceActionPlugin",
   "capabilities": [

@@ -6,6 +6,10 @@ candidate at `21d5ff4`, plus later hardening changes)
 **Revalidated:** `0.0.2-alpha` on 2026-10-31. The release is an architecture
 refactor; the controls and accepted risks below are unchanged, and the plugin,
 catalog, process, run, and diagnostics suites were rerun for the candidate.
+**Revalidated:** `0.1.0` on 2026-10-31. Project detection, shell dialogs, run
+finalization, and plugin package and secret handling changed; the controls and
+accepted risks below are unchanged, and the plugin, catalog, process, run, and
+diagnostics suites were rerun for the candidate.
 **Scope:** process execution, plugins, catalog and package downloads, secrets and
 redaction, update checking, and the portable distribution.
 **Method:** source review of the trust boundaries plus the existing automated
@@ -17,7 +21,7 @@ No remediable high or medium severity finding remains open in the release
 candidate. The controls described in [Security](security.md) are implemented at
 the boundaries reviewed below. Six residual risks are accepted with the
 mitigations recorded in this document; R-01 has high impact but is an explicit
-trust-boundary decision, and none is a blocker for the portable `0.0.1-alpha` release.
+trust-boundary decision, and none is a blocker for the portable release.
 
 ## Controls verified
 

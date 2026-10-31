@@ -7,6 +7,50 @@ their release: `0.0.1-alpha` precedes `0.0.1`.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-31
+
+Project-detection and shell-consistency release. Internals continue the
+deepening work: Gradle plugin resolution, project detection, shell dialogs, run
+finalization, settings traversal, toolchain probes, and plugin package handling
+each moved behind one seam.
+
+### Added
+
+- Gradle project detection resolves plugins declared through version catalogs,
+  `apply false` declarations, convention plugins from `buildSrc` and included
+  builds, and plugin markers, then exposes the effective plugin set.
+- Variant detection composes application IDs from flavor and build-type
+  suffixes, honours `defaultFlavor`, and qualifies names when several
+  application modules exist. Run configurations seed the module, package name,
+  task, and artifact glob from the selected variant.
+- One shell dialog service serializes content dialogs and initializes file
+  pickers for the main window.
+
+### Changed
+
+- Project scans and explicit project adds share one detection policy and one
+  Android host probe.
+- Run sessions finalize through one context and finalizer, and a multi-device
+  start returns the started group handle before any device runs.
+- Settings read, write, flatten, and merge traverse one document and reuse the
+  casing stored in the file; merge performs one lookup per key.
+- Toolchain probes come from one spec table and run concurrently.
+- adb failure classification and `df` output parsing are single-sited and
+  shared by the executor, device commands, and metadata source.
+- Plugin package acquisition owns redirects, size caps, hash checks, path
+  escapes, reserved device names, duplicate entries, extraction caps, and
+  cleanup; the installer keeps orchestration and auditing.
+- Manifest validation separates file-free metadata rules from full validation,
+  and the loader reads and validates in one call.
+- Failure notices and device target selection are shared shapes used by pages
+  and tests.
+
+### Fixed
+
+- Plugin secret names no longer fail for long valid id and pair combinations; a
+  stable hashed name is used past the store limit, and legacy names are migrated
+  on read and cleared on write. Removal deletes both names.
+
 ## [0.0.2-alpha] - 2026-10-31
 
 Architecture hardening release. No user-facing features were added; the
@@ -99,6 +143,7 @@ First public alpha. Portable `win-x64` build; no installer and no auto-update.
   pass are deferred for this alpha and documented in the release notes.
 - Plugins run in-process with full trust. Only install plugins you trust.
 
-[Unreleased]: https://github.com/raulshma/droiddeck/compare/v0.0.2-alpha...HEAD
+[Unreleased]: https://github.com/raulshma/droiddeck/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/raulshma/droiddeck/releases/tag/v0.1.0
 [0.0.2-alpha]: https://github.com/raulshma/droiddeck/releases/tag/v0.0.2-alpha
 [0.0.1-alpha]: https://github.com/raulshma/droiddeck/releases/tag/v0.0.1-alpha
