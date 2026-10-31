@@ -208,9 +208,11 @@ public sealed class ProcessRunnerTests
     [Fact]
     public async Task TimesOutAndKillsTheProcessTree()
     {
+        // Long enough for the helper to start and print its child id on a busy CI
+        // runner; the spawned child still outlives the timeout by far.
         var request = TestProcessHelper.Create("spawn", "20000") with
         {
-            Timeout = TimeSpan.FromMilliseconds(750),
+            Timeout = TimeSpan.FromSeconds(5),
         };
 
         var result = await Runner.RunAsync(request);

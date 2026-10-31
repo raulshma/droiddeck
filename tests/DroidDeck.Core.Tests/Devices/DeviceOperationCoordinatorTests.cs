@@ -1,5 +1,6 @@
 using DroidDeck.Core.Devices;
 using DroidDeck.Core.Resources;
+using DroidDeck.TestSupport;
 
 namespace DroidDeck.Core.Tests.Devices;
 
@@ -51,7 +52,11 @@ public sealed class DeviceOperationCoordinatorTests
         var tasks = Enumerable.Range(0, 4)
             .Select(index => Task.Run(() => Work($"device-{index}")))
             .ToArray();
-        await Task.Delay(150);
+        // Wait for both permitted operations to start instead of guessing how long
+        // a saturated thread pool needs; the gate keeps them running once acquired.
+        await Wait.UntilAsync(
+            () => coordinator.ActiveOperations.Count == 2 && Volatile.Read(ref running) == 2,
+            LeaseTimeout);
         Assert.Equal(2, coordinator.ActiveOperations.Count);
         Assert.Equal(2, max);
         gate.SetResult();
