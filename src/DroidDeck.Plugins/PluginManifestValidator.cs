@@ -13,6 +13,27 @@ public static partial class PluginManifestValidator
     private static partial Regex PluginIdPattern();
 
     /// <summary>
+    /// Validates the manifest metadata that does not depend on any files.
+    /// </summary>
+    /// <param name="manifest">The manifest to validate.</param>
+    /// <param name="hostVersion">The host version to compare against; defaults to the running application version.</param>
+    /// <remarks>
+    /// The identity, plugin API, host range, capability, and dependency rules are
+    /// the same ones <see cref="Validate"/> applies. This overload performs no
+    /// filesystem access, so callers can reject a package before extracting it.
+    /// </remarks>
+    public static PluginValidationResult ValidateMetadata(
+        PluginManifest manifest,
+        string? hostVersion = null)
+    {
+        ArgumentNullException.ThrowIfNull(manifest);
+
+        var result = new PluginValidationResult();
+        ValidateMetadataRules(manifest, hostVersion ?? AppInfo.Version, result);
+        return result;
+    }
+
+    /// <summary>
     /// Validates a manifest and the files it references.
     /// </summary>
     /// <param name="manifest">The manifest to validate.</param>
@@ -33,13 +54,33 @@ public static partial class PluginManifestValidator
             return result;
         }
 
-        ValidateIdentity(manifest, result);
-        ValidateApiCompatibility(manifest, hostVersion ?? AppInfo.Version, result);
-        ValidateEntryPoint(manifest, pluginDirectory, result);
-        ValidateCapabilities(manifest, result);
-        ValidateDependencies(manifest, result);
+        // Entry-point issues keep their historical position between the API and
+        // capability rules so existing callers observe the same issue order.
+        ValidateMetadataRules(
+            manifest,
+            hostVersion ?? AppInfo.Version,
+            result,
+            () => ValidateEntryPoint(manifest, pluginDirectory, result));
         ValidateOptionalFiles(manifest, pluginDirectory, result);
         return result;
+    }
+
+    /// <summary>
+    /// Applies the metadata rules shared by <see cref="ValidateMetadata"/> and
+    /// <see cref="Validate"/>. <paramref name="validateFiles"/> runs at the
+    /// position the full validation has always used for entry-point checks.
+    /// </summary>
+    private static void ValidateMetadataRules(
+        PluginManifest manifest,
+        string hostVersion,
+        PluginValidationResult result,
+        Action? validateFiles = null)
+    {
+        ValidateIdentity(manifest, result);
+        ValidateApiCompatibility(manifest, hostVersion, result);
+        validateFiles?.Invoke();
+        ValidateCapabilities(manifest, result);
+        ValidateDependencies(manifest, result);
     }
 
     private static void ValidateIdentity(PluginManifest manifest, PluginValidationResult result)

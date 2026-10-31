@@ -73,4 +73,34 @@ public static class PluginManifestReader
 
         return new PluginManifestReadResult(null, validation);
     }
+
+    /// <summary>
+    /// Reads a manifest and, when one was read, validates both its metadata and
+    /// the files it references.
+    /// </summary>
+    /// <param name="pluginDirectory">The directory that contains the manifest and plugin files.</param>
+    /// <param name="hostVersion">The host version to compare against; defaults to the running application version.</param>
+    /// <param name="cancellationToken">Cancels the read.</param>
+    /// <remarks>
+    /// Read errors are kept in the returned result. A successfully read manifest
+    /// is validated with <see cref="PluginManifestValidator.Validate"/>, so the
+    /// result carries the same issues a load would report.
+    /// </remarks>
+    public static async Task<PluginManifestReadResult> ReadAndValidateAsync(
+        string pluginDirectory,
+        string? hostVersion = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pluginDirectory);
+
+        var read = await ReadAsync(pluginDirectory, cancellationToken).ConfigureAwait(false);
+        if (read.Manifest is not { } manifest)
+        {
+            return read;
+        }
+
+        var validation = read.Validation;
+        validation.AddRange(PluginManifestValidator.Validate(manifest, pluginDirectory, hostVersion));
+        return new PluginManifestReadResult(manifest, validation);
+    }
 }

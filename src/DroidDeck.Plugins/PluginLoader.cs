@@ -277,7 +277,9 @@ public sealed class PluginLoader : IAsyncDisposable
 
     private async Task<PluginLoadResult> LoadCoreAsync(string pluginDirectory, CancellationToken cancellationToken)
     {
-        var read = await PluginManifestReader.ReadAsync(pluginDirectory, cancellationToken).ConfigureAwait(false);
+        var read = await PluginManifestReader
+            .ReadAndValidateAsync(pluginDirectory, _hostVersion, cancellationToken)
+            .ConfigureAwait(false);
         if (read.Manifest is null)
         {
             LogIssues(read.Validation, pluginDirectory);
@@ -285,7 +287,7 @@ public sealed class PluginLoader : IAsyncDisposable
         }
 
         var manifest = read.Manifest;
-        var validation = PluginManifestValidator.Validate(manifest, pluginDirectory, _hostVersion);
+        var validation = read.Validation;
         if (!validation.IsValid)
         {
             LogIssues(validation, pluginDirectory);

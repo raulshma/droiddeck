@@ -317,6 +317,146 @@ public sealed class PluginManifestValidatorTests
 
         Assert.Throws<ArgumentNullException>(
             () => PluginManifestValidator.Validate(null!, temp.Path, HostVersion));
+        Assert.Throws<ArgumentNullException>(
+            () => PluginManifestValidator.ValidateMetadata(null!, HostVersion));
+    }
+
+    [Fact]
+    public void ValidateMetadataChecksRulesWithoutAnyDirectory()
+    {
+        var manifest = CreateManifest();
+        manifest.Id = "Not/Valid";
+        manifest.Version = "1.0";
+        manifest.ApiVersion = "2.0";
+        manifest.Capabilities = ["warp-drive"];
+        manifest.Dependencies =
+        [
+            new PluginDependency { Id = "Not Valid", MinVersion = "" },
+        ];
+
+        var result = PluginManifestValidator.ValidateMetadata(manifest, HostVersion);
+
+        Assert.False(result.IsValid, Describe(result));
+        AssertHasError(result, "manifest.id.invalid");
+        AssertHasError(result, "manifest.version.invalid");
+        AssertHasError(result, "manifest.apiVersion.majorMismatch");
+        AssertHasError(result, "manifest.dependencies.invalidId");
+        AssertHasError(result, "manifest.dependencies.invalidVersion");
+        Assert.Contains(
+            result.Issues,
+            issue => issue.Code == "manifest.capabilities.unknown" &&
+                issue.Severity == PluginValidationSeverity.Warning);
+        Assert.DoesNotContain(result.Issues, issue => issue.Code == "plugin.directory.missing");
+        Assert.DoesNotContain(
+            result.Issues,
+            issue => issue.Code.StartsWith("manifest.entry", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            result.Issues,
+            issue => issue.Code.StartsWith("manifest.icon.", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ValidateAddsEntryPointAndOptionalFileIssuesToMetadataIssues()
+    {
+        using var temp = new TempDirectory();
+        var directory = temp.CreateDirectory("plugin");
+        var manifest = CreateManifest();
+        manifest.Id = "Not/Valid";
+        manifest.Version = "1.0";
+        manifest.ApiVersion = "2.0";
+        manifest.EntryAssembly = "Missing.dll";
+        manifest.EntryType = "";
+        manifest.Icon = "icon.png";
+        manifest.Homepage = "not a url";
+
+        var metadata = PluginManifestValidator.ValidateMetadata(manifest, HostVersion);
+        var full = PluginManifestValidator.Validate(manifest, directory, HostVersion);
+
+        AssertHasError(metadata, "manifest.id.invalid");
+        AssertHasError(metadata, "manifest.version.invalid");
+        AssertHasError(metadata, "manifest.apiVersion.majorMismatch");
+        Assert.DoesNotContain(metadata.Issues, issue => issue.Code == "manifest.entryAssembly.missing");
+
+        AssertHasError(full, "manifest.id.invalid");
+        AssertHasError(full, "manifest.version.invalid");
+        AssertHasError(full, "manifest.apiVersion.majorMismatch");
+        AssertHasError(full, "manifest.entryAssembly.missing");
+        AssertHasError(full, "manifest.entryType.required");
+        Assert.Contains(full.Issues, issue => issue.Code == "manifest.icon.missing");
+        Assert.Contains(full.Issues, issue => issue.Code == "manifest.homepage.invalid");
+    }
+
+    [Fact]
+    public async Task ReadAndValidateAsyncReturnsReadErrors()
+    {
+        using var temp = new TempDirectory();
+
+        var result = await PluginManifestReader.ReadAndValidateAsync(
+            temp.Combine("absent"),
+            HostVersion);
+
+        Assert.Null(result.Manifest);
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Validation.Issues, issue => issue.Code == "manifest.missing");
+    }
+
+    [Fact]
+    public async Task ReadAndValidateAsyncMergesMetadataAndFileIssues()
+    {
+        using var temp = new TempDirectory();
+        var directory = temp.CreateDirectory("plugin");
+        File.WriteAllText(
+            Path.Combine(directory, PluginManifestReader.FileName),
+            """
+            {
+              "id": "Not/Valid",
+              "name": "Test Plugin",
+              "version": "1.0",
+              "apiVersion": "2.0",
+              "entryAssembly": "Missing.dll",
+              "entryType": "",
+              "icon": "icon.png",
+              "dependencies": [{ "id": "Not Valid", "minVersion": "" }]
+            }
+            """);
+
+        var result = await PluginManifestReader.ReadAndValidateAsync(directory, HostVersion);
+
+        Assert.NotNull(result.Manifest);
+        Assert.False(result.Succeeded);
+        AssertHasError(result.Validation, "manifest.id.invalid");
+        AssertHasError(result.Validation, "manifest.version.invalid");
+        AssertHasError(result.Validation, "manifest.apiVersion.majorMismatch");
+        AssertHasError(result.Validation, "manifest.dependencies.invalidId");
+        AssertHasError(result.Validation, "manifest.entryAssembly.missing");
+        AssertHasError(result.Validation, "manifest.entryType.required");
+        Assert.Contains(result.Validation.Issues, issue => issue.Code == "manifest.icon.missing");
+    }
+
+    [Fact]
+    public async Task ReadAndValidateAsyncSucceedsForAValidPlugin()
+    {
+        using var temp = new TempDirectory();
+        var directory = CreatePluginDirectory(temp);
+        var manifest = CreateManifest();
+        File.WriteAllText(
+            Path.Combine(directory, PluginManifestReader.FileName),
+            $$"""
+            {
+              "id": "{{manifest.Id}}",
+              "name": "{{manifest.Name}}",
+              "version": "{{manifest.Version}}",
+              "apiVersion": "{{manifest.ApiVersion}}",
+              "entryAssembly": "{{manifest.EntryAssembly}}",
+              "entryType": "{{manifest.EntryType}}",
+              "capabilities": ["command"]
+            }
+            """);
+
+        var result = await PluginManifestReader.ReadAndValidateAsync(directory, HostVersion);
+
+        Assert.True(result.Succeeded, Describe(result.Validation));
+        Assert.Empty(result.Validation.Issues);
     }
 
     private static PluginManifest CreateManifest() => new()
