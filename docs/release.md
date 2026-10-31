@@ -351,6 +351,7 @@ is not a 1.0.0 sign-off; the deferred rows are published as known limitations in
 | --- | --- | --- |
 | Size | Pass | 235.6 MiB extracted and 94.0 MiB zipped; [report](perf/results/2026-10-31-size-0.1.0.json). |
 | Startup | Pass | Median 1094 ms, p95 1224 ms over eight measured runs after two warmups on the reference machine, with failure-window detection enabled; [report](perf/results/2026-10-31-startup-0.1.0.json). The zip was extracted and launched; after one warmup the extracted copy measured 907, 868, and 888 ms (median 888 ms). |
+| Published artifacts | Pass | The drafted assets were downloaded; all six SHA-256 values in `SHA256SUMS.txt` matched. The published zip's extracted copy measured 779, 800, and 813 ms (median 800 ms) over three runs after one warmup, inside the 2,000 ms budget. |
 | Automated suites | Pass | Release build with 0 warnings; 1,644 tests passed under the release filter, plus the plugin template suite. |
 | Security review | Complete | Revalidated for this candidate with no control or accepted-risk changes; plugin, catalog, process, run, and diagnostics suites are green. |
 | Soak | Deferred, accepted risk | Run-finalization and multi-device start changes touch session paths, so the eight-hour soak was not run. The release notes record the risk and ask testers to watch for orphaned `adb` or `scrcpy` processes. |
