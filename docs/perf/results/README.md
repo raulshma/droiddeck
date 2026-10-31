@@ -66,6 +66,8 @@ and handle growth are deterministic enough to gate directly.
 
 | Date | Command | Result | Notes |
 | --- | --- | --- | --- |
+| 2026-10-31 | size, 0.0.2-alpha | Pass (235.5 MiB extracted, 91.4 MiB zip) | [Report](2026-10-31-size-0.0.2-alpha.json); source commit `95c7c41`; architecture-hardening release. |
+| 2026-10-31 | startup, 0.0.2-alpha | Pass (median 1112 ms, p95 1320 ms) | [Report](2026-10-31-startup-0.0.2-alpha.json); ten runs including two warmups at `95c7c41`, with failure-window detection enabled. |
 | 2026-10-31 | size, 0.0.1-alpha | Pass (235.3 MiB extracted, 91.2 MiB zip) | [Report](2026-10-31-size-0.0.1-alpha.json); source commit `7bd6731`; regenerated after the missing XBF/PRI publish fix. |
 | 2026-10-31 | startup, 0.0.1-alpha | Pass (median 1207 ms, p95 1333 ms) | [Report](2026-10-31-startup-0.0.1-alpha.json); ten runs including two warmups at `7bd6731`; the earlier report measured the startup failure window and was discarded. |
 | 2026-10-31 | size, no R2R | Pass (232.8 MiB extracted, 90.5 MiB zip) | 1.0.0-candidate reference measurement; see ADR 0003. |
