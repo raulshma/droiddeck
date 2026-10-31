@@ -249,6 +249,28 @@ public sealed class CatalogInstallerTests
     }
 
     [Fact]
+    public async Task APackageWithInvalidManifestMetadataIsRejectedBeforeTrustOrExtraction()
+    {
+        using var temp = new TempDirectory();
+        var harness = CreateHarness(temp);
+        const string invalidId = "Com.Example.Chart";
+        var entry = harness.CreateEntry("1.0.0", pluginId: invalidId);
+        var trustAsked = false;
+
+        var result = await harness.Installer.InstallAsync(entry, Accept(_ => trustAsked = true));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains("lowercase", result.Error, StringComparison.Ordinal);
+        Assert.False(trustAsked);
+        Assert.False(Directory.Exists(temp.Combine("plugins", invalidId)));
+        Assert.True(HasNoDirectories(temp.Combine("plugin-backups")));
+        Assert.True(HasNoFiles(harness.Paths.QuarantineDirectory));
+        var audit = Assert.Single(await harness.Audit.ReadAsync());
+        Assert.Equal("failure", audit.Result);
+        Assert.Contains("lowercase", audit.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task AMissingDependencyFailsWithAClearMessage()
     {
         using var temp = new TempDirectory();

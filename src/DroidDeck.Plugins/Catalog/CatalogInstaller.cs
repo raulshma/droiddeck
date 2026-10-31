@@ -1,6 +1,5 @@
 using System.IO.Compression;
 using System.Net.Http;
-using System.Security.Cryptography;
 using System.Text.Json;
 using DroidDeck.Core;
 using DroidDeck.Core.Infrastructure;
@@ -103,21 +102,17 @@ public sealed record CatalogInstalledPlugin(string PluginId, string Version, str
 public sealed class CatalogInstaller
 {
     /// <summary>The largest package this host accepts by default.</summary>
-    public const int DefaultMaxBytes = 8 * 1024 * 1024;
+    public const int DefaultMaxBytes = PackageAcquirer.DefaultMaxBytes;
 
     /// <summary>The package file extension for DroidDeck plugins.</summary>
     public const string PackageExtension = ".ddplugin";
 
-    private const long MaxExtractedBytes = 64 * 1024 * 1024;
     private const string StagingPrefix = "staging-";
     private const int StagingSuffixLength = 32;
-    private const int MaxRedirectHops = 5;
 
-    private readonly HttpClient _httpClient;
+    private readonly PackageAcquirer _packages;
     private readonly AppPaths _paths;
     private readonly PluginAuditLog _audit;
-    private readonly int _maxBytes;
-    private readonly string _userAgent;
     private readonly string _hostVersion;
     private readonly ILogger<CatalogInstaller> _logger;
 
@@ -131,13 +126,10 @@ public sealed class CatalogInstaller
         ILogger<CatalogInstaller>? logger = null,
         string? hostVersion = null)
     {
-        _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+        ArgumentNullException.ThrowIfNull(httpClient);
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
         _audit = audit ?? throw new ArgumentNullException(nameof(audit));
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxBytes);
-        ArgumentException.ThrowIfNullOrWhiteSpace(userAgent);
-        _maxBytes = maxBytes;
-        _userAgent = userAgent;
+        _packages = new PackageAcquirer(httpClient, maxBytes, userAgent);
         _hostVersion = hostVersion ?? AppInfo.Version;
         _logger = logger ?? NullLogger<CatalogInstaller>.Instance;
     }
@@ -505,19 +497,13 @@ public sealed class CatalogInstaller
         try
         {
             Directory.CreateDirectory(_paths.QuarantineDirectory);
-            var downloadError = await DownloadAsync(entry, tempPath, cancellationToken).ConfigureAwait(false);
-            if (downloadError is not null)
+            var acquisitionError = await _packages
+                .AcquireAsync(entry, tempPath, cancellationToken)
+                .ConfigureAwait(false);
+            if (acquisitionError is not null)
             {
                 return await FailAsync(
-                    action, pluginId, fromVersion, entry.Version.Version, sourceId, downloadError,
-                    cancellationToken, tempPath).ConfigureAwait(false);
-            }
-
-            var hashError = await VerifyHashAsync(entry, tempPath).ConfigureAwait(false);
-            if (hashError is not null)
-            {
-                return await FailAsync(
-                    action, pluginId, fromVersion, entry.Version.Version, sourceId, hashError,
+                    action, pluginId, fromVersion, entry.Version.Version, sourceId, acquisitionError,
                     cancellationToken, tempPath).ConfigureAwait(false);
             }
 
@@ -525,14 +511,16 @@ public sealed class CatalogInstaller
             using (var archiveStream = File.OpenRead(tempPath))
             using (var archive = new ZipArchive(archiveStream, ZipArchiveMode.Read))
             {
-                var unsafeName = FindUnsafeEntryName(archive);
-                error = unsafeName is null
-                    ? null
-                    : $"The package for '{pluginId}' contains an unsafe path '{unsafeName}'.";
+                error = PackageAcquirer.ValidateArchive(archive, pluginId);
                 PluginManifest? manifest = null;
                 if (error is null)
                 {
                     (manifest, error) = await ReadManifestAsync(archive, entry).ConfigureAwait(false);
+                }
+
+                if (error is null && manifest is not null)
+                {
+                    error = DescribeMetadataProblem(manifest, _hostVersion);
                 }
 
                 if (error is null && manifest is not null)
@@ -563,7 +551,9 @@ public sealed class CatalogInstaller
                     stagingDirectory = Path.Combine(
                         _paths.PluginBackupsDirectory,
                         StagingPrefix + Guid.NewGuid().ToString("N"));
-                    error = await ExtractAsync(archive, pluginId, stagingDirectory).ConfigureAwait(false);
+                    error = await PackageAcquirer
+                        .ExtractAsync(archive, pluginId, stagingDirectory)
+                        .ConfigureAwait(false);
                     if (error is not null)
                     {
                         DeleteDirectoryIfExists(stagingDirectory);
@@ -655,6 +645,34 @@ public sealed class CatalogInstaller
         parsedCandidate > parsedCurrent;
 
     /// <summary>
+    /// Applies the loader's metadata rules to a package manifest before any file
+    /// is extracted. Compatibility and dependency availability keep their richer
+    /// installer-specific messages below, so the validator's generic issues for
+    /// those rules are not repeated here.
+    /// </summary>
+    private static string? DescribeMetadataProblem(PluginManifest manifest, string hostVersion)
+    {
+        foreach (var issue in PluginManifestValidator.ValidateMetadata(manifest, hostVersion).Issues)
+        {
+            if (issue.Severity != PluginValidationSeverity.Error)
+            {
+                continue;
+            }
+
+            if (issue.Code.StartsWith("manifest.apiVersion.", StringComparison.Ordinal) ||
+                issue.Code.StartsWith("manifest.minHostVersion.", StringComparison.Ordinal) ||
+                issue.Code.StartsWith("manifest.maxHostVersion.", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            return issue.Message;
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Explains why a catalog package cannot load on this host. The installer
     /// enforces the same API and host-version rules as the loader so a package
     /// it accepts is one the loader will accept.
@@ -723,182 +741,6 @@ public sealed class CatalogInstaller
         return $"The plugin '{entry.Plugin.Id}' has dependencies that are not satisfied: " +
             $"{string.Join("; ", descriptions)}. Install the missing versions from a catalog source first; " +
             "DroidDeck does not install dependencies automatically.";
-    }
-
-    private async Task<string?> DownloadAsync(
-        CatalogEntry entry,
-        string tempPath,
-        CancellationToken cancellationToken)
-    {
-        var pluginId = entry.Plugin.Id;
-        if (entry.Version.Size > _maxBytes)
-        {
-            return $"The package for '{pluginId}' is advertised as {entry.Version.Size} bytes; " +
-                $"the limit is {_maxBytes} bytes.";
-        }
-
-        // Redirects are followed by hand, one hop at a time, so every address in
-        // the chain is checked against the HTTPS requirement before anything is
-        // sent to it. (The host builds this client with AllowAutoRedirect =
-        // false; if a host ever left auto-follow on, this loop would never see
-        // the hops and only the final-address check below would still apply.)
-        // The PluginCatalogClient keeps the same final-address precedent for
-        // the catalogs it fetches.
-        var address = new Uri(entry.Version.DownloadUrl, UriKind.Absolute);
-        for (var hop = 0; hop <= MaxRedirectHops; hop++)
-        {
-            if (!string.Equals(address.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
-            {
-                return $"The package at {entry.Version.DownloadUrl} redirected to the non-HTTPS " +
-                    $"address '{address}'; only HTTPS downloads are allowed.";
-            }
-
-            using var request = new HttpRequestMessage(HttpMethod.Get, address);
-            request.Headers.UserAgent.ParseAdd(_userAgent);
-            using var response = await _httpClient
-                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
-                .ConfigureAwait(false);
-
-            if (IsRedirect(response) && response.Headers.Location is { } location)
-            {
-                address = location.IsAbsoluteUri ? location : new Uri(address, location);
-                continue;
-            }
-
-            // An HTTP stack that follows redirects on its own reports the final
-            // address here; a non-HTTPS final address is still refused.
-            if (response.RequestMessage?.RequestUri is { } finalUri &&
-                !string.Equals(finalUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
-            {
-                return $"The package at {entry.Version.DownloadUrl} redirected to a non-HTTPS address; " +
-                    "only HTTPS downloads are allowed.";
-            }
-
-            return await DownloadBodyAsync(entry, response, tempPath, cancellationToken)
-                .ConfigureAwait(false);
-        }
-
-        return $"The package at {entry.Version.DownloadUrl} redirected too many times; " +
-            $"the limit is {MaxRedirectHops} hops.";
-    }
-
-    private static bool IsRedirect(HttpResponseMessage response) =>
-        (int)response.StatusCode is 301 or 302 or 303 or 307 or 308;
-
-    private async Task<string?> DownloadBodyAsync(
-        CatalogEntry entry,
-        HttpResponseMessage response,
-        string tempPath,
-        CancellationToken cancellationToken)
-    {
-        var pluginId = entry.Plugin.Id;
-
-        if (!response.IsSuccessStatusCode)
-        {
-            return $"The package for '{pluginId}' could not be downloaded from {entry.Version.DownloadUrl}: " +
-                $"the server returned {(int)response.StatusCode} {response.ReasonPhrase}.";
-        }
-
-        if (response.Content.Headers.ContentLength is { } length && length > _maxBytes)
-        {
-            return $"The package for '{pluginId}' is too large ({length} bytes); the limit is {_maxBytes} bytes.";
-        }
-
-        await using var source = await response.Content
-            .ReadAsStreamAsync(cancellationToken)
-            .ConfigureAwait(false);
-        await using var output = File.Create(tempPath);
-        var buffer = new byte[81_920];
-        long total = 0;
-        int read;
-        while ((read = await source.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0)
-        {
-            total += read;
-            if (total > _maxBytes)
-            {
-                return $"The package for '{pluginId}' is too large; the limit is {_maxBytes} bytes.";
-            }
-
-            await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
-        }
-
-        if (entry.Version.Size > 0 && total != entry.Version.Size)
-        {
-            return $"The downloaded package for '{pluginId}' is {total} bytes, " +
-                $"but the catalog advertises {entry.Version.Size} bytes.";
-        }
-
-        return null;
-    }
-
-    private static async Task<string?> VerifyHashAsync(CatalogEntry entry, string tempPath)
-    {
-        await using var stream = File.OpenRead(tempPath);
-        var actual = Convert.ToHexString(await SHA256.HashDataAsync(stream).ConfigureAwait(false));
-        var expected = entry.Version.Sha256.Trim();
-        return string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase)
-            ? null
-            : $"The package hash does not match the catalog for '{entry.Plugin.Id}': " +
-                $"expected {HashText.ShortHash(expected)}, got {HashText.ShortHash(actual)}.";
-    }
-
-    private static string? FindUnsafeEntryName(ZipArchive archive)
-    {
-        foreach (var entry in archive.Entries)
-        {
-            if (IsUnsafeEntryName(entry.FullName))
-            {
-                return entry.FullName;
-            }
-        }
-
-        return null;
-    }
-
-    private static readonly HashSet<string> ReservedDeviceNames = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "CON", "PRN", "AUX", "NUL",
-        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
-    };
-
-    private static bool IsUnsafeEntryName(string? fullName)
-    {
-        if (string.IsNullOrEmpty(fullName))
-        {
-            return true;
-        }
-
-        var normalized = fullName.Replace('\\', '/');
-        if (normalized.Contains(':') || Path.IsPathRooted(normalized) || normalized.StartsWith('/'))
-        {
-            return true;
-        }
-
-        foreach (var segment in normalized.Split('/'))
-        {
-            if (segment.Length == 0 || segment is ".")
-            {
-                continue;
-            }
-
-            if (segment is "..")
-            {
-                return true;
-            }
-
-            // Windows reserves device names even with an extension, so a file
-            // named "CON.txt" or "aux.dll" would fail to extract with a raw
-            // error; reject the package up front instead.
-            var dot = segment.IndexOf('.');
-            var stem = dot < 0 ? segment : segment[..dot];
-            if (stem.Length > 0 && ReservedDeviceNames.Contains(stem))
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private static async Task<(PluginManifest? Manifest, string? Error)> ReadManifestAsync(
@@ -997,87 +839,6 @@ public sealed class CatalogInstaller
             ? null
             : $"The trust decision for '{entry.Plugin.Id}' was declined, so the package was not extracted " +
                 "or installed.";
-    }
-
-    private static async Task<string?> ExtractAsync(
-        ZipArchive archive,
-        string pluginId,
-        string stagingDirectory)
-    {
-        Directory.CreateDirectory(stagingDirectory);
-        var root = Path.GetFullPath(stagingDirectory);
-        var extracted = 0L;
-        var buffer = new byte[81_920];
-        foreach (var entry in archive.Entries)
-        {
-            if (entry.FullName.Length == 0 || entry.FullName.EndsWith('/'))
-            {
-                continue;
-            }
-
-            (long Bytes, string? Error) outcome;
-            try
-            {
-                outcome = await ExtractEntryAsync(entry, pluginId, stagingDirectory, root, buffer, extracted)
-                    .ConfigureAwait(false);
-            }
-            catch (Exception exception) when (
-                exception is IOException or UnauthorizedAccessException or NotSupportedException)
-            {
-                // Hostile or broken entries (file/dir collisions, reserved
-                // device names, paths the OS refuses) surface here as raw I/O
-                // errors. Turn them into a graceful failure so the caller can
-                // report the error, audit it, and clean the staging directory.
-                return $"The package for '{pluginId}' could not be extracted: " +
-                    $"the entry '{entry.FullName}' failed ({exception.Message}).";
-            }
-
-            extracted += outcome.Bytes;
-            if (outcome.Error is not null)
-            {
-                return outcome.Error;
-            }
-        }
-
-        return null;
-    }
-
-    private static async Task<(long Bytes, string? Error)> ExtractEntryAsync(
-        ZipArchiveEntry entry,
-        string pluginId,
-        string stagingDirectory,
-        string root,
-        byte[] buffer,
-        long extractedSoFar)
-    {
-        var target = Path.GetFullPath(Path.Combine(stagingDirectory, entry.FullName.Replace('\\', '/')));
-        if (!target.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
-        {
-            return (0, $"The package for '{pluginId}' contains an entry that escapes the plugin directory.");
-        }
-
-        if (extractedSoFar + Math.Max(entry.Length, 0) > MaxExtractedBytes)
-        {
-            return (0, $"The package for '{pluginId}' unpacks to more than {MaxExtractedBytes} bytes.");
-        }
-
-        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-        await using var source = entry.Open();
-        await using var output = File.Create(target);
-        long written = 0;
-        int read;
-        while ((read = await source.ReadAsync(buffer).ConfigureAwait(false)) > 0)
-        {
-            written += read;
-            if (extractedSoFar + written > MaxExtractedBytes)
-            {
-                return (written, $"The package for '{pluginId}' unpacks to more than {MaxExtractedBytes} bytes.");
-            }
-
-            await output.WriteAsync(buffer.AsMemory(0, read)).ConfigureAwait(false);
-        }
-
-        return (written, null);
     }
 
     private string? SwapIntoPlace(CatalogInstallAction action, string pluginId, string stagingDirectory)
