@@ -87,9 +87,10 @@ The workflow also compiles the per-user installer from the same publish output
 (`packaging/installer/droiddeck.iss`, Inno Setup) and signs the portable
 payload, the installer, and the SDK packages with the self-signed code-signing
 certificate stored in the `WINDOWS_CODESIGN_*` secrets (JKS keystore converted
-to PFX per run; signatures carry an RFC 3161 timestamp). The signature gate
-fails the release if any asset is unsigned, mistimestamped, or signed by a
-different certificate.
+to PFX per run; signatures carry an RFC 3161 timestamp). Microsoft-signed
+.NET runtime and Windows App SDK binaries keep their vendor signatures instead
+of being re-signed. The signature gate fails the release if any asset is
+unsigned, mistimestamped, or signed by an unexpected certificate.
 
 - [ ] Extracted size passes.
 - [ ] Zip size passes.

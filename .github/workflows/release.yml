@@ -212,17 +212,34 @@ jobs:
           $targets = @(Get-ChildItem -Path $publish -Recurse -Include *.exe, *.dll -File)
           if ($targets.Count -eq 0) { throw 'No executables or libraries found to sign.' }
 
+          # Binaries shipped by Microsoft (.NET runtime, Windows App SDK) keep
+          # their vendor signatures; re-signing would erase that provenance.
+          $pending = @()
+          $presigned = @()
+          foreach ($target in $targets) {
+            $signature = Get-AuthenticodeSignature -FilePath $target.FullName
+            if ($signature.Status -eq 'NotSigned') { $pending += $target }
+            else { $presigned += $target }
+          }
+
           $signArguments = @(
             'sign', '/fd', 'SHA256', '/td', 'SHA256', '/tr', 'http://timestamp.digicert.com',
             '/f', $env:CODESIGN_PFX, '/p', $env:CODESIGN_STORE_PASSWORD,
             '/d', 'DroidDeck', '/du', 'https://github.com/raulshma/droiddeck')
 
-          for ($i = 0; $i -lt $targets.Count; $i += 50) {
-            $end = [Math]::Min($i + 49, $targets.Count - 1)
-            & $signtool @signArguments @($targets[$i..$end].FullName) | Out-Null
+          for ($i = 0; $i -lt $pending.Count; $i += 50) {
+            $end = [Math]::Min($i + 49, $pending.Count - 1)
+            & $signtool @signArguments @($pending[$i..$end].FullName) | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "signtool failed on batch starting at index $i." }
           }
-          Write-Host "Signed $($targets.Count) binaries."
+
+          $publishRoot = (Resolve-Path $publish).Path
+          $presignedList = "artifacts/release/pre-signed.txt"
+          New-Item -ItemType Directory -Force -Path (Split-Path $presignedList) | Out-Null
+          $presigned |
+            ForEach-Object { [IO.Path]::GetRelativePath($publishRoot, $_.FullName) } |
+            Set-Content -LiteralPath $presignedList -Encoding ascii
+          Write-Host "Signed $($pending.Count) binaries; $($presigned.Count) keep their vendor signature."
 
       - name: Create portable zip
         shell: pwsh
@@ -334,6 +351,12 @@ jobs:
           $fingerprint = $env:CODESIGN_FP
           $publish = "artifacts/publish/DroidDeck-$env:RELEASE_VERSION-win-x64"
           $setup = "artifacts/DroidDeck-$env:RELEASE_VERSION-setup-win-x64.exe"
+          $publishRoot = (Resolve-Path $publish).Path
+          $presigned = if (Test-Path "artifacts/release/pre-signed.txt") {
+            @(Get-Content "artifacts/release/pre-signed.txt")
+          } else {
+            @()
+          }
 
           $failures = @()
           $checked = 0
@@ -344,10 +367,12 @@ jobs:
               $certMatch = $signature.SignerCertificate.GetCertHashString(
                 [Security.Cryptography.HashAlgorithmName]::SHA256) -eq $fingerprint
             }
+            $vendorSigned = $presigned -contains [IO.Path]::GetRelativePath($publishRoot, $file.FullName)
             $checked++
-            if ($signature.Status -ne 'Valid' -or -not $certMatch -or -not $signature.TimeStamperCertificate) {
+            if ($signature.Status -ne 'Valid' -or -not $signature.TimeStamperCertificate -or
+              (-not $certMatch -and -not $vendorSigned)) {
               $failures += "$($file.FullName): status=$($signature.Status), certMatch=$certMatch, " +
-                "timestamped=$([bool]$signature.TimeStamperCertificate)"
+                "vendorSigned=$vendorSigned, timestamped=$([bool]$signature.TimeStamperCertificate)"
             }
           }
 
