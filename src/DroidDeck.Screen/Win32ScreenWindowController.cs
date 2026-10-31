@@ -37,8 +37,11 @@ public sealed class Win32ScreenWindowController : IScreenWindowController
 
     // Host windows by embedded scrcpy process. EnumWindows stops reporting a
     // window once it becomes a child, so later moves need the host to find it,
-    // and a replacement window that scrcpy recreates can be re-embedded.
+    // and a replacement window that scrcpy recreates can be re-embedded. The
+    // controller is called from both the UI thread and the service's
+    // background threads, so every access takes the gate.
     private readonly Dictionary<int, IntPtr> _embedded = [];
+    private readonly object _embedGate = new();
 
     /// <inheritdoc />
     public bool TryMove(int processId, ScreenBounds bounds)
@@ -56,15 +59,26 @@ public sealed class Win32ScreenWindowController : IScreenWindowController
         }
 
         var parent = GetParent(handle);
-        if (parent == IntPtr.Zero && _embedded.TryGetValue(processId, out var host))
+        if (parent == IntPtr.Zero)
         {
+            IntPtr recordedHost;
+            lock (_embedGate)
+            {
+                _embedded.TryGetValue(processId, out recordedHost);
+            }
+
+            if (recordedHost == IntPtr.Zero)
+            {
+                return MoveTopLevel(handle, bounds);
+            }
+
             // The window scrcpy recreated is still top-level; reparent it again.
-            if (!Embed(handle, host))
+            if (!Embed(handle, recordedHost))
             {
                 return false;
             }
 
-            parent = host;
+            parent = recordedHost;
         }
 
         return parent != IntPtr.Zero
@@ -98,7 +112,11 @@ public sealed class Win32ScreenWindowController : IScreenWindowController
             return false;
         }
 
-        _embedded[processId] = host;
+        lock (_embedGate)
+        {
+            _embedded[processId] = host;
+        }
+
         return MoveChild(handle, host, bounds);
     }
 
@@ -144,7 +162,11 @@ public sealed class Win32ScreenWindowController : IScreenWindowController
             return false;
         }
 
-        _embedded.Remove(processId);
+        lock (_embedGate)
+        {
+            _embedded.Remove(processId);
+        }
+
         return PostMessage(handle, WmClose, IntPtr.Zero, IntPtr.Zero);
     }
 
@@ -208,7 +230,13 @@ public sealed class Win32ScreenWindowController : IScreenWindowController
             return IntPtr.Zero;
         }
 
-        if (_embedded.TryGetValue(processId, out var host) && host != IntPtr.Zero)
+        IntPtr host;
+        lock (_embedGate)
+        {
+            _embedded.TryGetValue(processId, out host);
+        }
+
+        if (host != IntPtr.Zero)
         {
             var child = FindEmbeddedWindow(host, processId);
             if (child != IntPtr.Zero)
