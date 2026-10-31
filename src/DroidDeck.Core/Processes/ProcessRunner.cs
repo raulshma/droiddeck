@@ -172,9 +172,16 @@ public sealed class ProcessRunner : IProcessRunner
             startInfo.StandardInputEncoding = Encoding.UTF8;
         }
 
-        foreach (var argument in request.Arguments)
+        if (request.RawArguments is not null)
         {
-            startInfo.ArgumentList.Add(argument);
+            startInfo.Arguments = request.RawArguments;
+        }
+        else
+        {
+            foreach (var argument in request.Arguments)
+            {
+                startInfo.ArgumentList.Add(argument);
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(request.WorkingDirectory))

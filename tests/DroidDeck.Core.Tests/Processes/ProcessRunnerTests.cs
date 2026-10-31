@@ -59,6 +59,25 @@ public sealed class ProcessRunnerTests
     }
 
     [Fact]
+    public async Task SendsRawArgumentsVerbatim()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var result = await Runner.RunAsync(new ProcessRequest
+        {
+            FileName = "cmd.exe",
+            Arguments = ["/d", "/s", "/c", "echo ignored"],
+            RawArguments = "/d /s /c echo \"C:\\Program Files\\tool.bat\" done",
+        });
+
+        Assert.True(result.Succeeded, result.StandardError);
+        Assert.Contains(@"""C:\Program Files\tool.bat"" done", result.StandardOutput, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void FormatsCommandLinesWithQuoting()
     {
         var commandLine = ProcessRequest.FormatCommandLine(

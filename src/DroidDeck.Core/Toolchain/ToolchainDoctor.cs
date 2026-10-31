@@ -549,12 +549,14 @@ public sealed class ToolchainDoctor : IToolchainService, IDisposable
         if (extension.Equals(".bat", StringComparison.OrdinalIgnoreCase) ||
             extension.Equals(".cmd", StringComparison.OrdinalIgnoreCase))
         {
-            var command = new List<string>(arguments.Count + 3) { "/d", "/c", executable };
-            command.AddRange(arguments);
+            // cmd.exe parses backslash-escaped quotes literally, so the wrapper line is
+            // passed raw inside an extra pair of quotes for "/s" to strip.
+            var commandLine = ProcessRequest.FormatCommandLine(executable, arguments);
             return new ProcessRequest
             {
                 FileName = "cmd.exe",
-                Arguments = command,
+                Arguments = ["/d", "/s", "/c", commandLine],
+                RawArguments = $"/d /s /c \"{commandLine}\"",
                 Timeout = timeout,
                 MaxOutputCharacters = 64 * 1024,
             };

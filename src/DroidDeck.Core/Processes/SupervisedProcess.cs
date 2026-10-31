@@ -348,9 +348,16 @@ public sealed class SupervisedProcess : IAsyncDisposable
             StandardErrorEncoding = Encoding.UTF8,
             WorkingDirectory = request.WorkingDirectory ?? Environment.CurrentDirectory,
         };
-        foreach (var argument in request.Arguments)
+        if (request.RawArguments is not null)
         {
-            info.ArgumentList.Add(argument);
+            info.Arguments = request.RawArguments;
+        }
+        else
+        {
+            foreach (var argument in request.Arguments)
+            {
+                info.ArgumentList.Add(argument);
+            }
         }
 
         foreach (var (key, value) in request.Environment)

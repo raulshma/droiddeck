@@ -73,6 +73,10 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
     private bool _reloading;
     private bool _panelsDirty;
     private bool _disposed;
+    private ScrollViewer? _buildOutputScrollViewer;
+    private ScrollViewer? _logScrollViewer;
+    private bool _buildStickToBottom = true;
+    private bool _logStickToBottom = true;
 
     /// <summary>Creates the session page.</summary>
     public SessionPage(
@@ -133,6 +137,8 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         _buildTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
         _buildTimer.Tick += OnBuildTimerTick;
         _buildTimer.Start();
+        BuildOutputList.Loaded += OnBuildOutputListLoaded;
+        LogList.Loaded += OnLogListLoaded;
         _panelTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         _panelTimer.Tick += OnPanelTimerTick;
 
@@ -862,6 +868,85 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         {
             _buildLines.RemoveFromStart(_buildLines.Count - MaxBuildLines);
         }
+
+        if (appended > 0 && _buildStickToBottom)
+        {
+            EnsureBuildScrollViewer();
+            BuildOutputList.ScrollIntoView(_buildLines[^1]);
+        }
+    }
+
+    private void OnBuildOutputListLoaded(object sender, RoutedEventArgs e) =>
+        EnsureBuildScrollViewer();
+
+    private void OnLogListLoaded(object sender, RoutedEventArgs e) =>
+        EnsureLogScrollViewer();
+
+    /// <summary>
+    /// Locates the internal ScrollViewer once the template has been realized. The Loaded
+    /// handler may run before the template is applied, so this retries on later use.
+    /// </summary>
+    private void EnsureBuildScrollViewer()
+    {
+        if (_buildOutputScrollViewer is not null)
+        {
+            return;
+        }
+
+        if (FindDescendant<ScrollViewer>(BuildOutputList) is { } scrollViewer)
+        {
+            _buildOutputScrollViewer = scrollViewer;
+            scrollViewer.ViewChanged += OnBuildOutputViewChanged;
+        }
+    }
+
+    private void EnsureLogScrollViewer()
+    {
+        if (_logScrollViewer is not null)
+        {
+            return;
+        }
+
+        if (FindDescendant<ScrollViewer>(LogList) is { } scrollViewer)
+        {
+            _logScrollViewer = scrollViewer;
+            scrollViewer.ViewChanged += OnLogViewChanged;
+        }
+    }
+
+    private void OnBuildOutputViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
+    {
+        _buildStickToBottom = IsAtBottom(_buildOutputScrollViewer);
+    }
+
+    private void OnLogViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
+    {
+        _logStickToBottom = IsAtBottom(_logScrollViewer);
+    }
+
+    private static bool IsAtBottom(ScrollViewer? scrollViewer) =>
+        scrollViewer is null ||
+        scrollViewer.VerticalOffset + scrollViewer.ViewportHeight >= scrollViewer.ExtentHeight - 2;
+
+    private static T? FindDescendant<T>(DependencyObject root)
+        where T : DependencyObject
+    {
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var index = 0; index < count; index++)
+        {
+            var child = VisualTreeHelper.GetChild(root, index);
+            if (child is T match)
+            {
+                return match;
+            }
+
+            if (FindDescendant<T>(child) is { } nested)
+            {
+                return nested;
+            }
+        }
+
+        return null;
     }
 
     private void OnLogcatEntriesAdded(object? sender, LogEntriesEventArgs e)
@@ -917,6 +1002,12 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         }
 
         _logRows.RemoveFromStart(_logRows.Count - _maxLogLines);
+        if (_logStickToBottom && _logRows.Count > 0)
+        {
+            EnsureLogScrollViewer();
+            LogList.ScrollIntoView(_logRows[^1]);
+        }
+
         NoLogsText.Visibility = _logRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
@@ -1145,6 +1236,9 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
             return;
         }
 
+        // A selected row means the user (or a jump) is reading somewhere specific,
+        // so live entries must not drag the view back to the tail.
+        _logStickToBottom = false;
         try
         {
             LogDetailPanel.Visibility = Visibility.Visible;

@@ -17,7 +17,8 @@ public sealed record ProcessOutputLine(ProcessOutputChannel Stream, string Text,
 
 /// <summary>
 /// Describes one process invocation. Arguments are always passed as a list and never
-/// concatenated into a shell command.
+/// concatenated into a shell command, except when <see cref="RawArguments"/> is set for
+/// hosts that parse their own command line.
 /// </summary>
 public sealed record ProcessRequest
 {
@@ -26,6 +27,15 @@ public sealed record ProcessRequest
 
     /// <summary>Gets the argument list.</summary>
     public IReadOnlyList<string> Arguments { get; init; } = [];
+
+    /// <summary>
+    /// Gets an optional raw argument line sent to the process verbatim. Use only for hosts
+    /// that parse their own command line, such as cmd.exe: the standard quoting escapes
+    /// inner quotes as backslash-quote sequences, which cmd treats as literal characters
+    /// and rejects. When set, runners send this line instead of quoting
+    /// <see cref="Arguments"/>; <see cref="Arguments"/> still drives display strings.
+    /// </summary>
+    public string? RawArguments { get; init; }
 
     /// <summary>Gets the working directory, or <see langword="null"/> to inherit it.</summary>
     public string? WorkingDirectory { get; init; }

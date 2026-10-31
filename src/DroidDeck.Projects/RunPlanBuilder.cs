@@ -279,6 +279,7 @@ public sealed class RunPlanBuilder : IRunPlanBuilder
                 {
                     FileName = "cmd.exe",
                     Arguments = ["/d", "/s", "/c", commandLine],
+                    RawArguments = $"/d /s /c \"{commandLine}\"",
                     WorkingDirectory = workingDirectory,
                     Environment = environment,
                     Timeout = timeout,

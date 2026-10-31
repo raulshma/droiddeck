@@ -355,7 +355,17 @@
                                     Grid.Row="1"
                                     SelectionMode="None"
                                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                    ScrollViewer.HorizontalScrollMode="Auto"
+                                    Loaded="OnBuildOutputListLoaded"
                                     AutomationProperties.AutomationId="SessionBuildOutput">
+                                    <ListView.ItemContainerStyle>
+                                        <Style TargetType="ListViewItem">
+                                            <!-- Left alignment lets wide lines grow the
+                                                 horizontal extent instead of clipping. -->
+                                            <Setter Property="HorizontalAlignment" Value="Left" />
+                                            <Setter Property="HorizontalContentAlignment" Value="Left" />
+                                        </Style>
+                                    </ListView.ItemContainerStyle>
                                     <ListView.ItemTemplate>
                                         <DataTemplate>
                                             <TextBlock
@@ -533,7 +543,17 @@
                                     SelectionMode="Single"
                                     SelectionChanged="OnLogSelectionChanged"
                                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                    ScrollViewer.HorizontalScrollMode="Auto"
+                                    Loaded="OnLogListLoaded"
                                     AutomationProperties.AutomationId="SessionLogList">
+                                    <ListView.ItemContainerStyle>
+                                        <Style TargetType="ListViewItem">
+                                            <!-- Left alignment lets wide lines grow the
+                                                 horizontal extent instead of clipping. -->
+                                            <Setter Property="HorizontalAlignment" Value="Left" />
+                                            <Setter Property="HorizontalContentAlignment" Value="Left" />
+                                        </Style>
+                                    </ListView.ItemContainerStyle>
                                     <ListView.ItemTemplate>
                                         <DataTemplate>
                                             <Border

@@ -180,6 +180,7 @@ public sealed class RunPlanBuilderTests
         Assert.Equal("cmd.exe", request.FileName);
         Assert.Contains("gradlew.bat", request.Arguments[3], StringComparison.Ordinal);
         Assert.Contains(request.Arguments, static argument => argument.Contains("assembleDebug", StringComparison.Ordinal));
+        Assert.Equal($"/d /s /c \"{request.Arguments[3]}\"", request.RawArguments);
         Assert.Equal(Path.Combine(project.RootPath, "android"), request.WorkingDirectory);
     }
 
