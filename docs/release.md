@@ -340,3 +340,20 @@ limitations in [`docs/releases/v0.0.2-alpha.md`](releases/v0.0.2-alpha.md).
 | Accessibility | Deferred | Hands-on Narrator, scaling, and pseudo-locale pass deferred by the alpha policy; automated architecture and accessibility guards pass in CI. |
 | Clean machine | Deferred | Deferred by the alpha policy; testers exercise the portable folder, and the check returns before beta. |
 | Release notes and artifacts | Ready for tag | [Release notes](releases/v0.0.2-alpha.md) are drafted; the workflow builds and drafts the release from the tag. |
+
+## 0.1.0 release status (2026-10-31)
+
+This records the evidence gathered for `0.1.0` from source commit `394c000`. It
+is not a 1.0.0 sign-off; the deferred rows are published as known limitations in
+[`docs/releases/v0.1.0.md`](releases/v0.1.0.md).
+
+| Gate | Status | Evidence |
+| --- | --- | --- |
+| Size | Pass | 235.6 MiB extracted and 94.0 MiB zipped; [report](perf/results/2026-10-31-size-0.1.0.json). |
+| Startup | Pass | Median 1094 ms, p95 1224 ms over eight measured runs after two warmups on the reference machine, with failure-window detection enabled; [report](perf/results/2026-10-31-startup-0.1.0.json). The zip was extracted and launched; after one warmup the extracted copy measured 907, 868, and 888 ms (median 888 ms). |
+| Automated suites | Pass | Release build with 0 warnings; 1,644 tests passed under the release filter, plus the plugin template suite. |
+| Security review | Complete | Revalidated for this candidate with no control or accepted-risk changes; plugin, catalog, process, run, and diagnostics suites are green. |
+| Soak | Deferred, accepted risk | Run-finalization and multi-device start changes touch session paths, so the eight-hour soak was not run. The release notes record the risk and ask testers to watch for orphaned `adb` or `scrcpy` processes. |
+| Accessibility | Deferred | Hands-on Narrator, scaling, and pseudo-locale pass deferred by the alpha policy; automated architecture and accessibility guards pass in CI. |
+| Clean machine | Deferred | Deferred by the alpha policy; testers exercise the portable folder, and the check returns before beta. |
+| Release notes and artifacts | Ready for tag | [Release notes](releases/v0.1.0.md) are drafted; the workflow builds and drafts the release from the tag. |
