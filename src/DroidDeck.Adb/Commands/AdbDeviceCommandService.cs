@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+using DroidDeck.Adb.Parsing;
 using DroidDeck.Core.Processes;
 using DroidDeck.Core.Runs;
 using Microsoft.Extensions.Logging;
@@ -289,21 +290,10 @@ public sealed partial class AdbDeviceCommandService : IDeviceCommandService
             return null;
         }
 
-        var lines = result.Output
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (lines.Length < 2)
-        {
-            return null;
-        }
-
-        var columns = lines[^1].Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (columns.Length >= 4 &&
-            long.TryParse(columns[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out var kilobytes))
-        {
-            return kilobytes * 1024;
-        }
-
-        return null;
+        var rows = DfOutput.Parse(result.Output);
+        // Prefer /data, but fall back to the last parsed row so single-row output keeps working.
+        var row = DfOutput.FindMountPoint(rows, DfOutput.DataMountPoint) ?? DfOutput.FindLast(rows);
+        return row?.AvailableBytes;
     }
 
     /// <inheritdoc />

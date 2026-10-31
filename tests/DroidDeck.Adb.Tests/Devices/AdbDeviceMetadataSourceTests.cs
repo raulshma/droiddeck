@@ -207,7 +207,7 @@ public sealed class AdbDeviceMetadataSourceTests
 
         Assert.Null(metadata.Model);
         var warning = Assert.Single(metadata.Warnings);
-        Assert.Contains("could not start", warning, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("adb could not start: The system cannot find the file specified.", warning);
     }
 
     [Fact]
@@ -218,7 +218,20 @@ public sealed class AdbDeviceMetadataSourceTests
 
         var metadata = await source.FetchAsync("S1");
 
-        Assert.Contains(metadata.Warnings, static warning => warning.Contains("timed out", StringComparison.OrdinalIgnoreCase));
+        var warning = Assert.Single(metadata.Warnings);
+        Assert.Equal("Metadata collection timed out.", warning);
+    }
+
+    [Fact]
+    public async Task FetchAsync_ReturnsWarningOnCancellation()
+    {
+        var result = Success(string.Empty) with { WasCanceled = true, ExitCode = -1 };
+        var source = new AdbDeviceMetadataSource(new StubProcessRunner { Result = result });
+
+        var metadata = await source.FetchAsync("S1");
+
+        var warning = Assert.Single(metadata.Warnings);
+        Assert.Equal("Metadata collection was canceled.", warning);
     }
 
     [Fact]
@@ -229,7 +242,61 @@ public sealed class AdbDeviceMetadataSourceTests
         var metadata = await source.FetchAsync("S1");
 
         var warning = Assert.Single(metadata.Warnings);
-        Assert.Contains("no output", warning, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("Metadata collection returned no output.", warning);
+    }
+
+    [Fact]
+    public async Task FetchAsync_ReportsExitCodeAndStderrWhenOutputIsMissing()
+    {
+        var result = Success("  ") with
+        {
+            ExitCode = 2,
+            StandardError = "something went wrong\nsecond line",
+        };
+        var source = new AdbDeviceMetadataSource(new StubProcessRunner { Result = result });
+
+        var metadata = await source.FetchAsync("S1");
+
+        var warning = Assert.Single(metadata.Warnings);
+        Assert.Equal("Metadata collection failed: something went wrong (exit code 2)", warning);
+    }
+
+    [Fact]
+    public async Task FetchAsync_ReportsExitCodeWhenOutputAndStderrAreMissing()
+    {
+        var result = Success(string.Empty) with { ExitCode = 2 };
+        var source = new AdbDeviceMetadataSource(new StubProcessRunner { Result = result });
+
+        var metadata = await source.FetchAsync("S1");
+
+        var warning = Assert.Single(metadata.Warnings);
+        Assert.Equal("Metadata collection returned no output. (exit code 2)", warning);
+    }
+
+    [Fact]
+    public async Task FetchAsync_UsesClassifierSignalWhenOutputIsMissing()
+    {
+        var result = Success(string.Empty) with { StandardError = "error: closed" };
+        var source = new AdbDeviceMetadataSource(new StubProcessRunner { Result = result });
+
+        var metadata = await source.FetchAsync("S1");
+
+        var warning = Assert.Single(metadata.Warnings);
+        Assert.Equal("Metadata collection failed: error: closed", warning);
+    }
+
+    [Fact]
+    public async Task FetchAsync_AppendsExitCodeWhenAdbWritesNoStderr()
+    {
+        var result = Success(FullOutput) with { ExitCode = 1 };
+        var source = new AdbDeviceMetadataSource(new StubProcessRunner { Result = result });
+
+        var metadata = await source.FetchAsync("S1");
+
+        Assert.Equal("Pixel 7", metadata.Model);
+        Assert.Contains(
+            metadata.Warnings,
+            static warning => warning == "adb reported an error while reading metadata: exit code 1");
     }
 
     [Fact]

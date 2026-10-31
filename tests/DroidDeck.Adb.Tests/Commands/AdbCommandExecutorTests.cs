@@ -147,7 +147,9 @@ public sealed class AdbCommandExecutorTests
             CancellationToken.None);
 
         Assert.Equal(AdbFailureKind.TimedOut, timeoutResult.FailureKind);
+        Assert.Equal("adb timed out.", timeoutResult.FailureMessage);
         Assert.Equal(AdbFailureKind.Canceled, canceledResult.FailureKind);
+        Assert.Equal("adb was canceled.", canceledResult.FailureMessage);
     }
 
     [Fact]
@@ -169,7 +171,9 @@ public sealed class AdbCommandExecutorTests
             CancellationToken.None);
 
         Assert.Equal(AdbFailureKind.StartError, result.FailureKind);
-        Assert.Contains("could not start", result.FailureMessage ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(
+            "adb could not start: The system cannot find the file specified.",
+            result.FailureMessage);
     }
 
     [Fact]
@@ -192,7 +196,68 @@ public sealed class AdbCommandExecutorTests
             CancellationToken.None);
 
         Assert.Equal(AdbFailureKind.ExitCode, result.FailureKind);
-        Assert.Contains("3", result.FailureMessage ?? string.Empty, StringComparison.Ordinal);
+        Assert.Equal("adb exited with code 3: something went wrong", result.FailureMessage);
+    }
+
+    [Fact]
+    public async Task Classify_ReportsNonZeroExitWithoutStderr()
+    {
+        var runner = new FakeProcessRunner
+        {
+            Handler = request => new ProcessResult
+            {
+                CommandLine = request.ToCommandLine(),
+                ExitCode = 2,
+            },
+        };
+        var executor = new AdbCommandExecutor(runner, "adb");
+
+        var result = await executor.RunAsync(
+            ["shell", "true"],
+            TimeSpan.FromSeconds(5),
+            CancellationToken.None);
+
+        Assert.Equal(AdbFailureKind.ExitCode, result.FailureKind);
+        Assert.Equal("adb exited with code 2.", result.FailureMessage);
+    }
+
+    [Fact]
+    public async Task Classify_ReportsSuccessWithoutOutput()
+    {
+        var runner = new FakeProcessRunner
+        {
+            Handler = request => FakeProcessRunner.Success(request),
+        };
+        var executor = new AdbCommandExecutor(runner, "adb");
+
+        var result = await executor.RunAsync(
+            ["shell", "true"],
+            TimeSpan.FromSeconds(5),
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(AdbFailureKind.None, result.FailureKind);
+        Assert.Null(result.FailureMessage);
+    }
+
+    [Fact]
+    public async Task Classify_ReportsSuccessWithOutput()
+    {
+        var runner = new FakeProcessRunner
+        {
+            Handler = request => FakeProcessRunner.Success(request, "ok"),
+        };
+        var executor = new AdbCommandExecutor(runner, "adb");
+
+        var result = await executor.RunAsync(
+            ["shell", "true"],
+            TimeSpan.FromSeconds(5),
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(AdbFailureKind.None, result.FailureKind);
+        Assert.Null(result.FailureMessage);
+        Assert.Equal("ok", result.StandardOutput);
     }
 
     [Fact]

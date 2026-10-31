@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Text;
 using DroidDeck.Adb.Commands;
+using DroidDeck.Adb.Parsing;
 using DroidDeck.Core.Devices;
 using DroidDeck.Core.Processes;
 using Microsoft.Extensions.Logging;
@@ -76,27 +77,17 @@ public sealed class AdbDeviceMetadataSource : IDeviceMetadataSource
         var raw = result.Raw;
         var fetchedAt = _timeProvider.GetUtcNow();
 
-        if (!string.IsNullOrWhiteSpace(raw.StartError))
+        if (DescribeFailure(result) is { } failure)
         {
-            return Failure(fetchedAt, $"adb could not start: {raw.StartError}");
-        }
-
-        if (raw.TimedOut)
-        {
-            return Failure(fetchedAt, "Metadata collection timed out.");
-        }
-
-        if (raw.WasCanceled)
-        {
-            return Failure(fetchedAt, "Metadata collection was canceled.");
+            return Failure(fetchedAt, failure);
         }
 
         if (string.IsNullOrWhiteSpace(raw.StandardOutput))
         {
-            var detail = raw.StandardError.Trim();
-            var reason = detail.Length == 0
+            var detail = AdbCommandFailures.FirstLine(raw.StandardError);
+            var reason = detail is null
                 ? "Metadata collection returned no output."
-                : $"Metadata collection failed: {FirstLine(detail)}";
+                : $"Metadata collection failed: {detail}";
             if (!raw.Succeeded)
             {
                 reason += $" (exit code {raw.ExitCode})";
@@ -108,11 +99,7 @@ public sealed class AdbDeviceMetadataSource : IDeviceMetadataSource
         var metadata = ParseBatch(raw.StandardOutput, fetchedAt);
         if (!raw.Succeeded)
         {
-            var detail = FirstLine(raw.StandardError.Trim());
-            if (detail.Length == 0)
-            {
-                detail = $"exit code {raw.ExitCode}";
-            }
+            var detail = AdbCommandFailures.FirstLine(raw.StandardError) ?? $"exit code {raw.ExitCode}";
 
             metadata = metadata with
             {
@@ -230,7 +217,10 @@ public sealed class AdbDeviceMetadataSource : IDeviceMetadataSource
         long? storageFree = null;
         if (sections.TryGetValue(StorageMarker, out var storageText))
         {
-            (storageTotal, storageFree) = ParseStorage(storageText);
+            // Metadata only trusts an exact /data row; it does not fall back to another mount.
+            var data = DfOutput.FindMountPoint(DfOutput.Parse(storageText), DfOutput.DataMountPoint);
+            storageTotal = data?.TotalBytes;
+            storageFree = data?.AvailableBytes;
             if (storageTotal is null || storageFree is null)
             {
                 warnings.Add("Storage information could not be read.");
@@ -273,11 +263,17 @@ public sealed class AdbDeviceMetadataSource : IDeviceMetadataSource
         FetchedAt = fetchedAt,
     };
 
-    private static string FirstLine(string text)
+    /// <summary>Maps the executor's failure category to the metadata wording users see.</summary>
+    // Only unusable-output failures are hard failures. Classified device
+    // signals such as unauthorized or offline can arrive with partial output,
+    // which the caller degrades to a warning instead of discarding it.
+    private static string? DescribeFailure(AdbCommandResult result) => result.FailureKind switch
     {
-        var lineBreak = text.IndexOfAny(['\r', '\n']);
-        return lineBreak < 0 ? text : text[..lineBreak];
-    }
+        AdbFailureKind.StartError => result.FailureMessage ?? $"adb could not start: {result.StartError}",
+        AdbFailureKind.TimedOut => "Metadata collection timed out.",
+        AdbFailureKind.Canceled => "Metadata collection was canceled.",
+        _ => null,
+    };
 
     private static Dictionary<string, string> SplitSections(string output)
     {
@@ -407,28 +403,6 @@ public sealed class AdbDeviceMetadataSource : IDeviceMetadataSource
         }
 
         return null;
-    }
-
-    private static (long? Total, long? Free) ParseStorage(string text)
-    {
-        foreach (var line in text.Split('\n'))
-        {
-            var tokens = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (tokens.Length < 6 || !string.Equals(tokens[^1], "/data", StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            if (long.TryParse(tokens[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var totalBlocks) &&
-                long.TryParse(tokens[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out var freeBlocks) &&
-                totalBlocks >= 0 &&
-                freeBlocks >= 0)
-            {
-                return (totalBlocks * 1024, freeBlocks * 1024);
-            }
-        }
-
-        return (null, null);
     }
 
     private static string? MapBatteryStatus(string? status)
