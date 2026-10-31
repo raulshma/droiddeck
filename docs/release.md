@@ -333,6 +333,7 @@ limitations in [`docs/releases/v0.0.2-alpha.md`](releases/v0.0.2-alpha.md).
 | --- | --- | --- |
 | Size | Pass | 235.5 MiB extracted and 91.4 MiB zipped; [report](perf/results/2026-10-31-size-0.0.2-alpha.json). |
 | Startup | Pass | Median 1112 ms, p95 1320 ms over eight measured runs after two warmups on the reference machine, with failure-window detection enabled; [report](perf/results/2026-10-31-startup-0.0.2-alpha.json). The zip was extracted and launched once; after a first-run scan the extracted copy measured 1342-1354 ms across three runs after one warmup. |
+| Published artifacts | Pass | The drafted assets were downloaded; all six SHA-256 values in `SHA256SUMS.txt` matched. The published zip's extracted copy measured 1194 ms median over three runs after one warmup, inside the 2,000 ms budget. |
 | Automated suites | Pass | Release build with 0 warnings; 1,447 non-UI tests passed, plus the plugin template suite. |
 | Security review | Complete | Revalidated for this candidate with no control or accepted-risk changes; plugin, catalog, process, run, and diagnostics suites are green. |
 | Soak | Deferred, accepted risk | The supervised child-process refactor touches session and mirror paths, so the eight-hour soak was not run. The release notes record the risk and ask testers to watch for orphaned `adb` or `scrcpy` processes. |
