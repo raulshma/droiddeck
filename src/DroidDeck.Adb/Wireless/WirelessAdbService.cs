@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using DroidDeck.Adb.Commands;
+using DroidDeck.Core.Devices;
 using DroidDeck.Core.Processes;
 using DroidDeck.Core.Wireless;
 using Microsoft.Extensions.Logging;
@@ -26,6 +28,7 @@ public sealed class WirelessAdbService : IWirelessAdbService
     private readonly TimeSpan _pollInterval;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<WirelessAdbService> _logger;
+    private readonly AdbCommandExecutor _adb;
     private readonly object _gate = new();
     private readonly SemaphoreSlim _lifecycle = new(1, 1);
     private List<WirelessMdnsService> _services = [];
@@ -54,6 +57,7 @@ public sealed class WirelessAdbService : IWirelessAdbService
         _pollInterval = pollInterval ?? TimeSpan.FromSeconds(2);
         _timeProvider = timeProvider ?? TimeProvider.System;
         _logger = logger ?? NullLogger<WirelessAdbService>.Instance;
+        _adb = new AdbCommandExecutor(_runner, _adbPathProvider, _timeProvider, _logger);
     }
 
     /// <inheritdoc />
@@ -168,9 +172,10 @@ public sealed class WirelessAdbService : IWirelessAdbService
     public async Task<IReadOnlyList<WirelessMdnsService>> DiscoverAsync(
         CancellationToken cancellationToken = default)
     {
-        var result = await RunAdbAsync(["mdns", "services"], TimeSpan.FromSeconds(20), cancellationToken)
+        var result = await _adb
+            .RunAsync(["mdns", "services"], TimeSpan.FromSeconds(20), cancellationToken)
             .ConfigureAwait(false);
-        if (result.ExitCode != 0)
+        if (!result.Succeeded)
         {
             var message = result.CombinedOutput.Trim();
             SetLastError(
@@ -267,14 +272,10 @@ public sealed class WirelessAdbService : IWirelessAdbService
                 "Read the six-digit pairing code from the device's Wireless debugging screen.");
         }
 
-        var result = await RunAdbAsync(
-            ["pair", address, pairingCode],
-            TimeSpan.FromSeconds(90),
-            cancellationToken).ConfigureAwait(false);
-        var succeeded = result.ExitCode == 0 &&
-                        !result.CombinedOutput.Contains("Failed", StringComparison.OrdinalIgnoreCase) &&
-                        !result.CombinedOutput.Contains("error", StringComparison.OrdinalIgnoreCase);
-        if (!succeeded)
+        var result = await _adb
+            .RunAsync(["pair", address, pairingCode], TimeSpan.FromSeconds(90), cancellationToken)
+            .ConfigureAwait(false);
+        if (!result.Succeeded)
         {
             return Failure(
                 $"Pairing with {address} failed: {Summarize(result.CombinedOutput)}",
@@ -313,17 +314,11 @@ public sealed class WirelessAdbService : IWirelessAdbService
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(address);
-        var result = await RunAdbAsync(
-            ["connect", address],
-            TimeSpan.FromSeconds(45),
-            cancellationToken).ConfigureAwait(false);
+        var result = await _adb
+            .RunAsync(["connect", address], TimeSpan.FromSeconds(45), cancellationToken)
+            .ConfigureAwait(false);
         var output = result.CombinedOutput;
-        var succeeded = result.ExitCode == 0 &&
-                        !output.Contains("failed", StringComparison.OrdinalIgnoreCase) &&
-                        !output.Contains("cannot", StringComparison.OrdinalIgnoreCase) &&
-                        !output.Contains("unable", StringComparison.OrdinalIgnoreCase) &&
-                        !output.Contains("refused", StringComparison.OrdinalIgnoreCase);
-        if (!succeeded)
+        if (!result.Succeeded)
         {
             return Failure(
                 $"Could not connect to {address}: {Summarize(output)}",
@@ -353,17 +348,16 @@ public sealed class WirelessAdbService : IWirelessAdbService
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(address);
-        var result = await RunAdbAsync(
-            ["disconnect", address],
-            TimeSpan.FromSeconds(20),
-            cancellationToken).ConfigureAwait(false);
+        var result = await _adb
+            .RunAsync(["disconnect", address], TimeSpan.FromSeconds(20), cancellationToken)
+            .ConfigureAwait(false);
         if (forget)
         {
             await _store.RemoveAsync(address, cancellationToken).ConfigureAwait(false);
             await ReloadRememberedAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        var succeeded = result.ExitCode == 0;
+        var succeeded = result.Succeeded;
         if (succeeded)
         {
             MarkDisconnected(address);
@@ -575,17 +569,16 @@ public sealed class WirelessAdbService : IWirelessAdbService
 
     private async Task<HashSet<string>> GetConnectedAddressesAsync(CancellationToken cancellationToken)
     {
-        var result = await RunAdbAsync(["devices"], TimeSpan.FromSeconds(20), cancellationToken)
+        var result = await _adb
+            .RunAsync(["devices"], TimeSpan.FromSeconds(20), cancellationToken)
             .ConfigureAwait(false);
         var addresses = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var line in result.StandardOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        foreach (var device in AdbDeviceParser.Parse(result.StandardOutput))
         {
-            var parts = line.Split('\t', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            if (parts.Length >= 2 &&
-                parts[1] == "device" &&
-                parts[0].Contains(':', StringComparison.Ordinal))
+            if (device.State == DeviceState.Device &&
+                device.Serial.Contains(':', StringComparison.Ordinal))
             {
-                addresses.Add(parts[0]);
+                addresses.Add(device.Serial);
             }
         }
 
@@ -623,22 +616,6 @@ public sealed class WirelessAdbService : IWirelessAdbService
         {
             _connected.Remove(address);
         }
-    }
-
-    private Task<ProcessResult> RunAdbAsync(
-        IReadOnlyList<string> arguments,
-        TimeSpan timeout,
-        CancellationToken cancellationToken)
-    {
-        return _runner.RunAsync(
-            new ProcessRequest
-            {
-                FileName = _adbPathProvider(),
-                Arguments = arguments,
-                Timeout = timeout,
-            },
-            output: null,
-            cancellationToken);
     }
 
     private static List<WirelessMdnsService> ParseMdnsServices(string output)

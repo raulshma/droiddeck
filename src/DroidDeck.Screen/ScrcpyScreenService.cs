@@ -33,6 +33,7 @@ public sealed class ScrcpyScreenService : IScreenService
     private readonly AppPaths _paths;
     private readonly Func<string?> _scrcpyPathProvider;
     private readonly Func<string> _adbPathProvider;
+    private readonly RemoteScreenCapture _capture;
     private readonly Func<ScreenSettings> _settingsProvider;
     private readonly TimeSpan _pollInterval;
     private readonly TimeSpan _windowWait;
@@ -64,6 +65,7 @@ public sealed class ScrcpyScreenService : IScreenService
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
         _scrcpyPathProvider = scrcpyPathProvider ?? throw new ArgumentNullException(nameof(scrcpyPathProvider));
         _adbPathProvider = adbPathProvider ?? throw new ArgumentNullException(nameof(adbPathProvider));
+        _capture = new RemoteScreenCapture(_runner, _adbPathProvider);
         _settingsProvider = settingsProvider ?? (static () => new ScreenSettings());
         _pollInterval = pollInterval ?? TimeSpan.FromSeconds(1);
         _windowWait = windowWait ?? DefaultWindowWait;
@@ -385,53 +387,27 @@ public sealed class ScrcpyScreenService : IScreenService
         var targetDirectory = ResolveDirectory(directory, settings.ScreenshotsDirectory, _paths.ScreenshotsDirectory);
         Directory.CreateDirectory(targetDirectory);
         var stamp = _timeProvider.GetUtcNow().ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
-        var fileName = $"screenshot-{Sanitize(serial)}-{stamp}.png";
+        var fileName = RemoteScreenCapture.CreateFileName("screenshot", serial, stamp, ".png");
         var localPath = Path.Combine(targetDirectory, fileName);
-        var remoteDirectory = "/sdcard/DroidDeck";
-        var remotePath = $"{remoteDirectory}/{fileName}";
 
-        var prepare = await RunAdbAsync(
-            ["-s", serial, "shell", "mkdir", "-p", remoteDirectory],
-            TimeSpan.FromSeconds(20),
+        var result = await _capture.CaptureAsync(
+            new RemoteCaptureRequest
+            {
+                Serial = serial,
+                LocalPath = localPath,
+                RemoteFileName = fileName,
+                Operation = "screenshot",
+            },
             cancellationToken).ConfigureAwait(false);
-        if (prepare.ExitCode != 0)
+        if (!result.Succeeded)
         {
             return Failure(
-                $"The screenshot directory could not be created on {serial}.",
-                Truncate(prepare.CombinedOutput),
-                prepare.CommandLine);
+                result.Message ?? $"The screenshot failed on {serial}.",
+                result.Detail,
+                result.CommandLine);
         }
 
-        var capture = await RunAdbAsync(
-            ["-s", serial, "shell", "screencap", "-p", remotePath],
-            TimeSpan.FromSeconds(30),
-            cancellationToken).ConfigureAwait(false);
-        if (capture.ExitCode != 0)
-        {
-            return Failure(
-                $"The screenshot failed on {serial}.",
-                Truncate(capture.CombinedOutput),
-                capture.CommandLine);
-        }
-
-        var pull = await RunAdbAsync(
-            ["-s", serial, "pull", remotePath, localPath],
-            TimeSpan.FromMinutes(1),
-            cancellationToken).ConfigureAwait(false);
-        _ = await RunAdbAsync(
-            ["-s", serial, "shell", "rm", "-f", remotePath],
-            TimeSpan.FromSeconds(20),
-            CancellationToken.None).ConfigureAwait(false);
-
-        if (pull.ExitCode != 0 || !File.Exists(localPath))
-        {
-            return Failure(
-                $"The screenshot could not be copied from {serial}.",
-                Truncate(pull.CombinedOutput),
-                pull.CommandLine);
-        }
-
-        return Success($"Screenshot saved to {localPath}.", pull.CommandLine, path: localPath);
+        return Success($"Screenshot saved to {localPath}.", result.CommandLine, path: localPath);
     }
 
     /// <inheritdoc />

@@ -19,4 +19,62 @@ public sealed class DeviceInfoTests
 
         Assert.Equal(expected, device.ConnectionKind);
     }
+
+    [Fact]
+    public void WithTransport_UpdatesTransportFieldsAndPreservesMetadata()
+    {
+        var seenAt = new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
+        var existing = new DeviceInfo
+        {
+            Serial = "S1",
+            Manufacturer = "Google",
+            BatteryLevel = 75,
+            LastSeenAt = DateTimeOffset.MinValue,
+        };
+        var transport = new DeviceInfo
+        {
+            Serial = "S1",
+            State = DeviceState.Device,
+            Product = "panther",
+            Codename = "panther",
+            Model = "Pixel 7",
+            TransportId = "4",
+        };
+
+        var merged = existing.WithTransport(transport, seenAt);
+
+        Assert.Equal(DeviceState.Device, merged.State);
+        Assert.Equal("panther", merged.Product);
+        Assert.Equal("panther", merged.Codename);
+        Assert.Equal("Pixel 7", merged.Model);
+        Assert.Equal("4", merged.TransportId);
+        Assert.Equal(seenAt, merged.LastSeenAt);
+        Assert.Equal("Google", merged.Manufacturer);
+        Assert.Equal(75, merged.BatteryLevel);
+    }
+
+    [Fact]
+    public void WithTransport_KeepsExistingValuesWhenTransportOmitsThem()
+    {
+        var existing = new DeviceInfo
+        {
+            Serial = "S1",
+            Product = "panther",
+            Codename = "panther",
+            Model = "Pixel 7",
+            TransportId = "4",
+            IsEmulator = true,
+        };
+
+        var merged = existing.WithTransport(
+            new DeviceInfo { Serial = "S1", State = DeviceState.Offline },
+            DateTimeOffset.UtcNow);
+
+        Assert.Equal(DeviceState.Offline, merged.State);
+        Assert.Equal("panther", merged.Product);
+        Assert.Equal("panther", merged.Codename);
+        Assert.Equal("Pixel 7", merged.Model);
+        Assert.Equal("4", merged.TransportId);
+        Assert.True(merged.IsEmulator);
+    }
 }

@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Text.Json.Nodes;
-using DroidDeck.Core.Security;
 using DroidDeck.Plugin.Abstractions;
 using DroidDeck.Plugins;
 using Microsoft.UI.Xaml;
@@ -20,13 +19,26 @@ internal static class PluginSettingsDialogs
     /// Shows the settings for one plugin. Plugins without a schema, or with a
     /// schema the host cannot use, get an explanation instead of controls.
     /// </summary>
-    public static async Task ShowAsync(XamlRoot xamlRoot, ExtensionsPage.PluginRow row, ISecretStore secrets)
+    public static async Task ShowAsync(
+        XamlRoot xamlRoot,
+        ExtensionsPage.PluginRow row,
+        PluginSettingsFactory settingsFactory)
     {
         ArgumentNullException.ThrowIfNull(xamlRoot);
         ArgumentNullException.ThrowIfNull(row);
-        ArgumentNullException.ThrowIfNull(secrets);
+        ArgumentNullException.ThrowIfNull(settingsFactory);
 
-        if (!File.Exists(PluginSettingsSchemaReader.GetSchemaPath(row.InstallPath)))
+        var creation = await settingsFactory.CreateForInstalledPluginAsync(row.PluginId, row.InstallPath);
+        if (creation.Issue is { } issue)
+        {
+            await ShowNoticeAsync(
+                xamlRoot,
+                $"{row.Title} settings",
+                "The plugin's settings schema could not be used: " + issue.Reason);
+            return;
+        }
+
+        if (creation.SchemaSettings is not { } settings)
         {
             await ShowNoticeAsync(
                 xamlRoot,
@@ -35,26 +47,9 @@ internal static class PluginSettingsDialogs
             return;
         }
 
-        var read = await PluginSettingsSchemaReader.ReadAsync(row.InstallPath);
-        if (read.Schema is null)
-        {
-            var reason = read.Validation.Issues.FirstOrDefault(static issue =>
-                issue.Severity == PluginValidationSeverity.Error)?.Message ?? "The schema is invalid.";
-            await ShowNoticeAsync(
-                xamlRoot,
-                $"{row.Title} settings",
-                "The plugin's settings schema could not be used: " + reason);
-            return;
-        }
-
-        // The dialog opens the same store instance the plugin loader created, so
-        // its writes cannot race a second store over the same settings file. The
-        // per-path registry owns the store; the dialog never disposes it.
-        var settings = SchemaPluginSettings.GetOrCreate(
-            Path.Combine(row.InstallPath, "settings.json"),
-            read.Schema,
-            row.PluginId,
-            secrets);
+        // The factory returns the same store instance the plugin loader created,
+        // so the dialog's writes cannot race a second store over the file. The
+        // factory owns the store; the dialog never disposes it.
         var editor = await PluginSettingsEditor.LoadAsync(settings);
         var dialog = new ContentDialog
         {

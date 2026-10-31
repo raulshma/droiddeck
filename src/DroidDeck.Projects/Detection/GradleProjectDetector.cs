@@ -24,9 +24,9 @@ public sealed partial class GradleProjectDetector : IProjectDetector
     {
         ArgumentNullException.ThrowIfNull(context);
         var root = context.RootPath;
-        var settingsFile = FindFirst(root, "settings.gradle.kts", "settings.gradle");
-        var rootBuildFile = FindFirst(root, "build.gradle.kts", "build.gradle");
-        var wrapperFile = FindFirst(root, "gradlew.bat", "gradlew");
+        var settingsFile = ProjectSource.FindFirst(root, "settings.gradle.kts", "settings.gradle");
+        var rootBuildFile = ProjectSource.FindBuildFile(root);
+        var wrapperFile = ProjectSource.FindFirst(root, "gradlew.bat", "gradlew");
         if (settingsFile is null && (rootBuildFile is null || wrapperFile is null))
         {
             return null;
@@ -44,7 +44,7 @@ public sealed partial class GradleProjectDetector : IProjectDetector
 
         var evidence = new List<DetectionEvidence>();
         var warnings = new List<string>();
-        var settingsText = await ReadTextAsync(settingsFile, cancellationToken).ConfigureAwait(false);
+        var settingsText = await ProjectSource.ReadTextAsync(settingsFile, cancellationToken).ConfigureAwait(false);
         var moduleDirectories = ParseModuleDirectories(settingsText);
         if (settingsFile is not null)
         {
@@ -82,7 +82,7 @@ public sealed partial class GradleProjectDetector : IProjectDetector
         var wrapperProperties = Path.Combine(root, "gradle", "wrapper", "gradle-wrapper.properties");
         if (File.Exists(wrapperProperties))
         {
-            var wrapperText = await ReadTextAsync(wrapperProperties, cancellationToken).ConfigureAwait(false);
+            var wrapperText = await ProjectSource.ReadTextAsync(wrapperProperties, cancellationToken).ConfigureAwait(false);
             project.WrapperVersion = wrapperText is null ? null : ParseWrapperVersion(wrapperText);
             if (project.WrapperVersion is not null)
             {
@@ -99,7 +99,7 @@ public sealed partial class GradleProjectDetector : IProjectDetector
 
         var versionCatalog = Path.Combine(root, "gradle", "libs.versions.toml");
         var catalogText = File.Exists(versionCatalog)
-            ? await ReadTextAsync(versionCatalog, cancellationToken).ConfigureAwait(false)
+            ? await ProjectSource.ReadTextAsync(versionCatalog, cancellationToken).ConfigureAwait(false)
             : null;
         var catalog = catalogText is null ? null : VersionCatalog.Parse(catalogText);
         if (catalog is not null)
@@ -113,19 +113,20 @@ public sealed partial class GradleProjectDetector : IProjectDetector
             });
         }
 
-        var rootBuildText = await ReadTextAsync(rootBuildFile, cancellationToken).ConfigureAwait(false);
+        var rootBuildText = await ProjectSource.ReadTextAsync(rootBuildFile, cancellationToken).ConfigureAwait(false);
         var modules = new List<ProjectModule>();
+        var moduleBuildTexts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var (moduleName, relativePath) in moduleDirectories)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var moduleDirectory = Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar));
-            var buildFile = FindFirst(moduleDirectory, "build.gradle.kts", "build.gradle");
+            var buildFile = ProjectSource.FindBuildFile(moduleDirectory);
             if (buildFile is null)
             {
                 continue;
             }
 
-            var buildText = await ReadTextAsync(buildFile, cancellationToken).ConfigureAwait(false);
+            var buildText = await ProjectSource.ReadTextAsync(buildFile, cancellationToken).ConfigureAwait(false);
             if (buildText is null)
             {
                 continue;
@@ -133,6 +134,7 @@ public sealed partial class GradleProjectDetector : IProjectDetector
 
             var module = ParseModule(moduleName, relativePath, buildFile, buildText, root);
             modules.Add(module);
+            moduleBuildTexts[module.Path] = buildText;
             if (module.IsKotlinMultiplatform)
             {
                 evidence.Add(new DetectionEvidence
@@ -170,12 +172,13 @@ public sealed partial class GradleProjectDetector : IProjectDetector
 
         if (modules.Count == 0)
         {
-            var rootBuildTextForModule = rootBuildText;
-            if (rootBuildTextForModule is not null &&
-                (ContainsPlugin(rootBuildTextForModule, "com.android.application") ||
-                 ContainsPlugin(rootBuildTextForModule, "com.android.library")))
+            if (rootBuildText is not null &&
+                (ContainsPlugin(rootBuildText, "com.android.application") ||
+                 ContainsPlugin(rootBuildText, "com.android.library")))
             {
-                modules.Add(ParseModule(":", ".", rootBuildFile!, rootBuildTextForModule, root));
+                var rootModule = ParseModule(":", ".", rootBuildFile!, rootBuildText, root);
+                modules.Add(rootModule);
+                moduleBuildTexts[rootModule.Path] = rootBuildText;
             }
         }
 
@@ -243,7 +246,7 @@ public sealed partial class GradleProjectDetector : IProjectDetector
             }
         }
 
-        project.Variants = BuildVariants(modules, root);
+        project.Variants = BuildVariants(modules, moduleBuildTexts);
         project.Capabilities = ProjectCapability.Build | ProjectCapability.Variants | ProjectCapability.Tests;
         if (project.Variants.Count > 0)
         {
@@ -301,8 +304,8 @@ public sealed partial class GradleProjectDetector : IProjectDetector
                 : isLibrary || isKmp
                     ? ProjectModuleType.Library
                     : ProjectModuleType.Unknown,
-            ApplicationId = MatchValue(ApplicationIdRegex(), buildText),
-            Namespace = MatchValue(NamespaceRegex(), buildText),
+            ApplicationId = ProjectSource.MatchValue(ProjectSource.ApplicationIdPattern(), buildText, trim: false),
+            Namespace = ProjectSource.MatchValue(ProjectSource.NamespacePattern(), buildText, trim: false),
             IsComposeMultiplatform = ContainsPlugin(buildText, "org.jetbrains.compose"),
             AgpVersion = ParsePluginVersion(buildText, "com.android.application"),
             KotlinVersion = ParsePluginVersion(buildText, "org.jetbrains.kotlin"),
@@ -311,13 +314,16 @@ public sealed partial class GradleProjectDetector : IProjectDetector
         return module;
     }
 
-    private static List<ProjectVariant> BuildVariants(IReadOnlyList<ProjectModule> modules, string root)
+    private static List<ProjectVariant> BuildVariants(
+        IReadOnlyList<ProjectModule> modules,
+        Dictionary<string, string> moduleBuildTexts)
     {
         var variants = new List<ProjectVariant>();
         foreach (var module in modules.Where(module => module.Type == ProjectModuleType.Application))
         {
-            var buildTypes = ParseBuildTypes(module, root);
-            var flavors = ParseFlavors(module, root);
+            moduleBuildTexts.TryGetValue(module.Path, out var buildText);
+            var buildTypes = ParseBuildTypes(buildText);
+            var flavors = ParseFlavors(buildText);
             var flavorDimensions = flavors.Count == 0 ? new List<string?> { null } : flavors.Cast<string?>().ToList();
             foreach (var flavor in flavorDimensions)
             {
@@ -351,12 +357,9 @@ public sealed partial class GradleProjectDetector : IProjectDetector
         return variants;
     }
 
-    private static List<string> ParseBuildTypes(ProjectModule module, string root)
+    private static List<string> ParseBuildTypes(string? buildText)
     {
-        var buildFile = Path.Combine(root, module.BuildFile ?? string.Empty);
-        var names = File.Exists(buildFile)
-            ? ExtractBlockNames(File.ReadAllText(buildFile), "buildTypes")
-            : [];
+        var names = buildText is null ? new List<string>() : ExtractBlockNames(buildText, "buildTypes");
         names.Add("debug");
         names.Add("release");
         return names
@@ -371,15 +374,14 @@ public sealed partial class GradleProjectDetector : IProjectDetector
             .ToList();
     }
 
-    private static List<string> ParseFlavors(ProjectModule module, string root)
+    private static List<string> ParseFlavors(string? buildText)
     {
-        var buildFile = Path.Combine(root, module.BuildFile ?? string.Empty);
-        if (!File.Exists(buildFile))
+        if (buildText is null)
         {
             return [];
         }
 
-        return ExtractBlockNames(File.ReadAllText(buildFile), "productFlavors")
+        return ExtractBlockNames(buildText, "productFlavors")
             .Where(name => name.Length > 0 && !IsBlockKeyword(name))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -598,48 +600,6 @@ public sealed partial class GradleProjectDetector : IProjectDetector
         return match.Success ? match.Groups["version"].Value : null;
     }
 
-    private static string? MatchValue(Regex regex, string text)
-    {
-        var match = regex.Match(text);
-        return match.Success ? match.Groups["value"].Value : null;
-    }
-
-    private static string? FindFirst(string directory, params string[] names)
-    {
-        if (!Directory.Exists(directory))
-        {
-            return null;
-        }
-
-        foreach (var name in names)
-        {
-            var path = Path.Combine(directory, name);
-            if (File.Exists(path))
-            {
-                return path;
-            }
-        }
-
-        return null;
-    }
-
-    private static async Task<string?> ReadTextAsync(string? path, CancellationToken cancellationToken)
-    {
-        if (path is null || !File.Exists(path))
-        {
-            return null;
-        }
-
-        try
-        {
-            return await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            return null;
-        }
-    }
-
     private static string Capitalize(string value) =>
         value.Length == 0 ? value : char.ToUpperInvariant(value[0]) + value[1..];
 
@@ -671,18 +631,6 @@ public sealed partial class GradleProjectDetector : IProjectDetector
         RegexOptions.CultureInvariant,
         matchTimeoutMilliseconds: 1000)]
     private static partial Regex BlockNameRegex();
-
-    [GeneratedRegex(
-        @"applicationId\s*(?:=)?\s*[""'](?<value>[^""']+)[""']",
-        RegexOptions.CultureInvariant,
-        matchTimeoutMilliseconds: 1000)]
-    private static partial Regex ApplicationIdRegex();
-
-    [GeneratedRegex(
-        @"namespace\s*(?:=)?\s*[""'](?<value>[^""']+)[""']",
-        RegexOptions.CultureInvariant,
-        matchTimeoutMilliseconds: 1000)]
-    private static partial Regex NamespaceRegex();
 
     [GeneratedRegex(
         @"gradle-(?<version>\d+(?:\.\d+)+)-(?:bin|all)\.zip",

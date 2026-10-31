@@ -1,4 +1,5 @@
 using System.Globalization;
+using DroidDeck.Adb.Commands;
 using DroidDeck.Core.Devices;
 using DroidDeck.Core.Processes;
 using DroidDeck.Core.Toolbox;
@@ -27,10 +28,10 @@ public sealed class AdbIntentService : IDeviceIntentService
             "devices/inspector"),
     ];
 
-    private readonly IProcessRunner _runner;
     private readonly Func<string> _adbPathProvider;
     private readonly IDeviceOperationCoordinator? _coordinator;
     private readonly ILogger<AdbIntentService> _logger;
+    private readonly AdbCommandExecutor _adb;
 
     /// <summary>Creates an intent service with a provider for the current adb executable.</summary>
     public AdbIntentService(
@@ -39,10 +40,11 @@ public sealed class AdbIntentService : IDeviceIntentService
         ILogger<AdbIntentService>? logger = null,
         IDeviceOperationCoordinator? coordinator = null)
     {
-        _runner = runner ?? throw new ArgumentNullException(nameof(runner));
+        ArgumentNullException.ThrowIfNull(runner);
         _adbPathProvider = adbPathProvider ?? throw new ArgumentNullException(nameof(adbPathProvider));
         _logger = logger ?? NullLogger<AdbIntentService>.Instance;
         _coordinator = coordinator;
+        _adb = new AdbCommandExecutor(runner, _adbPathProvider, logger: _logger);
     }
 
     /// <inheritdoc />
@@ -63,7 +65,7 @@ public sealed class AdbIntentService : IDeviceIntentService
                 "An intent needs an action, a data URI, or an explicit component."));
         }
 
-        var arguments = new List<string> { "-s", serial, "shell", "am", "start" };
+        var arguments = new List<string> { "shell", "am", "start" };
         if (request.WaitForResult)
         {
             arguments.Add("-W");
@@ -95,7 +97,7 @@ public sealed class AdbIntentService : IDeviceIntentService
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Action);
-        var arguments = new List<string> { "-s", serial, "shell", "am", "broadcast", "-a", request.Action };
+        var arguments = new List<string> { "shell", "am", "broadcast", "-a", request.Action };
         if (!string.IsNullOrWhiteSpace(request.Component))
         {
             arguments.AddRange(["-n", request.Component]);
@@ -137,7 +139,7 @@ public sealed class AdbIntentService : IDeviceIntentService
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(serial);
-        var arguments = new List<string> { "-s", serial, "reboot" };
+        var arguments = new List<string> { "reboot" };
         var target = mode switch
         {
             RebootMode.Recovery => "recovery",
@@ -149,7 +151,9 @@ public sealed class AdbIntentService : IDeviceIntentService
             arguments.Add(target);
         }
 
-        var display = ProcessRequest.FormatCommandLine(_adbPathProvider(), arguments);
+        var display = ProcessRequest.FormatCommandLine(
+            _adbPathProvider(),
+            AdbCommandExecutor.BuildDeviceArguments(serial, arguments));
         var modeName = mode switch
         {
             RebootMode.Recovery => "recovery",
@@ -170,10 +174,12 @@ public sealed class AdbIntentService : IDeviceIntentService
 
         await using var lease = await AcquireDeviceLockAsync(serial, $"Reboot to {modeName}", cancellationToken)
             .ConfigureAwait(false);
-        var result = await RunAsync(arguments, RebootTimeout, output: null, cancellationToken)
+        var result = await _adb
+            .RunForDeviceAsync(serial, arguments, RebootTimeout, cancellationToken)
             .ConfigureAwait(false);
         return ToolboxCommandResult.FromProcess(
-            result,
+            result.Raw,
+            result.Succeeded,
             result.Succeeded
                 ? $"Rebooting {serial} to {modeName}."
                 : $"The reboot command failed: {Summarize(result.CombinedOutput)}",
@@ -272,19 +278,17 @@ public sealed class AdbIntentService : IDeviceIntentService
     {
         await using var lease = await AcquireDeviceLockAsync(serial, operation, cancellationToken)
             .ConfigureAwait(false);
-        var result = await RunAsync(arguments, IntentTimeout, output: null, cancellationToken)
+        var result = await _adb
+            .RunForDeviceAsync(serial, arguments, IntentTimeout, cancellationToken)
             .ConfigureAwait(false);
         var succeeded = result.Succeeded &&
-                        !result.CombinedOutput.Contains("Error:", StringComparison.OrdinalIgnoreCase) &&
                         !result.CombinedOutput.Contains("Exception", StringComparison.OrdinalIgnoreCase);
         return ToolboxCommandResult.FromProcess(
-            result,
+            result.Raw,
+            succeeded,
             succeeded
                 ? successMessage
-                : $"{failureMessage}: {Summarize(result.CombinedOutput)}") with
-        {
-            Succeeded = succeeded,
-        };
+                : $"{failureMessage}: {Summarize(result.CombinedOutput)}");
     }
 
     private async Task<IAsyncDisposable?> AcquireDeviceLockAsync(
@@ -298,23 +302,6 @@ public sealed class AdbIntentService : IDeviceIntentService
         }
 
         return await _coordinator.AcquireAsync(serial, operation, cancellationToken).ConfigureAwait(false);
-    }
-
-    private Task<ProcessResult> RunAsync(
-        IReadOnlyList<string> arguments,
-        TimeSpan timeout,
-        IProgress<ProcessOutputLine>? output,
-        CancellationToken cancellationToken)
-    {
-        return _runner.RunAsync(
-            new ProcessRequest
-            {
-                FileName = _adbPathProvider(),
-                Arguments = arguments,
-                Timeout = timeout,
-            },
-            output,
-            cancellationToken);
     }
 
     private static string Summarize(string? output)

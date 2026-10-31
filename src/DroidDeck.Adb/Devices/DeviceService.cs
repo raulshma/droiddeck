@@ -265,7 +265,7 @@ public sealed class DeviceService : IDeviceService
     private void OnTrackerConnectionChanged(object? sender, AdbConnectionChangedEventArgs args) =>
         RaiseDevicesChanged(Devices);
 
-    private void ApplyTransport(IReadOnlyList<AdbDevice> transportDevices)
+    private void ApplyTransport(IReadOnlyList<DeviceInfo> transportDevices)
     {
         DeviceInfo[] snapshot;
         var toRefresh = new List<string>();
@@ -280,7 +280,13 @@ public sealed class DeviceService : IDeviceService
             {
                 seen.Add(transport.Serial);
                 _devices.TryGetValue(transport.Serial, out var existing);
-                var info = MergeTransport(existing, transport, now);
+                var info = (existing ?? new DeviceInfo { Serial = transport.Serial })
+                    .WithTransport(transport, now);
+                if (_records.TryGetValue(transport.Serial, out var record))
+                {
+                    info = info.WithRecord(record);
+                }
+
                 _devices[transport.Serial] = info;
                 merged.Add(info);
 
@@ -305,27 +311,6 @@ public sealed class DeviceService : IDeviceService
         {
             StartMetadataRefresh(serial);
         }
-    }
-
-    private DeviceInfo MergeTransport(DeviceInfo? existing, AdbDevice transport, DateTimeOffset now)
-    {
-        var info = existing ?? new DeviceInfo { Serial = transport.Serial };
-        info = info with
-        {
-            State = transport.State,
-            Model = transport.Model ?? info.Model,
-            Product = transport.Product ?? info.Product,
-            TransportId = transport.TransportId ?? info.TransportId,
-            IsEmulator = transport.IsEmulator || info.IsEmulator,
-            LastSeenAt = now,
-        };
-
-        if (_records.TryGetValue(transport.Serial, out var record))
-        {
-            info = info.WithRecord(record);
-        }
-
-        return info;
     }
 
     private static bool IsMetadataStale(DeviceInfo info, DateTimeOffset now) =>

@@ -117,7 +117,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
 
         if (request.DryRun)
         {
-            CompleteDryRun(session, request);
+            await CompleteDryRunAsync(session, request).ConfigureAwait(false);
             return session;
         }
 
@@ -185,26 +185,30 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         }
 
         var session = context.Session;
-        await StopFlutterAsync(context).ConfigureAwait(false);
-        await StopMetroAsync(context).ConfigureAwait(false);
-        await DetachLogcatAsync(context).ConfigureAwait(false);
-        if (session.IsFinished)
+        if (IsSessionFinished(session))
         {
+            await StopFlutterAsync(context).ConfigureAwait(false);
+            await StopMetroAsync(context).ConfigureAwait(false);
+            await DetachLogcatAsync(context).ConfigureAwait(false);
             RaiseChanged(session);
             return;
         }
 
-        if (session.State == RunSessionState.Running)
+        if (GetSessionState(session) == RunSessionState.Running)
         {
-            lock (session)
+            var finalized = await FinalizeSessionAsync(
+                session,
+                context,
+                new SessionOutcome
+                {
+                    State = RunSessionState.Succeeded,
+                    StatusMessage = "Stopped by the user.",
+                }).ConfigureAwait(false);
+            if (!finalized)
             {
-                session.State = RunSessionState.Succeeded;
-                session.StatusMessage = "Stopped by the user.";
-                CompleteSession(session);
+                RaiseChanged(session);
             }
 
-            RaiseChanged(session);
-            await SaveAndNotifyAsync(session).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             return;
         }
@@ -277,11 +281,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             }
 
             session.LaunchTime = result.LaunchTime;
-            session.State = RunSessionState.Running;
-            session.EndedAt = null;
-            session.Duration = null;
-            session.Error = null;
-            session.StatusMessage = "The application was restarted.";
+            ReviveSession(session, RunSessionState.Running, "The application was restarted.");
             SucceedStep(session, step, "Restarted.");
             if (context is not null &&
                 context.Request.Configuration.Logs.Attach &&
@@ -393,10 +393,10 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         context.MetroStep = step;
         context.MetroTail.Clear();
         StartStep(session, step);
-        session.State = RunSessionState.Running;
-        session.EndedAt = null;
-        session.Duration = null;
-        session.StatusMessage = $"Reloading on {session.DeviceName ?? session.DeviceSerial} through Metro.";
+        ReviveSession(
+            session,
+            RunSessionState.Running,
+            $"Reloading on {session.DeviceName ?? session.DeviceSerial} through Metro.");
         RaiseChanged(session);
 
         HotReloadResult result;
@@ -490,10 +490,10 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         context.FlutterStep = step;
         context.FlutterTail.Clear();
         StartStep(session, step);
-        session.State = RunSessionState.Running;
-        session.EndedAt = null;
-        session.Duration = null;
-        session.StatusMessage = $"{verb} in progress on {session.DeviceName ?? session.DeviceSerial}.";
+        ReviveSession(
+            session,
+            RunSessionState.Running,
+            $"{verb} in progress on {session.DeviceName ?? session.DeviceSerial}.");
         RaiseChanged(session);
 
         HotReloadResult result;
@@ -526,6 +526,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
 
         step.CommandLine = $"flutter {(fullRestart ? "hot restart" : "hot reload")}";
         step.OutputTail = JoinTail(context.FlutterTail);
+        var finalized = false;
         if (result.Succeeded)
         {
             SucceedStep(session, step, result.Message);
@@ -537,12 +538,16 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             session.StatusMessage = result.Message;
             if (flutter is null)
             {
-                lock (session)
-                {
-                    session.State = RunSessionState.Failed;
-                    session.Error = result.Message;
-                    CompleteSession(session);
-                }
+                finalized = await FinalizeSessionAsync(
+                    session,
+                    context,
+                    new SessionOutcome
+                    {
+                        State = RunSessionState.Failed,
+                        Error = result.Message,
+                        StatusMessage = result.Message,
+                        Persistence = SessionPersistence.Snapshot,
+                    }).ConfigureAwait(false);
             }
 
             _notifications.Notify(new AppNotification
@@ -555,8 +560,12 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             });
         }
 
-        RaiseChanged(session);
-        await SaveSnapshotAsync(session).ConfigureAwait(false);
+        if (!finalized)
+        {
+            RaiseChanged(session);
+            await SaveSnapshotAsync(session).ConfigureAwait(false);
+        }
+
         return result;
     }
 
@@ -577,9 +586,10 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         var step = AddStep(session, $"flutter-attach-{Guid.NewGuid():N}", "Attach Flutter session", RunStepKind.HotReload);
         context.FlutterStep = step;
         context.FlutterTail.Clear();
-        session.State = RunSessionState.Launching;
-        session.StatusMessage =
-            "Starting an attached Flutter session. The app is rebuilt, installed, and launched on the device.";
+        ReviveSession(
+            session,
+            RunSessionState.Launching,
+            "Starting an attached Flutter session. The app is rebuilt, installed, and launched on the device.");
         StartStep(session, step);
 
         if (context.Flutter is { } previous)
@@ -601,11 +611,16 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             await flutter.DisposeAsync().ConfigureAwait(false);
             context.FlutterStep = step;
             step.OutputTail = JoinTail(context.FlutterTail);
-            await FailStepAsync(context, step, exception.Message).ConfigureAwait(false);
-            session.State = RunSessionState.Failed;
-            session.StatusMessage = "The Flutter session could not be attached.";
-            RaiseChanged(session);
-            await SaveSnapshotAsync(session).ConfigureAwait(false);
+            await FinalizeSessionAsync(
+                session,
+                context,
+                new SessionOutcome
+                {
+                    State = RunSessionState.Failed,
+                    Error = exception.Message,
+                    StatusMessage = "The Flutter session could not be attached.",
+                    FailedStep = step,
+                }).ConfigureAwait(false);
             return null;
         }
         catch (OperationCanceledException)
@@ -616,7 +631,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             throw;
         }
 
-        if (linked.IsCancellationRequested || session.IsFinished)
+        if (linked.IsCancellationRequested || IsSessionFinished(session))
         {
             await flutter.DisposeAsync().ConfigureAwait(false);
             CancelStep(step);
@@ -628,8 +643,10 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         step.OutputTail = JoinTail(context.FlutterTail);
         context.Flutter = flutter;
         SucceedStep(session, step, $"Flutter session attached to {flutter.AppId ?? "the app"}.");
-        session.State = RunSessionState.Running;
-        session.StatusMessage = "The Flutter session is attached. Hot reload and hot restart are available.";
+        ReviveSession(
+            session,
+            RunSessionState.Running,
+            "The Flutter session is attached. Hot reload and hot restart are available.");
         RaiseChanged(session);
         await SaveSnapshotAsync(session).ConfigureAwait(false);
         return flutter;
@@ -777,11 +794,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             }
 
             SucceedStep(session, step, $"Installed {files.Count} APK file(s).", result.ExitCode);
-            session.State = RunSessionState.Running;
-            session.EndedAt = null;
-            session.Duration = null;
-            session.Error = null;
-            session.StatusMessage = "The install succeeded after recovery.";
+            ReviveSession(session, RunSessionState.Running, "The install succeeded after recovery.");
             RaiseChanged(session);
             if (context is not null &&
                 configuration.Logs.Attach &&
@@ -917,7 +930,7 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         string.IsNullOrWhiteSpace(variant) ||
         string.Equals(variant.Trim(), "debug", StringComparison.OrdinalIgnoreCase);
 
-    private void CompleteDryRun(RunSession session, RunRequest request)
+    private async Task CompleteDryRunAsync(RunSession session, RunRequest request)
     {
         var preview = _planBuilder.BuildPreview(request.Project, request.Configuration, session.DeviceSerial);
         var index = 0;
@@ -936,20 +949,22 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
             });
         }
 
-        session.State = RunSessionState.Succeeded;
-        session.StatusMessage = preview.IsValid
-            ? $"Dry run: previewed {preview.Steps.Count} step(s) without executing anything."
-            : $"Dry run found {preview.Errors.Count} configuration problem(s).";
-        if (!preview.IsValid)
-        {
-            session.State = RunSessionState.Failed;
-            session.Error = string.Join(
-                Environment.NewLine,
-                preview.Errors.Select(error => $"{error.Field}: {error.Message}"));
-        }
-
-        CompleteSession(session);
-        RaiseChanged(session);
+        await FinalizeSessionAsync(
+            session,
+            context: null,
+            new SessionOutcome
+            {
+                State = preview.IsValid ? RunSessionState.Succeeded : RunSessionState.Failed,
+                StatusMessage = preview.IsValid
+                    ? $"Dry run: previewed {preview.Steps.Count} step(s) without executing anything."
+                    : $"Dry run found {preview.Errors.Count} configuration problem(s).",
+                Error = preview.IsValid
+                    ? null
+                    : string.Join(
+                        Environment.NewLine,
+                        preview.Errors.Select(error => $"{error.Field}: {error.Message}")),
+                Persistence = SessionPersistence.None,
+            }).ConfigureAwait(false);
     }
 
     private async Task ExecuteAsync(RunContext context, CancellationToken cancellationToken)
@@ -1063,42 +1078,40 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         await AttachLogcatAsync(context, cancellationToken).ConfigureAwait(false);
         if (customResult == CustomStepResult.PartiallyFailed)
         {
-            lock (session)
-            {
-                session.State = RunSessionState.PartiallyFailed;
-                session.Error ??= "One or more custom steps failed.";
-                session.StatusMessage = context.LaunchWasSkipped
-                    ? "The run steps completed, but some failed."
-                    : "The app is running, but some custom steps failed.";
-                CompleteSession(session);
-            }
-
-            RaiseChanged(session);
-            await SaveAndNotifyAsync(session).ConfigureAwait(false);
+            await FinalizeSessionAsync(
+                session,
+                context,
+                new SessionOutcome
+                {
+                    State = RunSessionState.PartiallyFailed,
+                    Error = session.Error ?? "One or more custom steps failed.",
+                    StatusMessage = context.LaunchWasSkipped
+                        ? "The run steps completed, but some failed."
+                        : "The app is running, but some custom steps failed.",
+                    Resources = SessionResourceDisposition.LeaveRunning,
+                }).ConfigureAwait(false);
             return;
         }
 
         if (context.LaunchWasSkipped)
         {
             await StopMetroAsync(context).ConfigureAwait(false);
-            lock (session)
-            {
-                session.State = RunSessionState.Succeeded;
-                session.StatusMessage = "The run steps completed.";
-                CompleteSession(session);
-            }
-
-            RaiseChanged(session);
-            await SaveAndNotifyAsync(session).ConfigureAwait(false);
+            await FinalizeSessionAsync(
+                session,
+                context,
+                new SessionOutcome
+                {
+                    State = RunSessionState.Succeeded,
+                    StatusMessage = "The run steps completed.",
+                    Resources = SessionResourceDisposition.LeaveRunning,
+                }).ConfigureAwait(false);
             return;
         }
 
-        lock (session)
-        {
-            session.State = RunSessionState.Running;
-            session.StatusMessage = $"The app is running on {session.DeviceName ?? session.DeviceSerial}.";
-        }
-
+        SetSessionState(
+            session,
+            RunSessionState.Running,
+            $"The app is running on {session.DeviceName ?? session.DeviceSerial}.");
         RaiseChanged(session);
         await SaveSnapshotAsync(session).ConfigureAwait(false);
     }
@@ -2170,104 +2183,173 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         context.Session.LogcatSessionId = null;
     }
 
-    private async Task FinishCancelledAsync(RunContext context)
+    private Task<bool> FinishCancelledAsync(RunContext context)
     {
-        await StopMetroAsync(context).ConfigureAwait(false);
-        var session = context.Session;
-        var changed = false;
-        lock (session)
-        {
-            if (!session.IsFinished)
+        var message = context.StoppedByUser ? "The run was stopped by the user." : "The run was cancelled.";
+        return FinalizeSessionAsync(
+            context.Session,
+            context,
+            new SessionOutcome
             {
-                var now = DateTimeOffset.UtcNow;
-                foreach (var step in session.Steps)
-                {
-                    if (step.State == RunStepState.Running)
-                    {
-                        step.State = RunStepState.Cancelled;
-                        step.EndedAt = now;
-                        step.Duration = step.StartedAt is { } started ? now - started : null;
-                    }
-                }
+                State = RunSessionState.Cancelled,
+                Error = message,
+                StatusMessage = message,
+                RunningSteps = RunningStepDisposition.Cancel,
+            });
+    }
 
-                session.State = RunSessionState.Cancelled;
-                session.Error = context.StoppedByUser ? "The run was stopped by the user." : "The run was cancelled.";
-                session.StatusMessage = session.Error;
-                CompleteSession(session);
-                changed = true;
+    private Task<bool> FailSessionAsync(RunContext context, string message) =>
+        FinalizeSessionAsync(
+            context.Session,
+            context,
+            new SessionOutcome
+            {
+                State = RunSessionState.Failed,
+                Error = message,
+                StatusMessage = message,
+                RunningSteps = RunningStepDisposition.Fail,
+            });
+
+    private Task<bool> FailStepAsync(
+        RunContext context,
+        RunStep step,
+        string message,
+        int? exitCode = null) =>
+        FinalizeSessionAsync(
+            context.Session,
+            context,
+            new SessionOutcome
+            {
+                State = RunSessionState.Failed,
+                Error = message,
+                StatusMessage = message,
+                FailedStep = step,
+                ExitCode = exitCode,
+            });
+
+    /// <summary>
+    /// Applies a terminal outcome to a session exactly once. The first caller wins; a racing
+    /// stop, cancellation, or timeout observes the finished session and leaves it untouched.
+    /// Resources are released before the transition, and the session lock is released before
+    /// observers are notified, so no handler can deadlock the service.
+    /// </summary>
+    /// <returns><see langword="true"/> when this call performed the session transition.</returns>
+    private async Task<bool> FinalizeSessionAsync(RunSession session, RunContext? context, SessionOutcome outcome)
+    {
+        if (context is not null)
+        {
+            switch (outcome.Resources)
+            {
+                case SessionResourceDisposition.StopAll:
+                    await StopFlutterAsync(context).ConfigureAwait(false);
+                    await StopMetroAsync(context).ConfigureAwait(false);
+                    await DetachLogcatAsync(context).ConfigureAwait(false);
+                    break;
+                case SessionResourceDisposition.StopMetro:
+                    await StopMetroAsync(context).ConfigureAwait(false);
+                    break;
+                case SessionResourceDisposition.LeaveRunning:
+                default:
+                    break;
             }
         }
 
-        if (!changed)
+        if (!TryFinalizeSession(session, outcome))
         {
-            return;
+            return false;
         }
 
         RaiseChanged(session);
-        await SaveAndNotifyAsync(session).ConfigureAwait(false);
+        if (outcome.Persistence == SessionPersistence.Snapshot)
+        {
+            await SaveSnapshotAsync(session).ConfigureAwait(false);
+        }
+        else if (outcome.Persistence == SessionPersistence.SnapshotAndNotification)
+        {
+            await SaveAndNotifyAsync(session).ConfigureAwait(false);
+        }
+
+        return true;
     }
 
-    private async Task FailSessionAsync(RunContext context, string message)
+    /// <summary>
+    /// Performs the terminal transition under the session lock: running steps are swept into the
+    /// outcome, the failing step records its error and exit code, and the end time is set once.
+    /// A session that already finished is left completely untouched, including its steps.
+    /// </summary>
+    private static bool TryFinalizeSession(RunSession session, SessionOutcome outcome)
     {
-        await StopMetroAsync(context).ConfigureAwait(false);
-        var session = context.Session;
         lock (session)
         {
             if (session.IsFinished)
             {
-                return;
+                return false;
             }
 
             var now = DateTimeOffset.UtcNow;
-            foreach (var step in session.Steps)
+            if (outcome.FailedStep is { } failedStep)
             {
-                if (step.State == RunStepState.Running)
+                failedStep.State = RunStepState.Failed;
+                failedStep.EndedAt = now;
+                failedStep.Duration = failedStep.StartedAt is { } started ? now - started : null;
+                if (outcome.Error is not null)
                 {
-                    step.State = RunStepState.Failed;
-                    step.EndedAt = now;
-                    step.Duration = step.StartedAt is { } started ? now - started : null;
-                    step.Error ??= message;
+                    failedStep.Error = outcome.Error;
+                }
+
+                if (outcome.ExitCode is not null)
+                {
+                    failedStep.ExitCode = outcome.ExitCode;
                 }
             }
 
-            session.State = RunSessionState.Failed;
-            session.Error = message;
-            session.StatusMessage = message;
-            CompleteSession(session);
-        }
-
-        RaiseChanged(session);
-        await SaveAndNotifyAsync(session).ConfigureAwait(false);
-    }
-
-    private async Task FailStepAsync(
-        RunContext context,
-        RunStep step,
-        string message,
-        int? exitCode = null)
-    {
-        await StopMetroAsync(context).ConfigureAwait(false);
-        var session = context.Session;
-        lock (session)
-        {
-            var now = DateTimeOffset.UtcNow;
-            step.State = RunStepState.Failed;
-            step.EndedAt = now;
-            step.Duration = step.StartedAt is { } started ? now - started : null;
-            step.Error = message;
-            if (exitCode is not null)
+            SweepRunningSteps(session, outcome.RunningSteps, outcome.Error, now);
+            session.State = outcome.State;
+            if (outcome.Error is not null)
             {
-                step.ExitCode = exitCode;
+                session.Error = outcome.Error;
             }
 
-            session.State = RunSessionState.Failed;
-            session.Error = message;
-            session.StatusMessage = message;
+            session.StatusMessage = outcome.StatusMessage;
             CompleteSession(session);
+            return true;
+        }
+    }
+
+    private static void SweepRunningSteps(
+        RunSession session,
+        RunningStepDisposition disposition,
+        string? error,
+        DateTimeOffset now)
+    {
+        if (disposition == RunningStepDisposition.Leave)
+        {
+            return;
         }
 
-        RaiseChanged(session);
-        await SaveAndNotifyAsync(session).ConfigureAwait(false);
+        foreach (var step in session.Steps)
+        {
+            if (step.State != RunStepState.Running)
+            {
+                continue;
+            }
+
+            if (disposition == RunningStepDisposition.Cancel)
+            {
+                step.State = RunStepState.Cancelled;
+            }
+            else
+            {
+                step.State = RunStepState.Failed;
+                if (error is not null)
+                {
+                    step.Error ??= error;
+                }
+            }
+
+            step.EndedAt = now;
+            step.Duration = step.StartedAt is { } started ? now - started : null;
+        }
     }
 
     private void FailStepOnly(RunSession session, RunStep step, string message, int? exitCode = null)
@@ -2469,10 +2551,49 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         return step;
     }
 
+    /// <summary>
+    /// Updates the session state under the same per-session lock that guards the terminal
+    /// transition and revival, so observers never read a half-applied state change.
+    /// </summary>
     private static void SetSessionState(RunSession session, RunSessionState state, string message)
     {
-        session.State = state;
-        session.StatusMessage = message;
+        lock (session)
+        {
+            session.State = state;
+            session.StatusMessage = message;
+        }
+    }
+
+    /// <summary>
+    /// Moves a session back into an active state when a restart, recovery, or reload revives it,
+    /// clearing the terminal timestamps and error left by an earlier finalization.
+    /// </summary>
+    private static void ReviveSession(RunSession session, RunSessionState state, string message)
+    {
+        lock (session)
+        {
+            session.State = state;
+            session.StatusMessage = message;
+            session.EndedAt = null;
+            session.Duration = null;
+            session.Error = null;
+        }
+    }
+
+    private static bool IsSessionFinished(RunSession session)
+    {
+        lock (session)
+        {
+            return session.IsFinished;
+        }
+    }
+
+    private static RunSessionState GetSessionState(RunSession session)
+    {
+        lock (session)
+        {
+            return session.State;
+        }
     }
 
     private void StartStep(RunSession session, RunStep step)
@@ -2624,6 +2745,73 @@ public sealed class RunSessionService : IRunSessionService, IAsyncDisposable
         Continue,
         PartiallyFailed,
         Terminal,
+    }
+
+    /// <summary>What happens to the steps that are still running when a session is finalized.</summary>
+    private enum RunningStepDisposition
+    {
+        /// <summary>Running steps keep their current state.</summary>
+        Leave,
+
+        /// <summary>Running steps are marked as cancelled.</summary>
+        Cancel,
+
+        /// <summary>Running steps are marked as failed with the session error.</summary>
+        Fail,
+    }
+
+    /// <summary>Which child processes a terminal transition stops before it completes.</summary>
+    private enum SessionResourceDisposition
+    {
+        /// <summary>Stop Flutter, Metro, and logcat.</summary>
+        StopAll,
+
+        /// <summary>Stop Metro only, keeping an attached Flutter session and logcat running.</summary>
+        StopMetro,
+
+        /// <summary>Leave every child process running, for outcomes where the app stays live.</summary>
+        LeaveRunning,
+    }
+
+    /// <summary>What is written when a session reaches its terminal state.</summary>
+    private enum SessionPersistence
+    {
+        /// <summary>Only the in-memory session changes; nothing is written or notified.</summary>
+        None,
+
+        /// <summary>The session snapshot is saved without a session notification.</summary>
+        Snapshot,
+
+        /// <summary>The snapshot is saved and the session notification is raised.</summary>
+        SnapshotAndNotification,
+    }
+
+    /// <summary>One terminal transition applied by <see cref="FinalizeSessionAsync"/>.</summary>
+    private sealed class SessionOutcome
+    {
+        /// <summary>Gets the terminal session state.</summary>
+        public RunSessionState State { get; init; }
+
+        /// <summary>Gets the error text, or null to keep the error already recorded.</summary>
+        public string? Error { get; init; }
+
+        /// <summary>Gets the status message shown for the finished session.</summary>
+        public required string StatusMessage { get; init; }
+
+        /// <summary>Gets what happens to steps that are still running.</summary>
+        public RunningStepDisposition RunningSteps { get; init; }
+
+        /// <summary>Gets the step whose failure triggered the transition.</summary>
+        public RunStep? FailedStep { get; init; }
+
+        /// <summary>Gets the exit code recorded on the failed step.</summary>
+        public int? ExitCode { get; init; }
+
+        /// <summary>Gets which child processes are stopped before the transition.</summary>
+        public SessionResourceDisposition Resources { get; init; } = SessionResourceDisposition.StopAll;
+
+        /// <summary>Gets what is persisted after the transition.</summary>
+        public SessionPersistence Persistence { get; init; } = SessionPersistence.SnapshotAndNotification;
     }
 
     private sealed class MetroLease

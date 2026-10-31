@@ -114,6 +114,25 @@ public sealed class PluginSettingsLoaderTests
         Assert.Equal("true", document["values"]!["initialized"]!.GetValue<string>());
     }
 
+    [Fact]
+    public async Task TheFactoryReturnsTheStoreTheLoaderCreated()
+    {
+        using var temp = new TempDirectory();
+        var directory = StagePlugin(temp);
+        await File.WriteAllTextAsync(Path.Combine(directory, PluginSettingsSchemaReader.FileName), """
+            { "version": 1, "properties": { "endpoint": { "type": "string", "default": "https://example.com" } } }
+            """);
+        using var secrets = CreateSecretStore(temp);
+        await using var loader = CreateLoader(temp, secrets);
+
+        var result = await loader.LoadAsync(directory);
+        var creation = await loader.SettingsFactory.CreateForInstalledPluginAsync(PluginId, directory);
+
+        Assert.True(result.Succeeded, Describe(result.Validation));
+        Assert.True(creation.UsesSchema);
+        Assert.Same(result.Plugin!.Settings, creation.Settings);
+    }
+
     private static PluginLoader CreateLoader(TempDirectory temp, ISecretStore? secretStore)
         => new(
             new PluginRegistry(),

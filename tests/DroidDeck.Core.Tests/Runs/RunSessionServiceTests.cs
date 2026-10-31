@@ -631,6 +631,127 @@ public sealed class RunSessionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task FailedRun_RaisesChangedBeforeSavingAndNotifying()
+    {
+        var order = new List<string>();
+        var store = new FakeSessionStore { OnSaved = _ => order.Add("saved") };
+        var notifications = new FakeNotificationService();
+        notifications.NotificationRaised += (_, _) => order.Add("notified");
+        var runner = new FakeRunner { Handler = _ => Result(exitCode: 3) };
+        await using var service = CreateService(
+            runner: runner,
+            sessionStore: store,
+            notifications: notifications);
+        service.SessionChanged += (_, args) =>
+        {
+            if (args.Session.IsFinished)
+            {
+                Assert.Empty(store.Saved);
+                Assert.Empty(notifications.Notifications);
+                order.Add("changed");
+            }
+        };
+        var configuration = new RunConfiguration
+        {
+            Name = "failing",
+            Kind = RunConfigurationKind.Custom,
+            Steps =
+            [
+                new RunStepDefinition
+                {
+                    Id = "fail",
+                    Command = "cmd",
+                    Arguments = ["/c", "fail"],
+                },
+            ],
+        };
+
+        var session = await service.RunAsync(CreateRequest(configuration));
+
+        Assert.Equal(RunSessionState.Failed, session.State);
+        Assert.Equal(["changed", "saved", "notified"], order);
+        var saved = Assert.Single(store.Saved);
+        Assert.Equal(RunSessionState.Failed, saved.State);
+        Assert.NotNull(saved.EndedAt);
+        var notification = Assert.Single(notifications.Notifications);
+        Assert.Equal(NotificationEvent.RunFailed, notification.Event);
+    }
+
+    [Fact]
+    public async Task CancellingWhileLaunchIsInFlight_FinalizesOnceAndStaysCancelled()
+    {
+        var launchStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var launchGate = new TaskCompletionSource<DeviceCommandResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var commands = new FakeDeviceCommands
+        {
+            LaunchHandler = _ =>
+            {
+                launchStarted.TrySetResult();
+                return launchGate.Task;
+            },
+        };
+        var store = new FakeSessionStore();
+        var notifications = new FakeNotificationService();
+        await using var service = CreateService(
+            commands: commands,
+            sessionStore: store,
+            notifications: notifications);
+        var terminalChanges = 0;
+        service.SessionChanged += (_, args) =>
+        {
+            if (args.Session.IsFinished)
+            {
+                terminalChanges++;
+            }
+        };
+        var apk = Path.Combine(_root, "app.apk");
+        var configuration = new RunConfiguration
+        {
+            Name = "apk",
+            Kind = RunConfigurationKind.Apk,
+            Artifact = { Glob = "**/*.apk" },
+            Launch = { PackageName = "com.example.app" },
+        };
+        var runTask = service.RunAsync(CreateRequest(configuration, options: new RunOptions
+        {
+            PrebuiltArtifactFiles = [apk],
+            PrebuiltArtifactPath = apk,
+            PrebuiltPackageName = "com.example.app",
+        }));
+        await launchStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var session = Assert.Single(service.Sessions);
+
+        await service.CancelAsync(session.Id);
+
+        launchGate.SetResult(new DeviceCommandResult
+        {
+            CommandLine = "adb shell am start -W",
+            ExitCode = 1,
+        });
+        var completed = await runTask.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(RunSessionState.Cancelled, completed.State);
+        Assert.Equal("The run was cancelled.", completed.Error);
+        Assert.Equal("The run was cancelled.", completed.StatusMessage);
+        Assert.NotNull(completed.EndedAt);
+        Assert.Equal(1, terminalChanges);
+        var launch = Assert.Single(completed.Steps, step => step.Id == "launch");
+        Assert.Equal(RunStepState.Cancelled, launch.State);
+        var saved = Assert.Single(store.Saved);
+        Assert.Equal(RunSessionState.Cancelled, saved.State);
+        var notification = Assert.Single(notifications.Notifications);
+        Assert.Equal(NotificationEvent.RunCancelled, notification.Event);
+
+        await service.CancelAsync(session.Id);
+
+        Assert.Equal(RunSessionState.Cancelled, session.State);
+        Assert.Equal("The run was cancelled.", session.Error);
+        Assert.Equal(1, terminalChanges);
+        Assert.Single(store.Saved);
+        Assert.Single(notifications.Notifications);
+    }
+
+    [Fact]
     public async Task HotReloadAsync_AttachesAFlutterSessionAndCleansItUpOnStop()
     {
         var marker = Path.Combine(_root, "flutter-daemon-exited.txt");
@@ -868,6 +989,50 @@ public sealed class RunSessionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ReactNativePipeline_PartiallyFailedLeavesMetroRunningForReload()
+    {
+        EnsureAndroidHost();
+        var configuration = ReactNativeConfiguration();
+        configuration.Steps.Add(new RunStepDefinition
+        {
+            Id = "flaky",
+            Command = "cmd",
+            Arguments = ["/c", "fail"],
+            FailurePolicy = StepFailurePolicy.Continue,
+        });
+        var runner = new FakeRunner
+        {
+            Handler = request => request.Arguments.Contains("fail", StringComparer.Ordinal)
+                ? Result(exitCode: 3)
+                : Result(exitCode: 0),
+        };
+        var probeStatuses = new Queue<MetroPortStatus>([MetroPortStatus.Free]);
+        var reloads = new List<int>();
+        await using var service = CreateService(
+            runner: runner,
+            planBuilder: new RunPlanBuilderStub { MetroRequest = TestProcessHelper.Create("sleep", "60000") },
+            metroProbe: (_, _) => Task.FromResult(
+                probeStatuses.Count > 0 ? probeStatuses.Dequeue() : MetroPortStatus.Running),
+            metroReload: (port, _) =>
+            {
+                reloads.Add(port);
+                return Task.FromResult((true, (string?)null));
+            });
+        var session = await service.RunAsync(CreateRequest(
+            configuration,
+            options: ReactNativeOptions(),
+            projectKind: ProjectKind.ReactNative));
+
+        Assert.Equal(RunSessionState.PartiallyFailed, session.State);
+
+        var reload = await service.HotReloadAsync(session.Id);
+
+        Assert.NotNull(reload);
+        Assert.True(reload.Succeeded);
+        Assert.Equal([8081], reloads);
+    }
+
+    [Fact]
     public async Task ReactNativePipeline_ReusesARunningMetroInstance()
     {
         EnsureAndroidHost();
@@ -1068,15 +1233,17 @@ public sealed class RunSessionServiceTests : IDisposable
         IRunPlanBuilder? planBuilder = null,
         MetroSession.PortProbe? metroProbe = null,
         MetroSession.ReloadSender? metroReload = null,
-        IPluginRegistry? plugins = null)
+        IPluginRegistry? plugins = null,
+        FakeSessionStore? sessionStore = null,
+        FakeNotificationService? notifications = null)
     {
         return new RunSessionService(
             planBuilder ?? new RunPlanBuilderStub(),
             artifacts ?? new FakeArtifactResolver(),
             commands ?? new FakeDeviceCommands(),
             logcat ?? new FakeLogcatService(new FakeLogcatSession()),
-            new FakeSessionStore(),
-            new FakeNotificationService(),
+            sessionStore ?? new FakeSessionStore(),
+            notifications ?? new FakeNotificationService(),
             runner ?? new FakeRunner(),
             coordinator: coordinator,
             metroProbe: metroProbe,
@@ -1218,6 +1385,8 @@ public sealed class RunSessionServiceTests : IDisposable
 
         public ProcessResult? LaunchResult { get; init; }
 
+        public Func<CancellationToken, Task<DeviceCommandResult>>? LaunchHandler { get; init; }
+
         public TimeSpan? LaunchTime { get; init; }
 
         public int? PackageUid { get; init; }
@@ -1239,16 +1408,18 @@ public sealed class RunSessionServiceTests : IDisposable
         public Task<DeviceCommandResult> LaunchAsync(
             string serial,
             AdbLaunchOptions options,
-            CancellationToken cancellationToken = default) => Task.FromResult(
-            LaunchResult is null
-                ? new DeviceCommandResult
-                {
-                    Succeeded = true,
-                    CommandLine = "adb shell am start -W",
-                    Output = "Status: ok\nLaunchState: WARM\nTotalTime: 120",
-                    LaunchTime = LaunchTime,
-                }
-                : ToDeviceCommandResult(LaunchResult));
+            CancellationToken cancellationToken = default) => LaunchHandler is null
+            ? Task.FromResult(
+                LaunchResult is null
+                    ? new DeviceCommandResult
+                    {
+                        Succeeded = true,
+                        CommandLine = "adb shell am start -W",
+                        Output = "Status: ok\nLaunchState: WARM\nTotalTime: 120",
+                        LaunchTime = LaunchTime,
+                    }
+                    : ToDeviceCommandResult(LaunchResult))
+            : LaunchHandler(cancellationToken);
 
         public Task<DeviceCommandResult> ForceStopAsync(
             string serial,
@@ -1404,8 +1575,16 @@ public sealed class RunSessionServiceTests : IDisposable
 
     private sealed class FakeSessionStore : ISessionStore
     {
-        public Task SaveAsync(RunSession session, CancellationToken cancellationToken = default) =>
-            Task.CompletedTask;
+        public List<RunSession> Saved { get; } = [];
+
+        public Action<RunSession>? OnSaved { get; init; }
+
+        public Task SaveAsync(RunSession session, CancellationToken cancellationToken = default)
+        {
+            Saved.Add(session);
+            OnSaved?.Invoke(session);
+            return Task.CompletedTask;
+        }
 
         public Task<RunSession?> LoadAsync(string sessionId, CancellationToken cancellationToken = default) =>
             Task.FromResult<RunSession?>(null);

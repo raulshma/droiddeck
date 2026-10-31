@@ -30,7 +30,7 @@ public sealed partial class CapacitorProjectDetector : IProjectDetector
             return null;
         }
 
-        var packageJsonText = await ReadTextAsync(packageJsonPath, cancellationToken).ConfigureAwait(false);
+        var packageJsonText = await ProjectSource.ReadTextAsync(packageJsonPath, cancellationToken).ConfigureAwait(false);
         if (packageJsonText is null ||
             !TryParsePackageJson(packageJsonText, out var packageName) ||
             !HasCapacitorDependency(packageJsonText))
@@ -38,10 +38,10 @@ public sealed partial class CapacitorProjectDetector : IProjectDetector
             return null;
         }
 
-        var configFile = FindFirst(root, "capacitor.config.ts", "capacitor.config.js", "capacitor.config.mjs", "capacitor.config.cjs", "capacitor.config.json");
-        var configText = await ReadTextAsync(configFile, cancellationToken).ConfigureAwait(false);
-        var configAppId = MatchValue(AppIdRegex(), configText);
-        var configAppName = MatchValue(AppNameRegex(), configText);
+        var configFile = ProjectSource.FindFirst(root, "capacitor.config.ts", "capacitor.config.js", "capacitor.config.mjs", "capacitor.config.cjs", "capacitor.config.json");
+        var configText = await ProjectSource.ReadTextAsync(configFile, cancellationToken).ConfigureAwait(false);
+        var configAppId = ProjectSource.MatchValue(AppIdRegex(), configText);
+        var configAppName = ProjectSource.MatchValue(AppNameRegex(), configText);
         var androidFolder = Path.Combine(root, CapacitorAdapter.AndroidHostFolder);
         var hasAndroidHost = Directory.Exists(androidFolder);
 
@@ -83,13 +83,10 @@ public sealed partial class CapacitorProjectDetector : IProjectDetector
         ManifestInfo manifest = new();
         if (hasAndroidHost)
         {
-            buildFile = FindFirst(
-                Path.Combine(androidFolder, "app"),
-                "build.gradle.kts",
-                "build.gradle");
-            var buildText = await ReadTextAsync(buildFile, cancellationToken).ConfigureAwait(false);
-            gradleApplicationId = MatchValue(ApplicationIdRegex(), buildText)
-                ?? MatchValue(NamespaceRegex(), buildText);
+            buildFile = ProjectSource.FindBuildFile(Path.Combine(androidFolder, "app"));
+            var buildText = await ProjectSource.ReadTextAsync(buildFile, cancellationToken).ConfigureAwait(false);
+            gradleApplicationId = ProjectSource.MatchValue(ProjectSource.ApplicationIdPattern(), buildText)
+                ?? ProjectSource.MatchValue(ProjectSource.NamespacePattern(), buildText);
             var manifestPath = Path.Combine(androidFolder, "app", "src", "main", "AndroidManifest.xml");
             if (File.Exists(manifestPath))
             {
@@ -256,62 +253,9 @@ public sealed partial class CapacitorProjectDetector : IProjectDetector
         return false;
     }
 
-    private static string? MatchValue(Regex regex, string? text)
-    {
-        if (string.IsNullOrEmpty(text))
-        {
-            return null;
-        }
-
-        var match = regex.Match(text);
-        return match.Success ? match.Groups["value"].Value.Trim() : null;
-    }
-
-    private static string? FindFirst(string directory, params string[] names)
-    {
-        if (!Directory.Exists(directory))
-        {
-            return null;
-        }
-
-        foreach (var name in names)
-        {
-            var candidate = Path.Combine(directory, name);
-            if (File.Exists(candidate))
-            {
-                return candidate;
-            }
-        }
-
-        return null;
-    }
-
-    private static async Task<string?> ReadTextAsync(string? path, CancellationToken cancellationToken)
-    {
-        if (path is null || !File.Exists(path))
-        {
-            return null;
-        }
-
-        try
-        {
-            return await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            return null;
-        }
-    }
-
     [GeneratedRegex(@"\bappId[""']?\s*:\s*[""'](?<value>[^""']+)[""']", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
     private static partial Regex AppIdRegex();
 
     [GeneratedRegex(@"\bappName[""']?\s*:\s*[""'](?<value>[^""']+)[""']", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
     private static partial Regex AppNameRegex();
-
-    [GeneratedRegex(@"applicationId\s*=?\s*[""'](?<value>[^""']+)[""']", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
-    private static partial Regex ApplicationIdRegex();
-
-    [GeneratedRegex(@"namespace\s*=?\s*[""'](?<value>[^""']+)[""']", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
-    private static partial Regex NamespaceRegex();
 }

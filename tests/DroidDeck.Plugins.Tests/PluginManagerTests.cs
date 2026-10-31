@@ -303,6 +303,27 @@ public sealed class PluginManagerTests
         Assert.True(manager.IsInitialized);
     }
 
+    [Fact]
+    public async Task ALoadedPluginReportsLoadWarningsInItsStatus()
+    {
+        using var temp = new TempDirectory();
+        var directory = StagePlugin(temp, CreateManifest());
+        await File.WriteAllTextAsync(
+            Path.Combine(directory, PluginSettingsSchemaReader.FileName),
+            """
+            { "properties": { "apiKey": { "type": "string", "format": "secret" } } }
+            """);
+        var manager = CreateManager(temp, out _);
+
+        await manager.InitializeAsync(temp.Combine("plugins"));
+
+        var status = Assert.Single(manager.Statuses);
+        Assert.Equal(PluginState.Loaded, status.State);
+        Assert.Contains(
+            status.Issues,
+            issue => issue.Code == "plugin.settingsSchema.noSecretStore");
+    }
+
     private static PluginManager CreateManager(TempDirectory temp, out PluginRegistry registry)
     {
         registry = new PluginRegistry();

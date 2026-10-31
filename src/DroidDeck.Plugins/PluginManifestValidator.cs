@@ -74,8 +74,8 @@ public static partial class PluginManifestValidator
         PluginValidationResult result)
     {
         // The plugin ABI is versioned independently of the app; min/maxHostVersion cover app versions.
-        var compatibility = PluginApi.CheckCompatibility(manifest.ApiVersion);
-        switch (compatibility)
+        var verdict = PluginCompatibilityPolicy.Evaluate(manifest, hostVersion);
+        switch (verdict.Api)
         {
             case ApiCompatibility.Compatible:
                 break;
@@ -96,40 +96,34 @@ public static partial class PluginManifestValidator
                 break;
         }
 
-        if (!SemanticVersion.TryParse(hostVersion, out var host))
+        foreach (var issue in verdict.HostRangeIssues)
         {
-            return;
-        }
-
-        if (!string.IsNullOrWhiteSpace(manifest.MinHostVersion))
-        {
-            if (!SemanticVersion.TryParse(manifest.MinHostVersion, out var minimum))
+            switch (issue.Kind)
             {
-                result.Error(
-                    "manifest.minHostVersion.invalid",
-                    $"The minimum host version '{manifest.MinHostVersion}' is not a semantic version.");
-            }
-            else if (host < minimum)
-            {
-                result.Error(
-                    "manifest.minHostVersion.newerThanHost",
-                    $"The plugin requires host version {minimum} or newer; this host is {host}.");
-            }
-        }
-
-        if (!string.IsNullOrWhiteSpace(manifest.MaxHostVersion))
-        {
-            if (!SemanticVersion.TryParse(manifest.MaxHostVersion, out var maximum))
-            {
-                result.Error(
-                    "manifest.maxHostVersion.invalid",
-                    $"The maximum host version '{manifest.MaxHostVersion}' is not a semantic version.");
-            }
-            else if (host > maximum)
-            {
-                result.Error(
-                    "manifest.maxHostVersion.olderThanHost",
-                    $"The plugin supports host versions up to {maximum}; this host is {host}.");
+                case PluginHostRangeIssueKind.MinimumHostVersionInvalid:
+                    result.Error(
+                        "manifest.minHostVersion.invalid",
+                        $"The minimum host version '{issue.DeclaredVersion}' is not a semantic version.");
+                    break;
+                case PluginHostRangeIssueKind.MaximumHostVersionInvalid:
+                    result.Error(
+                        "manifest.maxHostVersion.invalid",
+                        $"The maximum host version '{issue.DeclaredVersion}' is not a semantic version.");
+                    break;
+                case PluginHostRangeIssueKind.HostTooOld:
+                    result.Error(
+                        "manifest.minHostVersion.newerThanHost",
+                        $"The plugin requires host version {issue.BoundaryVersion} or newer; " +
+                        $"this host is {verdict.HostVersion}.");
+                    break;
+                case PluginHostRangeIssueKind.HostTooNew:
+                    result.Error(
+                        "manifest.maxHostVersion.olderThanHost",
+                        $"The plugin supports host versions up to {issue.BoundaryVersion}; " +
+                        $"this host is {verdict.HostVersion}.");
+                    break;
+                default:
+                    break;
             }
         }
     }

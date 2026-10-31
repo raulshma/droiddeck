@@ -1,4 +1,5 @@
 using System.Globalization;
+using DroidDeck.Adb.Commands;
 using DroidDeck.Core.Devices;
 using DroidDeck.Core.Processes;
 using DroidDeck.Core.Toolbox;
@@ -13,10 +14,10 @@ public sealed class AdbDeviceFileService : IDeviceFileService
     private static readonly TimeSpan ListingTimeout = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan TransferTimeout = TimeSpan.FromMinutes(30);
 
-    private readonly IProcessRunner _runner;
     private readonly Func<string> _adbPathProvider;
     private readonly IDeviceOperationCoordinator? _coordinator;
     private readonly ILogger<AdbDeviceFileService> _logger;
+    private readonly AdbCommandExecutor _adb;
 
     /// <summary>Creates a file service with a provider for the current adb executable.</summary>
     public AdbDeviceFileService(
@@ -25,10 +26,11 @@ public sealed class AdbDeviceFileService : IDeviceFileService
         ILogger<AdbDeviceFileService>? logger = null,
         IDeviceOperationCoordinator? coordinator = null)
     {
-        _runner = runner ?? throw new ArgumentNullException(nameof(runner));
+        ArgumentNullException.ThrowIfNull(runner);
         _adbPathProvider = adbPathProvider ?? throw new ArgumentNullException(nameof(adbPathProvider));
         _logger = logger ?? NullLogger<AdbDeviceFileService>.Instance;
         _coordinator = coordinator;
+        _adb = new AdbCommandExecutor(runner, _adbPathProvider, logger: _logger);
     }
 
     /// <inheritdoc />
@@ -39,11 +41,13 @@ public sealed class AdbDeviceFileService : IDeviceFileService
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(serial);
         var remotePath = NormalizeRemotePath(path);
-        var result = await RunAsync(
-            ["-s", serial, "shell", "ls", "-la", QuoteShellArgument(remotePath)],
-            ListingTimeout,
-            output: null,
-            cancellationToken).ConfigureAwait(false);
+        var result = await _adb
+            .RunForDeviceAsync(
+                serial,
+                ["shell", "ls", "-la", QuoteShellArgument(remotePath)],
+                ListingTimeout,
+                cancellationToken)
+            .ConfigureAwait(false);
         if (!result.Succeeded)
         {
             _logger.LogWarning("Listing {Path} on {Serial} failed: {Output}", remotePath, serial, result.CombinedOutput);
@@ -76,7 +80,8 @@ public sealed class AdbDeviceFileService : IDeviceFileService
                 cancellationToken)
             .ConfigureAwait(false);
         return await TransferAsync(
-            ["-s", serial, "push", "-p", Path.GetFullPath(localPath), remotePath],
+            serial,
+            ["push", "-p", Path.GetFullPath(localPath), remotePath],
             progress,
             $"Pushed {Path.GetFileName(localPath)} to {remotePath}.",
             cancellationToken).ConfigureAwait(false);
@@ -99,7 +104,8 @@ public sealed class AdbDeviceFileService : IDeviceFileService
                 cancellationToken)
             .ConfigureAwait(false);
         return await TransferAsync(
-            ["-s", serial, "pull", "-p", remotePath, Path.GetFullPath(localPath)],
+            serial,
+            ["pull", "-p", remotePath, Path.GetFullPath(localPath)],
             progress,
             $"Pulled {remotePath} to {localPath}.",
             cancellationToken).ConfigureAwait(false);
@@ -122,7 +128,7 @@ public sealed class AdbDeviceFileService : IDeviceFileService
 
         var arguments = new List<string>
         {
-            "-s", serial, "shell", "rm", "-f",
+            "shell", "rm", "-f",
         };
         if (isDirectory)
         {
@@ -130,7 +136,9 @@ public sealed class AdbDeviceFileService : IDeviceFileService
         }
 
         arguments.Add(QuoteShellArgument(normalized));
-        var display = ProcessRequest.FormatCommandLine(_adbPathProvider(), arguments);
+        var display = ProcessRequest.FormatCommandLine(
+            _adbPathProvider(),
+            AdbCommandExecutor.BuildDeviceArguments(serial, arguments));
         if (!confirmed)
         {
             return ToolboxCommandResult.Failure(
@@ -145,10 +153,12 @@ public sealed class AdbDeviceFileService : IDeviceFileService
 
         await using var lease = await AcquireDeviceLockAsync(serial, $"Delete {normalized}", cancellationToken)
             .ConfigureAwait(false);
-        var result = await RunAsync(arguments, ListingTimeout, output: null, cancellationToken)
+        var result = await _adb
+            .RunForDeviceAsync(serial, arguments, ListingTimeout, cancellationToken)
             .ConfigureAwait(false);
         return ToolboxCommandResult.FromProcess(
-            result,
+            result.Raw,
+            result.Succeeded,
             result.Succeeded
                 ? $"Deleted {normalized}."
                 : $"Could not delete {normalized}: {Summarize(result.CombinedOutput)}",
@@ -169,6 +179,7 @@ public sealed class AdbDeviceFileService : IDeviceFileService
     }
 
     private async Task<ToolboxCommandResult> TransferAsync(
+        string serial,
         IReadOnlyList<string> arguments,
         IProgress<FileTransferProgress>? progress,
         string successMessage,
@@ -177,18 +188,25 @@ public sealed class AdbDeviceFileService : IDeviceFileService
         progress?.Report(new FileTransferProgress("Starting", null, null));
         var output = new ActionProgress<ProcessOutputLine>(line =>
             progress?.Report(new FileTransferProgress("Transferring", ParsePercent(line.Text), line.Text)));
-        var result = await RunAsync(
-            arguments,
-            TransferTimeout,
-            output,
-            cancellationToken,
-            splitOnCarriageReturn: true).ConfigureAwait(false);
+        var result = await _adb
+            .RunForDeviceAsync(
+                serial,
+                arguments,
+                TransferTimeout,
+                new AdbCommandOptions
+                {
+                    Output = output,
+                    SplitOnCarriageReturn = true,
+                },
+                cancellationToken)
+            .ConfigureAwait(false);
         progress?.Report(new FileTransferProgress(
             result.Succeeded ? "Complete" : result.WasCanceled ? "Canceled" : "Failed",
             result.Succeeded ? 100 : null,
             result.CombinedOutput));
         return ToolboxCommandResult.FromProcess(
-            result,
+            result.Raw,
+            result.Succeeded,
             result.Succeeded
                 ? successMessage
                 : result.WasCanceled
@@ -282,25 +300,6 @@ public sealed class AdbDeviceFileService : IDeviceFileService
             out parsed)
             ? parsed
             : null;
-    }
-
-    private Task<ProcessResult> RunAsync(
-        IReadOnlyList<string> arguments,
-        TimeSpan timeout,
-        IProgress<ProcessOutputLine>? output,
-        CancellationToken cancellationToken,
-        bool splitOnCarriageReturn = false)
-    {
-        return _runner.RunAsync(
-            new ProcessRequest
-            {
-                FileName = _adbPathProvider(),
-                Arguments = arguments,
-                Timeout = timeout,
-                SplitOnCarriageReturn = splitOnCarriageReturn,
-            },
-            output,
-            cancellationToken);
     }
 
     private static double? ParsePercent(string text)

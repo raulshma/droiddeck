@@ -30,7 +30,7 @@ public sealed class MauiProjectDetector : IProjectDetector
         var root = context.RootPath;
         foreach (var projectFile in FindProjectFiles(root))
         {
-            var text = await ReadTextAsync(projectFile, cancellationToken).ConfigureAwait(false);
+            var text = await ProjectSource.ReadTextAsync(projectFile, cancellationToken).ConfigureAwait(false);
             if (text is null)
             {
                 continue;
@@ -229,18 +229,6 @@ public sealed class MauiProjectDetector : IProjectDetector
         return string.IsNullOrWhiteSpace(value) || value.Contains("$(", StringComparison.Ordinal)
             ? null
             : value;
-    }
-
-    private static async Task<string?> ReadTextAsync(string path, CancellationToken cancellationToken)
-    {
-        try
-        {
-            return await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            return null;
-        }
     }
 
     private sealed record ParsedProject(

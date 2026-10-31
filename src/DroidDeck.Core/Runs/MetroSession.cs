@@ -1,7 +1,5 @@
-using System.ComponentModel;
 using System.Diagnostics;
 using System.Net.Http;
-using System.Text;
 using DroidDeck.Core.Processes;
 
 namespace DroidDeck.Core.Runs;
@@ -37,6 +35,7 @@ public sealed class MetroSession : IAsyncDisposable
 
     private static readonly HttpClient HttpClient = CreateHttpClient();
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan ExitGracePeriod = TimeSpan.FromSeconds(5);
 
     private readonly ProcessRequest _request;
     private readonly Action<ProcessOutputLine>? _output;
@@ -44,11 +43,8 @@ public sealed class MetroSession : IAsyncDisposable
     private readonly PortProbe? _probe;
     private readonly ReloadSender? _reload;
     private readonly object _sync = new();
-    private readonly Queue<string> _stderrTail = new();
 
-    private Process? _process;
-    private Task? _stdoutPump;
-    private Task? _stderrPump;
+    private SupervisedProcess? _supervised;
     private bool _reused;
     private bool _stopped;
     private bool _disposed;
@@ -89,7 +85,7 @@ public sealed class MetroSession : IAsyncDisposable
         {
             lock (_sync)
             {
-                return !_stopped && (_reused || _process is { HasExited: false });
+                return !_stopped && (_reused || _supervised is { HasExited: false });
             }
         }
     }
@@ -100,7 +96,7 @@ public sealed class MetroSession : IAsyncDisposable
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (_process is not null || _reused)
+            if (_supervised is not null || _reused)
             {
                 throw new InvalidOperationException("The Metro session was already started.");
             }
@@ -124,7 +120,7 @@ public sealed class MetroSession : IAsyncDisposable
                 $"Stop the application using port {Port} or change the Metro port in metro.config.js, then run the app again.");
         }
 
-        Process process;
+        SupervisedProcess process;
         lock (_sync)
         {
             if (_stopped || _disposed)
@@ -132,32 +128,24 @@ public sealed class MetroSession : IAsyncDisposable
                 throw new InvalidOperationException("The Metro session was stopped before it could start.");
             }
 
-            process = new Process { StartInfo = CreateStartInfo(_request), EnableRaisingEvents = true };
-            if (!process.Start())
-            {
-                process.Dispose();
-                throw new InvalidOperationException("The Metro process could not be started.");
-            }
-
-            _process = process;
-            _stdoutPump = Task.Run(() => PumpAsync(process, standardError: false), CancellationToken.None);
-            _stderrPump = Task.Run(() => PumpAsync(process, standardError: true), CancellationToken.None);
+            process = SupervisedProcess.Start(_request, _output);
+            _supervised = process;
         }
 
         var start = Stopwatch.StartNew();
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (HasExited(process))
+            if (process.HasExited)
             {
-                await StopProcessAsync().ConfigureAwait(false);
+                await StopProcessAsync(process).ConfigureAwait(false);
                 throw new InvalidOperationException(
-                    "Metro exited before the development server was ready." + FormatStderrTail());
+                    "Metro exited before the development server was ready." + process.FormatStderrTail());
             }
 
             if (start.Elapsed > _startTimeout)
             {
-                await StopProcessAsync().ConfigureAwait(false);
+                await StopProcessAsync(process).ConfigureAwait(false);
                 throw new TimeoutException(
                     $"Metro did not report a running development server on port {Port} within {_startTimeout.TotalSeconds:F0} seconds.");
             }
@@ -170,7 +158,7 @@ public sealed class MetroSession : IAsyncDisposable
 
             if (status == MetroPortStatus.Conflicting)
             {
-                await StopProcessAsync().ConfigureAwait(false);
+                await StopProcessAsync(process).ConfigureAwait(false);
                 throw new InvalidOperationException(
                     $"Port {Port} is served by another application, not Metro. " +
                     $"Stop the application using port {Port} or change the Metro port in metro.config.js, then run the app again.");
@@ -219,17 +207,17 @@ public sealed class MetroSession : IAsyncDisposable
     /// <summary>Stops the owned Metro process. A reused external server is left untouched.</summary>
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
-        Process? process;
+        SupervisedProcess? process;
         lock (_sync)
         {
-            process = _process;
+            process = _supervised;
             if (process is null)
             {
                 return;
             }
 
             _stopped = true;
-            _process = null;
+            _supervised = null;
         }
 
         await StopProcessAsync(process).ConfigureAwait(false);
@@ -329,167 +317,23 @@ public sealed class MetroSession : IAsyncDisposable
         return client;
     }
 
-    private async Task PumpAsync(Process process, bool standardError)
-    {
-        try
-        {
-            var reader = standardError ? process.StandardError : process.StandardOutput;
-            while (await reader.ReadLineAsync(CancellationToken.None).ConfigureAwait(false) is { } line)
-            {
-                if (standardError)
-                {
-                    lock (_sync)
-                    {
-                        _stderrTail.Enqueue(line);
-                        while (_stderrTail.Count > 20)
-                        {
-                            _stderrTail.Dequeue();
-                        }
-                    }
-                }
-
-                _output?.Invoke(new ProcessOutputLine(
-                    standardError ? ProcessOutputChannel.StandardError : ProcessOutputChannel.StandardOutput,
-                    line,
-                    DateTimeOffset.UtcNow));
-            }
-        }
-        catch (Exception exception) when (exception is IOException or ObjectDisposedException or InvalidOperationException)
-        {
-            // The stream is torn down when the process exits.
-        }
-    }
-
-    private async Task StopProcessAsync()
-    {
-        Process? process;
-        Task? stdoutPump;
-        Task? stderrPump;
-        lock (_sync)
-        {
-            process = _process;
-            stdoutPump = _stdoutPump;
-            stderrPump = _stderrPump;
-            _process = null;
-        }
-
-        if (process is null)
-        {
-            return;
-        }
-
-        await StopProcessAsync(process).ConfigureAwait(false);
-        await WaitForPumpAsync(stdoutPump).ConfigureAwait(false);
-        await WaitForPumpAsync(stderrPump).ConfigureAwait(false);
-    }
-
-    private static async Task StopProcessAsync(Process process)
-    {
-        try
-        {
-            if (!HasExited(process))
-            {
-                var exit = WaitForExitAsync(process);
-                using var grace = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                var delay = Task.Delay(Timeout.InfiniteTimeSpan, grace.Token);
-                var completed = await Task.WhenAny(exit, delay).ConfigureAwait(false);
-                if (completed != exit && !HasExited(process))
-                {
-                    process.Kill(entireProcessTree: true);
-                }
-            }
-        }
-        catch (Exception exception) when (exception is InvalidOperationException or NotSupportedException or Win32Exception)
-        {
-            // The process ended while it was being terminated.
-        }
-
-        try
-        {
-            await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
-        }
-        catch (Exception exception) when (exception is InvalidOperationException or Win32Exception)
-        {
-            // The process handle is already gone.
-        }
-
-        process.Dispose();
-    }
-
-    private static ProcessStartInfo CreateStartInfo(ProcessRequest request)
-    {
-        var info = new ProcessStartInfo(request.FileName)
-        {
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-            WorkingDirectory = request.WorkingDirectory ?? Environment.CurrentDirectory,
-        };
-        foreach (var argument in request.Arguments)
-        {
-            info.ArgumentList.Add(argument);
-        }
-
-        foreach (var (key, value) in request.Environment)
-        {
-            info.Environment[key] = value;
-        }
-
-        return info;
-    }
-
-    private static Task WaitForExitAsync(Process process)
-    {
-        try
-        {
-            return process.WaitForExitAsync(CancellationToken.None);
-        }
-        catch (InvalidOperationException)
-        {
-            return Task.CompletedTask;
-        }
-    }
-
-    private static bool HasExited(Process process)
-    {
-        try
-        {
-            return process.HasExited;
-        }
-        catch (InvalidOperationException)
-        {
-            return true;
-        }
-    }
-
-    private static async Task WaitForPumpAsync(Task? pump)
-    {
-        if (pump is null)
-        {
-            return;
-        }
-
-        try
-        {
-            await pump.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
-        }
-        catch (TimeoutException)
-        {
-            // A pump that does not finish is abandoned with the process.
-        }
-    }
-
-    private string FormatStderrTail()
+    private async Task StopProcessAsync(SupervisedProcess process)
     {
         lock (_sync)
         {
-            return _stderrTail.Count == 0
-                ? string.Empty
-                : Environment.NewLine + string.Join(Environment.NewLine, _stderrTail);
+            if (ReferenceEquals(_supervised, process))
+            {
+                _supervised = null;
+            }
+        }
+
+        try
+        {
+            await process.StopAsync(ExitGracePeriod, CancellationToken.None).ConfigureAwait(false);
+        }
+        finally
+        {
+            await process.DisposeAsync().ConfigureAwait(false);
         }
     }
 }

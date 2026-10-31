@@ -1,7 +1,5 @@
 using System.Collections.Concurrent;
-using System.ComponentModel;
 using System.Diagnostics;
-using System.Text;
 using System.Text.Json;
 using DroidDeck.Core.Processes;
 
@@ -24,17 +22,11 @@ public sealed class FlutterRunSession : IAsyncDisposable
     private readonly Action<ProcessOutputLine>? _output;
     private readonly TimeSpan _startTimeout;
     private readonly object _sync = new();
-    private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly ConcurrentDictionary<int, TaskCompletionSource<JsonElement?>> _pending = new();
-    private readonly Queue<string> _stderrTail = new();
     private readonly TaskCompletionSource<string?> _started =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    private CancellationTokenSource? _lifetime;
-    private Process? _process;
-    private StreamWriter? _stdin;
-    private Task? _stdoutPump;
-    private Task? _stderrPump;
+    private SupervisedProcess? _supervised;
     private TaskCompletionSource<string?>? _progress;
     private string? _progressError;
     private string? _appId;
@@ -60,7 +52,7 @@ public sealed class FlutterRunSession : IAsyncDisposable
         {
             lock (_sync)
             {
-                return _process is { HasExited: false };
+                return _supervised is { HasExited: false };
             }
         }
     }
@@ -71,33 +63,20 @@ public sealed class FlutterRunSession : IAsyncDisposable
     /// <summary>Starts the Flutter process and waits until the app has started on the device.</summary>
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
-        Process process;
+        SupervisedProcess process;
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (_process is not null)
+            if (_supervised is not null)
             {
                 throw new InvalidOperationException("The Flutter session was already started.");
             }
 
-            _lifetime = new CancellationTokenSource();
-            process = new Process { StartInfo = CreateStartInfo(_request), EnableRaisingEvents = true };
-            if (!process.Start())
-            {
-                process.Dispose();
-                throw new InvalidOperationException("The Flutter process could not be started.");
-            }
-
-            _process = process;
-            _stdin = new StreamWriter(process.StandardInput.BaseStream, new UTF8Encoding(false))
-            {
-                AutoFlush = true,
-            };
-            _stdoutPump = Task.Run(() => PumpStdoutAsync(process), CancellationToken.None);
-            _stderrPump = Task.Run(() => PumpStderrAsync(process), CancellationToken.None);
+            process = SupervisedProcess.Start(_request, HandleOutputLine);
+            _supervised = process;
         }
 
-        var exit = WaitForExitAsync(process, cancellationToken);
+        var exit = process.ExitTask.WaitAsync(cancellationToken);
         var timeout = Task.Delay(_startTimeout, cancellationToken);
         var completed = await Task.WhenAny(_started.Task, exit, timeout).ConfigureAwait(false);
         if (completed == _started.Task)
@@ -114,7 +93,7 @@ public sealed class FlutterRunSession : IAsyncDisposable
         }
 
         throw new InvalidOperationException(
-            "The Flutter session exited before the app started." + FormatStderrTail());
+            "The Flutter session exited before the app started." + process.FormatStderrTail());
     }
 
     /// <summary>Sends a hot reload request and waits for the daemon to report progress.</summary>
@@ -128,11 +107,11 @@ public sealed class FlutterRunSession : IAsyncDisposable
     /// <summary>Stops the app through the daemon and terminates the whole process tree.</summary>
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
-        Process? process;
+        SupervisedProcess? process;
         string? appId;
         lock (_sync)
         {
-            process = _process;
+            process = _supervised;
             appId = _appId;
         }
 
@@ -141,7 +120,7 @@ public sealed class FlutterRunSession : IAsyncDisposable
             return;
         }
 
-        if (appId is not null && !HasExited(process))
+        if (appId is not null && !process.HasExited)
         {
             try
             {
@@ -175,9 +154,6 @@ public sealed class FlutterRunSession : IAsyncDisposable
         {
             // Shutting down must not throw from a dispose path.
         }
-
-        _lifetime?.Dispose();
-        _writeLock.Dispose();
     }
 
     private async Task<HotReloadResult> ReloadAsync(bool fullRestart, CancellationToken cancellationToken)
@@ -263,10 +239,10 @@ public sealed class FlutterRunSession : IAsyncDisposable
         object parameters,
         CancellationToken cancellationToken)
     {
-        StreamWriter stdin;
+        SupervisedProcess stdin;
         lock (_sync)
         {
-            stdin = _stdin ?? throw new InvalidOperationException("The Flutter session is not running.");
+            stdin = _supervised ?? throw new InvalidOperationException("The Flutter session is not running.");
         }
 
         var id = Interlocked.Increment(ref _nextRequestId);
@@ -275,16 +251,7 @@ public sealed class FlutterRunSession : IAsyncDisposable
         try
         {
             var json = JsonSerializer.Serialize(new[] { new { id, method, @params = parameters } });
-            await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-                await stdin.WriteLineAsync(json.AsMemory(), cancellationToken).ConfigureAwait(false);
-                await stdin.FlushAsync(cancellationToken).ConfigureAwait(false);
-            }
-            finally
-            {
-                _writeLock.Release();
-            }
+            await stdin.WriteLineAsync(json, cancellationToken).ConfigureAwait(false);
 
             return await completion.Task.WaitAsync(CommandTimeout, cancellationToken).ConfigureAwait(false);
         }
@@ -294,43 +261,15 @@ public sealed class FlutterRunSession : IAsyncDisposable
         }
     }
 
-    private async Task PumpStdoutAsync(Process process)
+    private void HandleOutputLine(ProcessOutputLine line)
     {
-        try
+        if (line.Stream == ProcessOutputChannel.StandardError)
         {
-            while (await process.StandardOutput.ReadLineAsync(CancellationToken.None).ConfigureAwait(false) is { } line)
-            {
-                HandleStdoutLine(line);
-            }
+            _output?.Invoke(line);
+            return;
         }
-        catch (Exception exception) when (exception is IOException or ObjectDisposedException or InvalidOperationException)
-        {
-            // The stream is torn down when the process exits.
-        }
-    }
 
-    private async Task PumpStderrAsync(Process process)
-    {
-        try
-        {
-            while (await process.StandardError.ReadLineAsync(CancellationToken.None).ConfigureAwait(false) is { } line)
-            {
-                lock (_sync)
-                {
-                    _stderrTail.Enqueue(line);
-                    while (_stderrTail.Count > 20)
-                    {
-                        _stderrTail.Dequeue();
-                    }
-                }
-
-                Emit(line, ProcessOutputChannel.StandardError);
-            }
-        }
-        catch (Exception exception) when (exception is IOException or ObjectDisposedException or InvalidOperationException)
-        {
-            // The stream is torn down when the process exits.
-        }
+        HandleStdoutLine(line.Text);
     }
 
     private void HandleStdoutLine(string line)
@@ -500,15 +439,10 @@ public sealed class FlutterRunSession : IAsyncDisposable
 
     private async Task StopProcessAsync(CancellationToken cancellationToken)
     {
-        Process? process;
-        Task? stdoutPump;
-        Task? stderrPump;
+        SupervisedProcess? process;
         lock (_sync)
         {
-            process = _process;
-            stdoutPump = _stdoutPump;
-            stderrPump = _stderrPump;
-            _lifetime?.Cancel();
+            process = _supervised;
         }
 
         if (process is null)
@@ -516,146 +450,28 @@ public sealed class FlutterRunSession : IAsyncDisposable
             return;
         }
 
-        await CloseStandardInputAsync().ConfigureAwait(false);
         try
         {
-            if (!HasExited(process))
-            {
-                var exit = WaitForExitAsync(process, CancellationToken.None);
-                using var grace = new CancellationTokenSource(ExitGracePeriod);
-                var delay = Task.Delay(Timeout.InfiniteTimeSpan, grace.Token);
-                var completed = await Task.WhenAny(exit, delay).ConfigureAwait(false);
-                if (completed != exit && !HasExited(process))
-                {
-                    process.Kill(entireProcessTree: true);
-                }
-            }
-        }
-        catch (Exception exception) when (exception is InvalidOperationException or NotSupportedException or Win32Exception)
-        {
-            // The process ended while it was being terminated.
-        }
-
-        try
-        {
-            await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
-        }
-        catch (Exception exception) when (exception is InvalidOperationException or Win32Exception)
-        {
-            // The process handle is already gone.
-        }
-
-        await WaitForPumpAsync(stdoutPump).ConfigureAwait(false);
-        await WaitForPumpAsync(stderrPump).ConfigureAwait(false);
-
-        lock (_sync)
-        {
-            _process = null;
-            _stdin = null;
-            _appId = null;
-        }
-
-        if (cancellationToken.IsCancellationRequested)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-        }
-
-        process.Dispose();
-    }
-
-    private async Task CloseStandardInputAsync()
-    {
-        await _writeLock.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            _stdin?.Dispose();
-            _stdin = null;
+            await process.StopAsync(ExitGracePeriod, CancellationToken.None).ConfigureAwait(false);
         }
         finally
         {
-            _writeLock.Release();
-        }
-    }
-
-    private static ProcessStartInfo CreateStartInfo(ProcessRequest request)
-    {
-        var info = new ProcessStartInfo(request.FileName)
-        {
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-            WorkingDirectory = request.WorkingDirectory ?? Environment.CurrentDirectory,
-        };
-        foreach (var argument in request.Arguments)
-        {
-            info.ArgumentList.Add(argument);
+            await process.DisposeAsync().ConfigureAwait(false);
+            lock (_sync)
+            {
+                if (ReferenceEquals(_supervised, process))
+                {
+                    _supervised = null;
+                    _appId = null;
+                }
+            }
         }
 
-        foreach (var (key, value) in request.Environment)
-        {
-            info.Environment[key] = value;
-        }
-
-        return info;
-    }
-
-    private static Task WaitForExitAsync(Process process, CancellationToken cancellationToken)
-    {
-        try
-        {
-            return process.WaitForExitAsync(cancellationToken);
-        }
-        catch (InvalidOperationException)
-        {
-            return Task.CompletedTask;
-        }
-    }
-
-    private static bool HasExited(Process process)
-    {
-        try
-        {
-            return process.HasExited;
-        }
-        catch (InvalidOperationException)
-        {
-            return true;
-        }
-    }
-
-    private static async Task WaitForPumpAsync(Task? pump)
-    {
-        if (pump is null)
-        {
-            return;
-        }
-
-        try
-        {
-            await pump.WaitAsync(ExitGracePeriod).ConfigureAwait(false);
-        }
-        catch (TimeoutException)
-        {
-            // A pump that does not finish is abandoned with the process.
-        }
+        cancellationToken.ThrowIfCancellationRequested();
     }
 
     private void Emit(string text, ProcessOutputChannel channel) =>
         _output?.Invoke(new ProcessOutputLine(channel, text, DateTimeOffset.UtcNow));
-
-    private string FormatStderrTail()
-    {
-        lock (_sync)
-        {
-            return _stderrTail.Count == 0
-                ? string.Empty
-                : Environment.NewLine + string.Join(Environment.NewLine, _stderrTail);
-        }
-    }
 
     private static string DescribeError(JsonElement error)
     {

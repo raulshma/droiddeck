@@ -71,17 +71,29 @@ public sealed record ToolboxCommandResult
     public bool IsDestructive { get; init; }
 
     /// <summary>Creates a result from a process invocation.</summary>
-    public static ToolboxCommandResult FromProcess(ProcessResult result, string message, bool isDestructive = false) => new()
-    {
-        Succeeded = result.Succeeded,
-        Message = message,
-        CommandLine = result.CommandLine,
-        Output = result.CombinedOutput,
-        ExitCode = result.ExitCode,
-        TimedOut = result.TimedOut,
-        WasCanceled = result.WasCanceled,
-        IsDestructive = isDestructive,
-    };
+    /// <param name="result">The raw process result.</param>
+    /// <param name="succeeded">
+    /// Whether the classified adb invocation succeeded. This can differ from
+    /// <paramref name="result"/> when adb reports a failure in its output while
+    /// exiting with code zero.
+    /// </param>
+    /// <param name="message">A short user-facing summary.</param>
+    /// <param name="isDestructive">Whether the operation changed device state.</param>
+    public static ToolboxCommandResult FromProcess(
+        ProcessResult result,
+        bool succeeded,
+        string message,
+        bool isDestructive = false) => new()
+        {
+            Succeeded = succeeded,
+            Message = message,
+            CommandLine = result.CommandLine,
+            Output = result.CombinedOutput,
+            ExitCode = result.ExitCode,
+            TimedOut = result.TimedOut,
+            WasCanceled = result.WasCanceled,
+            IsDestructive = isDestructive,
+        };
 
     /// <summary>Creates a failure result that did not run a process.</summary>
     public static ToolboxCommandResult Failure(string message, string? commandLine = null, bool blocked = false) => new()

@@ -395,7 +395,7 @@ public sealed class ProjectService : IProjectService, IDisposable
         detected.ManualOverrides = new Dictionary<string, string>(stored.ManualOverrides, StringComparer.OrdinalIgnoreCase);
         detected.RunConfigurations = stored.RunConfigurations;
         ApplyManualOverrides(detected);
-        var changes = Compare(stored, detected);
+        var changes = ProjectRefreshFields.Compare(stored, detected);
         return new ProjectRefreshDiff
         {
             ProjectId = stored.Id,
@@ -414,12 +414,8 @@ public sealed class ProjectService : IProjectService, IDisposable
         ArgumentNullException.ThrowIfNull(diff);
         ArgumentNullException.ThrowIfNull(acceptedFields);
         var project = Get(diff.ProjectId) ?? throw new InvalidOperationException($"Project {diff.ProjectId} was not found.");
-        var accepted = acceptedFields.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var detected = diff.DetectedProject;
-        foreach (var field in accepted)
-        {
-            ApplyField(project, detected, field);
-        }
+        ProjectRefreshFields.Apply(project, detected, acceptedFields);
 
         project.DetectedAt = diff.DetectedAt;
         project.Confidence = detected.Confidence;
@@ -612,112 +608,6 @@ public sealed class ProjectService : IProjectService, IDisposable
 
                     break;
             }
-        }
-    }
-
-    private static List<ProjectFieldChange> Compare(ProjectModel stored, ProjectModel detected)
-    {
-        var changes = new List<ProjectFieldChange>();
-        AddChange(changes, "kind", stored.Kind.ToString(), detected.Kind.ToString());
-        AddChange(changes, "applicationId", stored.ApplicationId, detected.ApplicationId);
-        AddChange(changes, "namespace", stored.Namespace, detected.Namespace);
-        AddChange(changes, "launcherActivity", stored.LauncherActivity, detected.LauncherActivity);
-        AddChange(changes, "applicationLabel", stored.ApplicationLabel, detected.ApplicationLabel);
-        AddChange(changes, "applicationModule", stored.ApplicationModule, detected.ApplicationModule);
-        AddChange(changes, "wrapperVersion", stored.WrapperVersion, detected.WrapperVersion);
-        AddChange(changes, "agpVersion", stored.AgpVersion, detected.AgpVersion);
-        AddChange(changes, "kotlinVersion", stored.KotlinVersion, detected.KotlinVersion);
-        AddChange(
-            changes,
-            "isKotlinMultiplatform",
-            stored.IsKotlinMultiplatform.ToString(),
-            detected.IsKotlinMultiplatform.ToString());
-        AddChange(
-            changes,
-            "isComposeMultiplatform",
-            stored.IsComposeMultiplatform.ToString(),
-            detected.IsComposeMultiplatform.ToString());
-        AddChange(
-            changes,
-            "modules",
-            string.Join(", ", stored.Modules.Select(module => $"{module.Name} ({module.Type})")),
-            string.Join(", ", detected.Modules.Select(module => $"{module.Name} ({module.Type})")));
-        AddChange(
-            changes,
-            "variants",
-            string.Join(", ", stored.Variants.Select(variant => variant.Name)),
-            string.Join(", ", detected.Variants.Select(variant => variant.Name)));
-        AddChange(
-            changes,
-            "apkFiles",
-            string.Join(", ", stored.ApkFiles.Select(reference => Path.GetFileName(reference.Path))),
-            string.Join(", ", detected.ApkFiles.Select(reference => Path.GetFileName(reference.Path))));
-        return changes;
-    }
-
-    private static void AddChange(List<ProjectFieldChange> changes, string field, string? oldValue, string? newValue)
-    {
-        if (string.Equals(oldValue ?? string.Empty, newValue ?? string.Empty, StringComparison.Ordinal))
-        {
-            return;
-        }
-
-        changes.Add(new ProjectFieldChange
-        {
-            Field = field,
-            OldValue = oldValue,
-            NewValue = newValue,
-            Kind = string.IsNullOrEmpty(oldValue) ? "added" : string.IsNullOrEmpty(newValue) ? "removed" : "updated",
-        });
-    }
-
-    private static void ApplyField(ProjectModel target, ProjectModel detected, string field)
-    {
-        switch (field.ToLowerInvariant())
-        {
-            case "kind":
-                target.Kind = detected.Kind;
-                target.KindLabel = detected.KindLabel;
-                break;
-            case "applicationid":
-                target.ApplicationId = detected.ApplicationId;
-                break;
-            case "namespace":
-                target.Namespace = detected.Namespace;
-                break;
-            case "launcheractivity":
-                target.LauncherActivity = detected.LauncherActivity;
-                break;
-            case "applicationlabel":
-                target.ApplicationLabel = detected.ApplicationLabel;
-                break;
-            case "applicationmodule":
-                target.ApplicationModule = detected.ApplicationModule;
-                break;
-            case "wrapperversion":
-                target.WrapperVersion = detected.WrapperVersion;
-                break;
-            case "agpversion":
-                target.AgpVersion = detected.AgpVersion;
-                break;
-            case "kotlinversion":
-                target.KotlinVersion = detected.KotlinVersion;
-                break;
-            case "iskotlinmultiplatform":
-                target.IsKotlinMultiplatform = detected.IsKotlinMultiplatform;
-                break;
-            case "iscomposemultiplatform":
-                target.IsComposeMultiplatform = detected.IsComposeMultiplatform;
-                break;
-            case "modules":
-                target.Modules = detected.Modules;
-                break;
-            case "variants":
-                target.Variants = detected.Variants;
-                break;
-            case "apkfiles":
-                target.ApkFiles = detected.ApkFiles;
-                break;
         }
     }
 

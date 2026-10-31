@@ -22,7 +22,7 @@ public sealed class AdbDeviceParserTests
         Assert.Equal(DeviceState.Device, device.State);
         Assert.Equal("beyond1lte", device.Product);
         Assert.Equal("SM G973F", device.Model);
-        Assert.Equal("beyond1", device.Device);
+        Assert.Equal("beyond1", device.Codename);
         Assert.Equal("3", device.TransportId);
         Assert.False(device.IsEmulator);
         Assert.Equal("SM G973F", device.DisplayName);
@@ -84,6 +84,17 @@ public sealed class AdbDeviceParserTests
         var devices = AdbDeviceParser.Parse("one device\r\n\r\ntwo unauthorized\r\n");
         Assert.Equal(2, devices.Count);
         Assert.Equal(DeviceState.Unauthorized, devices[1].State);
+    }
+
+    [Fact]
+    public void Parse_AcceptsTabSeparatedColumnsLikeRealAdbOutput()
+    {
+        var device = Assert.Single(AdbDeviceParser.Parse(
+            "List of devices attached\nemulator-5554\tdevice\tproduct:sdk_gphone64_x86_64\n"));
+
+        Assert.Equal("emulator-5554", device.Serial);
+        Assert.Equal(DeviceState.Device, device.State);
+        Assert.True(device.IsEmulator);
     }
 
     [Fact]

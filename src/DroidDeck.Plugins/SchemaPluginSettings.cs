@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -69,14 +68,6 @@ public sealed record PluginSettingsExport(
 /// </summary>
 public sealed class SchemaPluginSettings : IPluginSettings, IDisposable
 {
-    /// <summary>
-    /// The live store per settings file. Every surface that touches a plugin's
-    /// settings file must resolve its store here, because two stores over the
-    /// same file lose updates when both write.
-    /// </summary>
-    private static readonly ConcurrentDictionary<string, SchemaPluginSettings> StoresByPath =
-        new(StringComparer.OrdinalIgnoreCase);
-
     private readonly string _filePath;
     private readonly PluginSettingsSchema _schema;
     private readonly string _pluginId;
@@ -108,15 +99,6 @@ public sealed class SchemaPluginSettings : IPluginSettings, IDisposable
         _secrets = secretStore;
         _logger = logger ?? NullLogger.Instance;
         _timeProvider = timeProvider ?? TimeProvider.System;
-        if (StoresByPath.TryGetValue(_filePath, out var existing) && !existing.IsDisposed)
-        {
-            throw new InvalidOperationException(
-                $"A live settings store for '{_filePath}' is already registered. " +
-                "Resolve stores through SchemaPluginSettings.GetOrCreate so every surface shares one " +
-                "instance: two stores over the same file lose updates when both write.");
-        }
-
-        StoresByPath[_filePath] = this;
     }
 
     /// <summary>Gets the settings file path.</summary>
@@ -124,32 +106,6 @@ public sealed class SchemaPluginSettings : IPluginSettings, IDisposable
 
     /// <summary>Gets a value indicating whether the store was disposed.</summary>
     public bool IsDisposed => _disposed;
-
-    /// <summary>
-    /// Returns the one live store for a settings file, creating it when none is
-    /// registered. Stores register themselves on construction, so the store the
-    /// plugin loader created for a loaded plugin is found here as well: UI
-    /// surfaces must open the same instance instead of a second store that
-    /// races the plugin's writes. Disposing a store lets the next call create
-    /// a fresh one.
-    /// </summary>
-    public static SchemaPluginSettings GetOrCreate(
-        string filePath,
-        PluginSettingsSchema schema,
-        string pluginId,
-        ISecretStore secretStore,
-        ILogger? logger = null,
-        TimeProvider? timeProvider = null)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
-        var fullPath = Path.GetFullPath(filePath);
-        if (StoresByPath.TryGetValue(fullPath, out var existing) && !existing.IsDisposed)
-        {
-            return existing;
-        }
-
-        return new SchemaPluginSettings(fullPath, schema, pluginId, secretStore, logger, timeProvider);
-    }
 
     /// <summary>Gets the schema the store validates against.</summary>
     public PluginSettingsSchema Schema => _schema;
@@ -462,7 +418,6 @@ public sealed class SchemaPluginSettings : IPluginSettings, IDisposable
         }
 
         _disposed = true;
-        StoresByPath.TryRemove(new KeyValuePair<string, SchemaPluginSettings>(_filePath, this));
         _gate.Dispose();
     }
 

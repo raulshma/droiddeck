@@ -16,9 +16,9 @@ public sealed class AdbThumbnailService : IThumbnailService, IDisposable
 {
     private static readonly TimeSpan CaptureTimeout = TimeSpan.FromSeconds(15);
 
-    private readonly IProcessRunner _runner;
     private readonly IScreenService _screens;
     private readonly Func<string> _adbPathProvider;
+    private readonly RemoteScreenCapture _capture;
     private readonly ILogger<AdbThumbnailService> _logger;
     private readonly TimeProvider _timeProvider;
     private readonly SemaphoreSlim _captureGate = new(1, 1);
@@ -35,9 +35,10 @@ public sealed class AdbThumbnailService : IThumbnailService, IDisposable
         ILogger<AdbThumbnailService>? logger = null,
         IResourceGuard? resourceGuard = null)
     {
-        _runner = runner ?? throw new ArgumentNullException(nameof(runner));
+        ArgumentNullException.ThrowIfNull(runner);
         _screens = screens ?? throw new ArgumentNullException(nameof(screens));
         _adbPathProvider = adbPathProvider ?? throw new ArgumentNullException(nameof(adbPathProvider));
+        _capture = new RemoteScreenCapture(runner, _adbPathProvider);
         _timeProvider = timeProvider ?? TimeProvider.System;
         _logger = logger ?? NullLogger<AdbThumbnailService>.Instance;
         _stagingDirectory = stagingDirectory
@@ -149,34 +150,33 @@ public sealed class AdbThumbnailService : IThumbnailService, IDisposable
     {
         Directory.CreateDirectory(_stagingDirectory);
         var stamp = _timeProvider.GetUtcNow().ToString("yyyyMMdd-HHmmssfff", CultureInfo.InvariantCulture);
-        var fileName = $"thumb-{Sanitize(serial)}-{stamp}.png";
+        var fileName = RemoteScreenCapture.CreateFileName("thumb", serial, stamp, ".png", trimDashes: false);
         var localPath = Path.Combine(_stagingDirectory, fileName);
-        var remotePath = $"/sdcard/DroidDeck/{fileName}";
 
         try
         {
-            var prepare = await RunAdbAsync(
-                ["-s", serial, "shell", "mkdir", "-p", "/sdcard/DroidDeck"],
+            var result = await _capture.CaptureAsync(
+                new RemoteCaptureRequest
+                {
+                    Serial = serial,
+                    LocalPath = localPath,
+                    RemoteFileName = fileName,
+                    Operation = "thumbnail",
+                    MaxOutputCharacters = 64 * 1024,
+                    Timeouts = new RemoteCaptureTimeouts
+                    {
+                        Prepare = CaptureTimeout,
+                        Capture = CaptureTimeout,
+                        Pull = CaptureTimeout,
+                        Cleanup = CaptureTimeout,
+                    },
+                },
                 cancellationToken).ConfigureAwait(false);
-            if (prepare.ExitCode != 0)
+            if (!result.Succeeded)
             {
-                throw Failure(serial, "create the thumbnail directory", prepare);
-            }
-
-            var capture = await RunAdbAsync(
-                ["-s", serial, "shell", "screencap", "-p", remotePath],
-                cancellationToken).ConfigureAwait(false);
-            if (capture.ExitCode != 0)
-            {
-                throw Failure(serial, "capture the thumbnail", capture);
-            }
-
-            var pull = await RunAdbAsync(
-                ["-s", serial, "pull", remotePath, localPath],
-                cancellationToken).ConfigureAwait(false);
-            if (pull.ExitCode != 0 || !File.Exists(localPath))
-            {
-                throw Failure(serial, "copy the thumbnail", pull);
+                throw new InvalidOperationException(
+                    $"{result.Message} {result.Detail}. " +
+                    "Check that the device is connected, authorized, and has free storage.");
             }
 
             var png = await File.ReadAllBytesAsync(localPath, cancellationToken).ConfigureAwait(false);
@@ -190,53 +190,14 @@ public sealed class AdbThumbnailService : IThumbnailService, IDisposable
                 Serial = serial,
                 Png = png,
                 CapturedAt = _timeProvider.GetUtcNow(),
-                CommandLine = pull.CommandLine,
+                CommandLine = result.CommandLine ?? string.Empty,
             };
         }
         finally
         {
             TryDelete(localPath);
-            _ = await RunAdbAsync(
-                ["-s", serial, "shell", "rm", "-f", remotePath],
-                CancellationToken.None).ConfigureAwait(false);
         }
     }
-
-    private async Task<ProcessResult> RunAdbAsync(
-        IReadOnlyList<string> arguments,
-        CancellationToken cancellationToken) =>
-        await _runner.RunAsync(
-            new ProcessRequest
-            {
-                FileName = _adbPathProvider(),
-                Arguments = arguments,
-                Timeout = CaptureTimeout,
-                MaxOutputCharacters = 64 * 1024,
-            },
-            output: null,
-            cancellationToken).ConfigureAwait(false);
-
-    private static InvalidOperationException Failure(string serial, string action, ProcessResult result)
-    {
-        var detail = FirstLine(result.CombinedOutput);
-        return new InvalidOperationException(
-            $"Could not {action} for {serial}: {detail}. " +
-            "Check that the device is connected, authorized, and has free storage.");
-    }
-
-    private static string FirstLine(string? text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return "no output";
-        }
-
-        var line = text.Replace('\r', ' ').Replace('\n', ' ').Trim();
-        return line.Length <= 240 ? line : line[..240] + "...";
-    }
-
-    private static string Sanitize(string serial) =>
-        new(serial.Select(static character => char.IsAsciiLetterOrDigit(character) ? character : '-').ToArray());
 
     private static void TryDelete(string path)
     {

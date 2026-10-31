@@ -1,13 +1,15 @@
+using DroidDeck.Core.Devices;
+
 namespace DroidDeck.Adb.Tracking;
 
 /// <summary>Describes a device-list change.</summary>
 public sealed class AdbDevicesChangedEventArgs : EventArgs
 {
     /// <summary>Creates event data for a device-list change.</summary>
-    public AdbDevicesChangedEventArgs(IReadOnlyList<AdbDevice> devices) => Devices = devices;
+    public AdbDevicesChangedEventArgs(IReadOnlyList<DeviceInfo> devices) => Devices = devices;
 
     /// <summary>Gets the current device snapshot.</summary>
-    public IReadOnlyList<AdbDevice> Devices { get; }
+    public IReadOnlyList<DeviceInfo> Devices { get; }
 }
 
 /// <summary>Describes a transport connection change.</summary>
@@ -35,7 +37,7 @@ public sealed class AdbConnectionChangedEventArgs : EventArgs
 public interface IAdbDeviceTracker : IAsyncDisposable
 {
     /// <summary>Gets the current device snapshot.</summary>
-    IReadOnlyList<AdbDevice> Devices { get; }
+    IReadOnlyList<DeviceInfo> Devices { get; }
 
     /// <summary>Gets whether device data is currently available.</summary>
     bool IsConnected { get; }

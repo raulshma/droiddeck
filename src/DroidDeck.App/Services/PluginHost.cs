@@ -16,6 +16,7 @@ public sealed class PluginHost : IAsyncDisposable
 {
     private readonly PluginRegistry _registry;
     private readonly PluginManager _manager;
+    private readonly PluginSettingsFactory _settingsFactory;
     private readonly AppPaths _paths;
     private readonly ILogger<PluginHost> _logger;
     private readonly object _sync = new();
@@ -37,6 +38,7 @@ public sealed class PluginHost : IAsyncDisposable
         IEnumerable<IRunStep>? builtInRunSteps = null)
     {
         _registry = registry ?? throw new ArgumentNullException(nameof(registry));
+        _settingsFactory = loader?.SettingsFactory ?? throw new ArgumentNullException(nameof(loader));
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _builtInRunSteps = builtInRunSteps?.ToArray() ?? [];
@@ -53,6 +55,9 @@ public sealed class PluginHost : IAsyncDisposable
 
     /// <summary>Gets the shared extension registry.</summary>
     public PluginRegistry Registry => _registry;
+
+    /// <summary>Gets the factory that owns the settings stores of loaded plugins.</summary>
+    public PluginSettingsFactory SettingsFactory => _settingsFactory;
 
     /// <summary>Gets device actions, tabs, and toolbar actions in host order.</summary>
     public PluginExtensionCatalog Extensions => _catalog;

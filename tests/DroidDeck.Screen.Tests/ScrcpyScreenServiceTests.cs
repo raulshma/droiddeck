@@ -234,6 +234,35 @@ public sealed class ScrcpyScreenServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ScreenshotAsync_SanitizesRemoteNameAndCleansUpAfterPull()
+    {
+        var png = new byte[] { 0x89, 0x50, 0x4E, 0x47, 5, 6, 7, 8 };
+        _runner.Handler = request =>
+        {
+            if (request.Arguments.Contains("pull"))
+            {
+                File.WriteAllBytes(request.Arguments[^1], png);
+            }
+
+            return FakeProcessRunner.Success(request);
+        };
+        await using var service = CreateService();
+
+        var result = await service.ScreenshotAsync("192.168.1.10:5555");
+
+        Assert.True(result.Succeeded);
+        var pull = Assert.Single(_runner.Requests, request => request.Arguments.Contains("pull"));
+        var remotePath = pull.Arguments[3];
+        Assert.StartsWith(
+            "/sdcard/DroidDeck/screenshot-192-168-1-10-5555-",
+            remotePath,
+            StringComparison.Ordinal);
+        Assert.EndsWith(".png", remotePath, StringComparison.Ordinal);
+        var cleanup = Assert.Single(_runner.Requests, request => request.Arguments.Contains("rm"));
+        Assert.Equal(remotePath, cleanup.Arguments[^1]);
+    }
+
+    [Fact]
     public async Task StartAndStopRecording_UsesHeadlessMkvAndReleasesLease()
     {
         await using var service = CreateService();

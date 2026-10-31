@@ -34,7 +34,7 @@ public sealed class PluginLoader : IAsyncDisposable
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger _logger;
     private readonly string _hostVersion;
-    private readonly ISecretStore? _secretStore;
+    private readonly PluginSettingsFactory _settingsFactory;
     private readonly IPluginDialogServiceProvider? _dialogs;
     private readonly List<LoadedPlugin> _plugins = [];
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -60,9 +60,16 @@ public sealed class PluginLoader : IAsyncDisposable
         _loggerFactory = loggerFactory;
         _logger = loggerFactory.CreateLogger("DroidDeck.Plugins");
         _hostVersion = hostVersion ?? AppInfo.Version;
-        _secretStore = secretStore;
+        _settingsFactory = new PluginSettingsFactory(secretStore, loggerFactory);
         _dialogs = dialogs;
     }
+
+    /// <summary>
+    /// Gets the settings factory that owns the stores of this loader's plugins.
+    /// Host surfaces use it instead of creating their own stores so every writer
+    /// shares one instance per settings file.
+    /// </summary>
+    public PluginSettingsFactory SettingsFactory => _settingsFactory;
 
     /// <summary>Gets the loaded plugins in load order.</summary>
     public IReadOnlyList<LoadedPlugin> Plugins
@@ -264,6 +271,7 @@ public sealed class PluginLoader : IAsyncDisposable
             await plugin.ShutdownAsync().ConfigureAwait(false);
         }
 
+        _settingsFactory.Dispose();
         _gate.Dispose();
     }
 
@@ -343,7 +351,7 @@ public sealed class PluginLoader : IAsyncDisposable
 
             var dataDirectory = Path.Combine(pluginDirectory, "data");
             Directory.CreateDirectory(dataDirectory);
-            settings = await CreateSettingsAsync(manifest, pluginDirectory, logger, validation, cancellationToken)
+            settings = await CreateSettingsAsync(manifest, pluginDirectory, validation, cancellationToken)
                 .ConfigureAwait(false);
 
             var loaded = new LoadedPlugin(manifest, pluginDirectory, instance, loadContext, settings, _registry, logger);
@@ -411,43 +419,18 @@ public sealed class PluginLoader : IAsyncDisposable
     private async Task<IPluginSettings> CreateSettingsAsync(
         PluginManifest manifest,
         string pluginDirectory,
-        ILogger logger,
         PluginValidationResult validation,
         CancellationToken cancellationToken)
     {
-        var settingsPath = Path.Combine(pluginDirectory, "settings.json");
-        if (!File.Exists(PluginSettingsSchemaReader.GetSchemaPath(pluginDirectory)))
+        var creation = await _settingsFactory
+            .CreateAsync(manifest, pluginDirectory, cancellationToken)
+            .ConfigureAwait(false);
+        if (creation.Issue is { } issue)
         {
-            return new JsonPluginSettings(settingsPath, logger);
+            validation.Warning(issue.Code, issue.Message);
         }
 
-        var read = await PluginSettingsSchemaReader.ReadAsync(pluginDirectory, cancellationToken).ConfigureAwait(false);
-        if (read.Schema is null)
-        {
-            var reason = read.Validation.Issues.FirstOrDefault(static issue =>
-                issue.Severity == PluginValidationSeverity.Error)?.Message ?? "The schema is invalid.";
-            validation.Warning(
-                "plugin.settingsSchema.invalid",
-                $"The settings schema was not used: {reason} The plugin keeps its raw settings store.");
-            return new JsonPluginSettings(settingsPath, logger);
-        }
-
-        if (read.Schema.Fields.Any(static field => field.Type == PluginSettingsFieldType.Secret) &&
-            _secretStore is null)
-        {
-            validation.Warning(
-                "plugin.settingsSchema.noSecretStore",
-                "The plugin declares secret settings, but no secret store is available, so its " +
-                    "settings schema was not used. The plugin keeps its raw settings store.");
-            return new JsonPluginSettings(settingsPath, logger);
-        }
-
-        return new SchemaPluginSettings(
-            settingsPath,
-            read.Schema,
-            manifest.Id,
-            _secretStore!,
-            logger);
+        return creation.Settings;
     }
 
     /// <summary>
@@ -457,26 +440,36 @@ public sealed class PluginLoader : IAsyncDisposable
     /// </summary>
     private void ValidateDependencies(PluginManifest manifest, PluginValidationResult validation)
     {
-        foreach (var dependency in manifest.Dependencies)
+        LoadedPlugin[] plugins;
+        lock (_sync)
         {
-            var loaded = FindLoaded(dependency.Id);
-            if (loaded is null)
+            plugins = [.. _plugins];
+        }
+
+        var available = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var plugin in plugins)
+        {
+            available[plugin.Id] = plugin.Version;
+        }
+
+        var issues = PluginCompatibilityPolicy.EvaluateDependencies(manifest.Dependencies, available);
+        foreach (var issue in issues)
+        {
+            if (issue.Kind == PluginDependencyIssueKind.Missing)
             {
                 validation.Error(
                     "plugin.dependencies.unresolved",
-                    $"Missing dependency {dependency.Id} {dependency.MinVersion}+. Install it and restart DroidDeck.");
+                    $"Missing dependency {issue.DependencyId} {issue.RequiredVersion}+. Install it and restart DroidDeck.");
                 continue;
             }
 
-            if (SemanticVersion.TryParse(dependency.MinVersion, out var minimum) &&
-                SemanticVersion.TryParse(loaded.Version, out var actual) &&
-                actual < minimum)
-            {
-                validation.Error(
-                    "plugin.dependencies.incompatible",
-                    $"The dependency {dependency.Id} must be version {dependency.MinVersion} or newer, " +
-                    $"but the installed version is {actual}.");
-            }
+            var actual = SemanticVersion.TryParse(issue.InstalledVersion, out var parsed)
+                ? parsed.ToString()
+                : issue.InstalledVersion;
+            validation.Error(
+                "plugin.dependencies.incompatible",
+                $"The dependency {issue.DependencyId} must be version {issue.RequiredVersion} or newer, " +
+                $"but the installed version is {actual}.");
         }
     }
 
@@ -511,15 +504,6 @@ public sealed class PluginLoader : IAsyncDisposable
         lock (_sync)
         {
             return _plugins.Exists(
-                candidate => string.Equals(candidate.Id, pluginId, StringComparison.OrdinalIgnoreCase));
-        }
-    }
-
-    private LoadedPlugin? FindLoaded(string pluginId)
-    {
-        lock (_sync)
-        {
-            return _plugins.FirstOrDefault(
                 candidate => string.Equals(candidate.Id, pluginId, StringComparison.OrdinalIgnoreCase));
         }
     }

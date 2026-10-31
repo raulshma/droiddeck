@@ -770,7 +770,9 @@ public partial class App : Application, IDisposable
             _services?.GetService<IDeviceOperationCoordinator>() is { } coordinator &&
             _configuration is not null)
         {
-            coordinator.MaxConcurrency = Math.Max(1, _configuration.Current.Settings.Run.MaxConcurrentDevices);
+            coordinator.MaxConcurrency = SettingsValuePolicy.Clamp(
+                SettingsPaths.RunMaxConcurrentDevices,
+                _configuration.Current.Settings.Run.MaxConcurrentDevices);
         }
     }
 

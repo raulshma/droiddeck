@@ -70,6 +70,9 @@ public sealed record DeviceInfo
     /// <summary>Gets the product name.</summary>
     public string? Product { get; init; }
 
+    /// <summary>Gets the device codename reported by adb.</summary>
+    public string? Codename { get; init; }
+
     /// <summary>Gets the adb transport identifier.</summary>
     public string? TransportId { get; init; }
 
@@ -148,12 +151,26 @@ public sealed record DeviceInfo
     /// <summary>Gets whether mutating actions are allowed.</summary>
     public bool CanRunActions => State == DeviceState.Device;
 
-    /// <summary>Applies transport state from a device-list update.</summary>
-    public DeviceInfo WithTransport(DeviceState state, DateTimeOffset seenAt) => this with
+    /// <summary>
+    /// Applies a transport snapshot from a device-list update, preserving metadata that
+    /// adb does not report and recording when the transport was seen.
+    /// </summary>
+    /// <param name="transport">The device parsed from <c>adb devices -l</c>.</param>
+    /// <param name="seenAt">When the transport snapshot was observed.</param>
+    public DeviceInfo WithTransport(DeviceInfo transport, DateTimeOffset seenAt)
     {
-        State = state,
-        LastSeenAt = seenAt,
-    };
+        ArgumentNullException.ThrowIfNull(transport);
+        return this with
+        {
+            State = transport.State,
+            Product = transport.Product ?? Product,
+            Codename = transport.Codename ?? Codename,
+            Model = transport.Model ?? Model,
+            TransportId = transport.TransportId ?? TransportId,
+            IsEmulator = transport.IsEmulator || IsEmulator,
+            LastSeenAt = seenAt,
+        };
+    }
 
     /// <summary>Merges freshly fetched metadata into this device.</summary>
     public DeviceInfo WithMetadata(DeviceMetadata metadata, DateTimeOffset appliedAt) => this with

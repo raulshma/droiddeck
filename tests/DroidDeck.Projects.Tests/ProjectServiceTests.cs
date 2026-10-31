@@ -115,6 +115,78 @@ public sealed class ProjectServiceTests
         Assert.Equal("com.example.changed", project.ApplicationId);
     }
 
+    [Fact]
+    public async Task PreviewRefreshAsync_WithNoFileChanges_ProducesNoDiff()
+    {
+        using var temp = new TempDirectory();
+        WriteAndroidProject(temp);
+        using var service = CreateService(new JsonProjectStore(new AppPaths(temp.Path)), new FakeApkInspector());
+        var project = await service.AddAsync(temp.Path);
+
+        var diff = await service.PreviewRefreshAsync(project.Id);
+
+        Assert.False(diff.HasChanges);
+    }
+
+    [Fact]
+    public async Task ApplyRefreshAsync_AcceptsEveryEmittedFieldAndStabilizes()
+    {
+        using var temp = new TempDirectory();
+        WriteAndroidProject(temp);
+        using var service = CreateService(new JsonProjectStore(new AppPaths(temp.Path)), new FakeApkInspector());
+        var project = await service.AddAsync(temp.Path);
+
+        temp.WriteFile(
+            "app/build.gradle.kts",
+            """
+            plugins {
+                id("com.android.application")
+            }
+
+            android {
+                namespace = "com.example.renamed"
+                defaultConfig {
+                    applicationId = "com.example.renamed"
+                }
+                productFlavors {
+                    free {
+                    }
+                }
+            }
+            """);
+        temp.WriteFile(
+            "app/src/main/AndroidManifest.xml",
+            """
+            <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application android:label="Renamed">
+                <activity android:name="com.example.renamed.RenamedActivity" android:exported="true">
+                  <intent-filter>
+                    <action android:name="android.intent.action.MAIN" />
+                    <category android:name="android.intent.category.LAUNCHER" />
+                  </intent-filter>
+                </activity>
+              </application>
+            </manifest>
+            """);
+        var diff = await service.PreviewRefreshAsync(project.Id);
+        var fields = diff.Changes.Select(change => change.Field).ToArray();
+
+        Assert.Contains("applicationId", fields);
+        Assert.Contains("namespace", fields);
+        Assert.Contains("launcherActivity", fields);
+        Assert.Contains("applicationLabel", fields);
+        Assert.Contains("variants", fields);
+
+        await service.ApplyRefreshAsync(diff, fields);
+
+        var after = await service.PreviewRefreshAsync(project.Id);
+        Assert.False(after.HasChanges);
+        Assert.Equal("com.example.renamed", project.ApplicationId);
+        Assert.Equal("com.example.renamed", project.Namespace);
+        Assert.Equal("Renamed", project.ApplicationLabel);
+        Assert.Equal("com.example.renamed.RenamedActivity", project.LauncherActivity);
+    }
+
     private static ProjectService CreateService(IProjectStore store, IApkInspector inspector) =>
         new(store, [new GradleProjectDetector()], inspector);
 

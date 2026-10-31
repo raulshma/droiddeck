@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Text;
+using DroidDeck.Adb.Commands;
 using DroidDeck.Core.Devices;
 using DroidDeck.Core.Processes;
 using Microsoft.Extensions.Logging;
@@ -29,7 +30,7 @@ public sealed class AdbDeviceMetadataSource : IDeviceMetadataSource
 
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(15);
 
-    private readonly IProcessRunner _processRunner;
+    private readonly AdbCommandExecutor _adb;
     private volatile string _adbExecutable;
     private readonly TimeSpan _timeout;
     private readonly TimeProvider _timeProvider;
@@ -43,12 +44,13 @@ public sealed class AdbDeviceMetadataSource : IDeviceMetadataSource
         TimeProvider? timeProvider = null,
         ILogger<AdbDeviceMetadataSource>? logger = null)
     {
-        _processRunner = processRunner ?? throw new ArgumentNullException(nameof(processRunner));
+        ArgumentNullException.ThrowIfNull(processRunner);
         ArgumentException.ThrowIfNullOrWhiteSpace(adbExecutable);
         _adbExecutable = adbExecutable;
         _timeout = timeout ?? DefaultTimeout;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _logger = logger ?? NullLogger<AdbDeviceMetadataSource>.Instance;
+        _adb = new AdbCommandExecutor(processRunner, () => _adbExecutable, _timeProvider, _logger);
     }
 
     /// <summary>Changes the adb executable used for metadata requests.</summary>
@@ -63,53 +65,53 @@ public sealed class AdbDeviceMetadataSource : IDeviceMetadataSource
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(serial);
 
-        var request = new ProcessRequest
-        {
-            FileName = _adbExecutable,
-            Arguments = ["-s", serial, "shell", BatchScript],
-            Timeout = _timeout,
-            MaxOutputCharacters = 1024 * 1024,
-        };
-
-        var result = await _processRunner.RunAsync(request, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var result = await _adb
+            .RunForDeviceAsync(
+                serial,
+                ["shell", BatchScript],
+                _timeout,
+                new AdbCommandOptions { MaxOutputCharacters = 1024 * 1024 },
+                cancellationToken)
+            .ConfigureAwait(false);
+        var raw = result.Raw;
         var fetchedAt = _timeProvider.GetUtcNow();
 
-        if (!string.IsNullOrWhiteSpace(result.StartError))
+        if (!string.IsNullOrWhiteSpace(raw.StartError))
         {
-            return Failure(fetchedAt, $"adb could not start: {result.StartError}");
+            return Failure(fetchedAt, $"adb could not start: {raw.StartError}");
         }
 
-        if (result.TimedOut)
+        if (raw.TimedOut)
         {
             return Failure(fetchedAt, "Metadata collection timed out.");
         }
 
-        if (result.WasCanceled)
+        if (raw.WasCanceled)
         {
             return Failure(fetchedAt, "Metadata collection was canceled.");
         }
 
-        if (string.IsNullOrWhiteSpace(result.StandardOutput))
+        if (string.IsNullOrWhiteSpace(raw.StandardOutput))
         {
-            var detail = result.StandardError.Trim();
+            var detail = raw.StandardError.Trim();
             var reason = detail.Length == 0
                 ? "Metadata collection returned no output."
                 : $"Metadata collection failed: {FirstLine(detail)}";
-            if (!result.Succeeded)
+            if (!raw.Succeeded)
             {
-                reason += $" (exit code {result.ExitCode})";
+                reason += $" (exit code {raw.ExitCode})";
             }
 
             return Failure(fetchedAt, reason);
         }
 
-        var metadata = ParseBatch(result.StandardOutput, fetchedAt);
-        if (!result.Succeeded)
+        var metadata = ParseBatch(raw.StandardOutput, fetchedAt);
+        if (!raw.Succeeded)
         {
-            var detail = FirstLine(result.StandardError.Trim());
+            var detail = FirstLine(raw.StandardError.Trim());
             if (detail.Length == 0)
             {
-                detail = $"exit code {result.ExitCode}";
+                detail = $"exit code {raw.ExitCode}";
             }
 
             metadata = metadata with
@@ -119,7 +121,7 @@ public sealed class AdbDeviceMetadataSource : IDeviceMetadataSource
 
             if (_logger.IsEnabled(LogLevel.Debug))
             {
-                _logger.LogDebug("Metadata for {Serial} exited with code {ExitCode}: {Detail}", serial, result.ExitCode, detail);
+                _logger.LogDebug("Metadata for {Serial} exited with code {ExitCode}: {Detail}", serial, raw.ExitCode, detail);
             }
         }
 

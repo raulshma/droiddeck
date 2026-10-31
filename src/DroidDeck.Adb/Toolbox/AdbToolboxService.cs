@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using DroidDeck.Adb.Commands;
 using DroidDeck.Core.Devices;
 using DroidDeck.Core.Processes;
 using DroidDeck.Core.Toolbox;
@@ -20,11 +21,11 @@ public sealed partial class AdbToolboxService : IDeviceToolboxService
     private static readonly TimeSpan ActionTimeout = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan ShellTimeout = TimeSpan.FromSeconds(90);
 
-    private readonly IProcessRunner _runner;
     private readonly Func<string> _adbPathProvider;
     private readonly IDeviceOperationCoordinator? _coordinator;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AdbToolboxService> _logger;
+    private readonly AdbCommandExecutor _adb;
     private readonly object _historyGate = new();
     private readonly List<ShellHistoryEntry> _history = [];
 
@@ -36,11 +37,12 @@ public sealed partial class AdbToolboxService : IDeviceToolboxService
         ILogger<AdbToolboxService>? logger = null,
         IDeviceOperationCoordinator? coordinator = null)
     {
-        _runner = runner ?? throw new ArgumentNullException(nameof(runner));
+        ArgumentNullException.ThrowIfNull(runner);
         _adbPathProvider = adbPathProvider ?? throw new ArgumentNullException(nameof(adbPathProvider));
         _timeProvider = timeProvider ?? TimeProvider.System;
         _logger = logger ?? NullLogger<AdbToolboxService>.Instance;
         _coordinator = coordinator;
+        _adb = new AdbCommandExecutor(runner, _adbPathProvider, _timeProvider, _logger);
     }
 
     /// <inheritdoc />
@@ -97,11 +99,9 @@ public sealed partial class AdbToolboxService : IDeviceToolboxService
         bool isSystem,
         CancellationToken cancellationToken)
     {
-        var result = await RunAsync(
-            ["-s", serial, "shell", "pm", "list", "packages", filterFlag],
-            ListingTimeout,
-            output: null,
-            cancellationToken).ConfigureAwait(false);
+        var result = await _adb
+            .RunForDeviceAsync(serial, ["shell", "pm", "list", "packages", filterFlag], ListingTimeout, cancellationToken)
+            .ConfigureAwait(false);
         if (!result.Succeeded)
         {
             _logger.LogWarning("Listing applications on {Serial} failed: {Output}", serial, result.CombinedOutput);
@@ -119,7 +119,7 @@ public sealed partial class AdbToolboxService : IDeviceToolboxService
         CancellationToken cancellationToken = default)
     {
         ValidatePackage(packageName);
-        var arguments = new[] { "-s", serial, "uninstall", packageName };
+        var arguments = new[] { "uninstall", packageName };
         return RunConfirmedAsync(
             serial,
             $"Uninstall {packageName}",
@@ -138,7 +138,7 @@ public sealed partial class AdbToolboxService : IDeviceToolboxService
         CancellationToken cancellationToken = default)
     {
         ValidatePackage(packageName);
-        var arguments = new[] { "-s", serial, "shell", "pm", "clear", packageName };
+        var arguments = new[] { "shell", "pm", "clear", packageName };
         return RunConfirmedAsync(
             serial,
             $"Clear data for {packageName}",
@@ -157,7 +157,7 @@ public sealed partial class AdbToolboxService : IDeviceToolboxService
         CancellationToken cancellationToken = default)
     {
         ValidatePackage(packageName);
-        var arguments = new[] { "-s", serial, "shell", "am", "force-stop", packageName };
+        var arguments = new[] { "shell", "am", "force-stop", packageName };
         return RunConfirmedAsync(
             serial,
             $"Force stop {packageName}",
@@ -177,18 +177,20 @@ public sealed partial class AdbToolboxService : IDeviceToolboxService
         ValidatePackage(packageName);
         await using var lease = await AcquireDeviceLockAsync(serial, $"Open app info for {packageName}", cancellationToken)
             .ConfigureAwait(false);
-        var result = await RunAsync(
-            [
-                "-s", serial,
-                "shell", "am", "start",
-                "-a", "android.settings.APPLICATION_DETAILS_SETTINGS",
-                "-d", $"package:{packageName}",
-            ],
-            ActionTimeout,
-            output: null,
-            cancellationToken).ConfigureAwait(false);
+        var result = await _adb
+            .RunForDeviceAsync(
+                serial,
+                [
+                    "shell", "am", "start",
+                    "-a", "android.settings.APPLICATION_DETAILS_SETTINGS",
+                    "-d", $"package:{packageName}",
+                ],
+                ActionTimeout,
+                cancellationToken)
+            .ConfigureAwait(false);
         return ToolboxCommandResult.FromProcess(
-            result,
+            result.Raw,
+            result.Succeeded,
             result.Succeeded
                 ? $"Opened app info for {packageName}."
                 : $"Could not open app info for {packageName}: {Summarize(result.CombinedOutput)}");
@@ -201,11 +203,9 @@ public sealed partial class AdbToolboxService : IDeviceToolboxService
         CancellationToken cancellationToken = default)
     {
         ValidatePackage(packageName);
-        var result = await RunAsync(
-            ["-s", serial, "shell", "dumpsys", "package", packageName],
-            ListingTimeout,
-            output: null,
-            cancellationToken).ConfigureAwait(false);
+        var result = await _adb
+            .RunForDeviceAsync(serial, ["shell", "dumpsys", "package", packageName], ListingTimeout, cancellationToken)
+            .ConfigureAwait(false);
         if (!result.Succeeded)
         {
             return [];
@@ -229,14 +229,17 @@ public sealed partial class AdbToolboxService : IDeviceToolboxService
                 $"{(grant ? "Grant" : "Revoke")} {permission} for {packageName}",
                 cancellationToken)
             .ConfigureAwait(false);
-        var result = await RunAsync(
-            ["-s", serial, "shell", "pm", grant ? "grant" : "revoke", packageName, permission],
-            ActionTimeout,
-            output: null,
-            cancellationToken).ConfigureAwait(false);
+        var result = await _adb
+            .RunForDeviceAsync(
+                serial,
+                ["shell", "pm", grant ? "grant" : "revoke", packageName, permission],
+                ActionTimeout,
+                cancellationToken)
+            .ConfigureAwait(false);
         var action = grant ? "Granted" : "Revoked";
         return ToolboxCommandResult.FromProcess(
-            result,
+            result.Raw,
+            result.Succeeded,
             result.Succeeded
                 ? $"{action} {permission} for {packageName}."
                 : $"{action} {permission} for {packageName} failed: {Summarize(result.CombinedOutput)}");
@@ -259,7 +262,7 @@ public sealed partial class AdbToolboxService : IDeviceToolboxService
 
         var display = ProcessRequest.FormatCommandLine(
             _adbPathProvider(),
-            ["-s", serial, "shell", .. tokens]);
+            AdbCommandExecutor.BuildDeviceArguments(serial, ["shell", .. tokens]));
         if (ShellSafety.ContainsShellMetacharacters(tokens))
         {
             return ToolboxCommandResult.Failure(
@@ -278,11 +281,18 @@ public sealed partial class AdbToolboxService : IDeviceToolboxService
                 blocked: true) with { IsDestructive = true, Blocked = true };
         }
 
-        var arguments = new List<string> { "-s", serial, "shell" };
+        var arguments = new List<string> { "shell" };
         arguments.AddRange(tokens);
         await using var lease = await AcquireDeviceLockAsync(serial, $"Shell {tokens[0]}", cancellationToken)
             .ConfigureAwait(false);
-        var result = await RunAsync(arguments, ShellTimeout, output, cancellationToken).ConfigureAwait(false);
+        var result = await _adb
+            .RunForDeviceAsync(
+                serial,
+                arguments,
+                ShellTimeout,
+                new AdbCommandOptions { Output = output },
+                cancellationToken)
+            .ConfigureAwait(false);
         var entry = new ShellHistoryEntry
         {
             Command = command.Trim(),
@@ -295,7 +305,8 @@ public sealed partial class AdbToolboxService : IDeviceToolboxService
         };
         AddHistory(entry);
         return ToolboxCommandResult.FromProcess(
-            result,
+            result.Raw,
+            result.Succeeded,
             result.Succeeded
                 ? "Command completed."
                 : result.TimedOut
@@ -321,11 +332,9 @@ public sealed partial class AdbToolboxService : IDeviceToolboxService
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(serial);
         var verb = direction == PortDirection.Forward ? "forward" : "reverse";
-        var result = await RunAsync(
-            ["-s", serial, verb, "--list"],
-            ListingTimeout,
-            output: null,
-            cancellationToken).ConfigureAwait(false);
+        var result = await _adb
+            .RunForDeviceAsync(serial, [verb, "--list"], ListingTimeout, cancellationToken)
+            .ConfigureAwait(false);
         if (!result.Succeeded)
         {
             return [];
@@ -347,13 +356,12 @@ public sealed partial class AdbToolboxService : IDeviceToolboxService
         var verb = direction == PortDirection.Forward ? "forward" : "reverse";
         await using var lease = await AcquireDeviceLockAsync(serial, $"Add {verb} port", cancellationToken)
             .ConfigureAwait(false);
-        var result = await RunAsync(
-            ["-s", serial, verb, local, remote],
-            ListingTimeout,
-            output: null,
-            cancellationToken).ConfigureAwait(false);
+        var result = await _adb
+            .RunForDeviceAsync(serial, [verb, local, remote], ListingTimeout, cancellationToken)
+            .ConfigureAwait(false);
         return ToolboxCommandResult.FromProcess(
-            result,
+            result.Raw,
+            result.Succeeded,
             result.Succeeded
                 ? $"Mapped {local} → {remote}."
                 : $"Could not add the {verb} mapping: {Summarize(result.CombinedOutput)}");
@@ -373,13 +381,12 @@ public sealed partial class AdbToolboxService : IDeviceToolboxService
         var target = local;
         await using var lease = await AcquireDeviceLockAsync(serial, $"Remove {verb} port", cancellationToken)
             .ConfigureAwait(false);
-        var result = await RunAsync(
-            ["-s", serial, verb, "--remove", target],
-            ListingTimeout,
-            output: null,
-            cancellationToken).ConfigureAwait(false);
+        var result = await _adb
+            .RunForDeviceAsync(serial, [verb, "--remove", target], ListingTimeout, cancellationToken)
+            .ConfigureAwait(false);
         return ToolboxCommandResult.FromProcess(
-            result,
+            result.Raw,
+            result.Succeeded,
             result.Succeeded
                 ? $"Removed the {verb} mapping for {target}."
                 : $"Could not remove the {verb} mapping: {Summarize(result.CombinedOutput)}");
@@ -393,7 +400,7 @@ public sealed partial class AdbToolboxService : IDeviceToolboxService
         CancellationToken cancellationToken = default)
     {
         var verb = direction == PortDirection.Forward ? "forward" : "reverse";
-        var arguments = new[] { "-s", serial, verb, "--remove-all" };
+        var arguments = new[] { verb, "--remove-all" };
         return await RunConfirmedAsync(
             serial,
             $"Remove all {verb} ports",
@@ -532,7 +539,9 @@ public sealed partial class AdbToolboxService : IDeviceToolboxService
         string successMessage,
         CancellationToken cancellationToken)
     {
-        var display = ProcessRequest.FormatCommandLine(_adbPathProvider(), arguments);
+        var display = ProcessRequest.FormatCommandLine(
+            _adbPathProvider(),
+            AdbCommandExecutor.BuildDeviceArguments(serial, arguments));
         if (!confirmed)
         {
             return ToolboxCommandResult.Failure(confirmationMessage, display, blocked: true) with
@@ -544,9 +553,12 @@ public sealed partial class AdbToolboxService : IDeviceToolboxService
 
         await using var lease = await AcquireDeviceLockAsync(serial, operation, cancellationToken)
             .ConfigureAwait(false);
-        var result = await RunAsync(arguments, ActionTimeout, output: null, cancellationToken).ConfigureAwait(false);
+        var result = await _adb
+            .RunForDeviceAsync(serial, arguments, ActionTimeout, cancellationToken)
+            .ConfigureAwait(false);
         return ToolboxCommandResult.FromProcess(
-            result,
+            result.Raw,
+            result.Succeeded,
             result.Succeeded ? successMessage : $"{successMessage.TrimEnd('.')} failed: {Summarize(result.CombinedOutput)}",
             isDestructive: true);
     }
@@ -562,23 +574,6 @@ public sealed partial class AdbToolboxService : IDeviceToolboxService
         }
 
         return await _coordinator.AcquireAsync(serial, operation, cancellationToken).ConfigureAwait(false);
-    }
-
-    private Task<ProcessResult> RunAsync(
-        IReadOnlyList<string> arguments,
-        TimeSpan timeout,
-        IProgress<ProcessOutputLine>? output,
-        CancellationToken cancellationToken)
-    {
-        return _runner.RunAsync(
-            new ProcessRequest
-            {
-                FileName = _adbPathProvider(),
-                Arguments = arguments,
-                Timeout = timeout,
-            },
-            output,
-            cancellationToken);
     }
 
     private void AddHistory(ShellHistoryEntry entry)

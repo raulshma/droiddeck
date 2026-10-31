@@ -472,62 +472,32 @@ public sealed class PluginManager : IAsyncDisposable
                 var message = read.Validation.Issues.LastOrDefault(
                     issue => issue.Severity == PluginValidationSeverity.Error)?.Message
                     ?? "The plugin manifest could not be read.";
-                failures.Add((Path.GetFileName(directory), message));
-                statuses.Add(new PluginStatus
-                {
-                    Id = Path.GetFileName(directory),
-                    Name = "Unknown plugin",
-                    Version = string.Empty,
-                    ApiVersion = string.Empty,
-                    InstallPath = directory,
-                    State = PluginState.DisabledByError,
-                    Reason = message,
-                    Issues = read.Validation.Issues,
-                });
+                var unreadable = PluginStatusSnapshot.ForUnreadableManifest(directory, read.Validation.Issues);
+                failures.Add((unreadable.Id, message));
+                statuses.Add(unreadable.ToStatus(PluginState.DisabledByError, message));
                 continue;
             }
 
             evaluations.TryGetValue(manifest.Id, out var evaluation);
-            if (disabled.Contains(manifest.Id))
-            {
-                statuses.Add(new PluginStatus
+            var snapshot = PluginStatusSnapshot
+                .FromManifest(manifest, directory, read.Validation.Issues) with
                 {
-                    Id = manifest.Id,
-                    Name = manifest.Name,
-                    Version = manifest.Version,
-                    ApiVersion = manifest.ApiVersion,
-                    Author = manifest.Author,
-                    Capabilities = manifest.Capabilities,
-                    InstallPath = directory,
-                    State = PluginState.Disabled,
-                    Reason = store?.GetDisabledReason(manifest.Id) ??
-                        "Disabled. Enable it and restart DroidDeck to load it.",
-                    Issues = read.Validation.Issues,
                     Trust = evaluation?.Decision ?? PluginTrustDecision.Trusted,
                     ContentHash = evaluation?.ContentHash,
                     ApprovedHash = evaluation?.ApprovedHash,
-                });
+                };
+            if (disabled.Contains(manifest.Id))
+            {
+                statuses.Add(snapshot.ToStatus(
+                    PluginState.Disabled,
+                    store?.GetDisabledReason(manifest.Id) ??
+                        "Disabled. Enable it and restart DroidDeck to load it."));
                 continue;
             }
 
             if (evaluation is not null && evaluation.Decision != PluginTrustDecision.Trusted)
             {
-                statuses.Add(new PluginStatus
-                {
-                    Id = manifest.Id,
-                    Name = manifest.Name,
-                    Version = manifest.Version,
-                    ApiVersion = manifest.ApiVersion,
-                    Author = manifest.Author,
-                    Capabilities = manifest.Capabilities,
-                    InstallPath = directory,
-                    State = PluginState.TrustRequired,
-                    Reason = BuildTrustReason(evaluation),
-                    Issues = read.Validation.Issues,
-                    Trust = evaluation.Decision,
-                    ContentHash = evaluation.ContentHash,
-                    ApprovedHash = evaluation.ApprovedHash,
-                });
+                statuses.Add(snapshot.ToStatus(PluginState.TrustRequired, BuildTrustReason(evaluation)));
                 continue;
             }
 
@@ -535,63 +505,22 @@ public sealed class PluginManager : IAsyncDisposable
             {
                 const string missingResult = "The plugin was not loaded this launch.";
                 failures.Add((manifest.Id, missingResult));
-                statuses.Add(new PluginStatus
-                {
-                    Id = manifest.Id,
-                    Name = manifest.Name,
-                    Version = manifest.Version,
-                    ApiVersion = manifest.ApiVersion,
-                    Author = manifest.Author,
-                    Capabilities = manifest.Capabilities,
-                    InstallPath = directory,
-                    State = PluginState.DisabledByError,
-                    Reason = missingResult,
-                    Issues = read.Validation.Issues,
-                    ContentHash = evaluation?.ContentHash,
-                    ApprovedHash = evaluation?.ApprovedHash,
-                });
+                statuses.Add(snapshot.ToStatus(PluginState.DisabledByError, missingResult));
                 continue;
             }
 
             var issues = result.Validation.Issues;
+            snapshot = snapshot with { Issues = issues };
             if (result.Succeeded)
             {
-                statuses.Add(new PluginStatus
-                {
-                    Id = manifest.Id,
-                    Name = manifest.Name,
-                    Version = manifest.Version,
-                    ApiVersion = manifest.ApiVersion,
-                    Author = manifest.Author,
-                    Capabilities = manifest.Capabilities,
-                    InstallPath = directory,
-                    State = PluginState.Loaded,
-                    Issues = issues,
-                    LoadDuration = result.LoadDuration,
-                    ContentHash = evaluation?.ContentHash,
-                    ApprovedHash = evaluation?.ApprovedHash,
-                });
+                statuses.Add(snapshot.ToStatus(PluginState.Loaded, null, result.LoadDuration));
                 continue;
             }
 
             var reason = issues.LastOrDefault(issue => issue.Severity == PluginValidationSeverity.Error)?.Message
                 ?? "The plugin could not be loaded.";
             failures.Add((manifest.Id, reason));
-            statuses.Add(new PluginStatus
-            {
-                Id = manifest.Id,
-                Name = manifest.Name,
-                Version = manifest.Version,
-                ApiVersion = manifest.ApiVersion,
-                Author = manifest.Author,
-                Capabilities = manifest.Capabilities,
-                InstallPath = directory,
-                State = ClassifyFailure(result.Validation),
-                Reason = reason,
-                Issues = issues,
-                ContentHash = evaluation?.ContentHash,
-                ApprovedHash = evaluation?.ApprovedHash,
-            });
+            statuses.Add(snapshot.ToStatus(ClassifyFailure(result.Validation), reason));
         }
 
         return statuses;

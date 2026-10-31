@@ -744,6 +744,27 @@ public sealed class CatalogInstallerTests
         Assert.Contains("sourceId=src-1", mirrored.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task AnEntryThatNeedsANewerHostIsRejectedBeforeDownloading()
+    {
+        using var temp = new TempDirectory();
+        var handler = new RecordingHandler();
+        var installer = new CatalogInstaller(
+            new HttpClient(handler),
+            new AppPaths(temp.Path),
+            new PluginAuditLog(temp.Combine("logs", "plugin-audit.jsonl")),
+            hostVersion: "1.0.0");
+        var package = BuildPackage("1.0.0");
+        var entry = CreateEntry(package, "1.0.0");
+        entry.Version.MinHostVersion = "2.0.0";
+
+        var result = await installer.InstallAsync(entry, Accept());
+
+        Assert.False(result.Succeeded);
+        Assert.Contains("2.0.0", result.Error, StringComparison.Ordinal);
+        Assert.Equal(0, handler.Requests);
+    }
+
     private static async Task<CatalogInstallResult> InstallAsync(Harness harness, string version)
     {
         var result = await harness.Installer.InstallAsync(harness.CreateEntry(version), Accept());

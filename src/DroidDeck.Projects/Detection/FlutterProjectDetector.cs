@@ -30,7 +30,7 @@ public sealed partial class FlutterProjectDetector : IProjectDetector
             return null;
         }
 
-        var pubspecText = await ReadTextAsync(pubspec, cancellationToken).ConfigureAwait(false);
+        var pubspecText = await ProjectSource.ReadTextAsync(pubspec, cancellationToken).ConfigureAwait(false);
         if (pubspecText is null || !IsFlutterProject(pubspecText))
         {
             return null;
@@ -65,13 +65,10 @@ public sealed partial class FlutterProjectDetector : IProjectDetector
             });
         }
 
-        var buildFile = FindFirst(
-            Path.Combine(androidFolder, "app"),
-            "build.gradle.kts",
-            "build.gradle");
-        var buildText = await ReadTextAsync(buildFile, cancellationToken).ConfigureAwait(false);
-        var applicationId = MatchValue(ApplicationIdRegex(), buildText);
-        var namespaceName = MatchValue(NamespaceRegex(), buildText);
+        var buildFile = ProjectSource.FindBuildFile(Path.Combine(androidFolder, "app"));
+        var buildText = await ProjectSource.ReadTextAsync(buildFile, cancellationToken).ConfigureAwait(false);
+        var applicationId = ProjectSource.MatchValue(ProjectSource.ApplicationIdPattern(), buildText);
+        var namespaceName = ProjectSource.MatchValue(ProjectSource.NamespacePattern(), buildText);
         var applicationIdSource = applicationId ?? namespaceName;
         if (applicationIdSource is not null || namespaceName is not null)
         {
@@ -156,7 +153,7 @@ public sealed partial class FlutterProjectDetector : IProjectDetector
         pubspecText.Contains("sdk: flutter", StringComparison.OrdinalIgnoreCase) ||
         FlutterSectionRegex().IsMatch(pubspecText);
 
-    private static string? ParsePubspecName(string text) => MatchValue(PubspecNameRegex(), text);
+    private static string? ParsePubspecName(string text) => ProjectSource.MatchValue(PubspecNameRegex(), text);
 
     private static string? ParseEnvironmentSdk(string text)
     {
@@ -191,62 +188,9 @@ public sealed partial class FlutterProjectDetector : IProjectDetector
         return null;
     }
 
-    private static string? MatchValue(Regex regex, string? text)
-    {
-        if (string.IsNullOrEmpty(text))
-        {
-            return null;
-        }
-
-        var match = regex.Match(text);
-        return match.Success ? match.Groups["value"].Value.Trim() : null;
-    }
-
-    private static string? FindFirst(string directory, params string[] names)
-    {
-        if (!Directory.Exists(directory))
-        {
-            return null;
-        }
-
-        foreach (var name in names)
-        {
-            var candidate = Path.Combine(directory, name);
-            if (File.Exists(candidate))
-            {
-                return candidate;
-            }
-        }
-
-        return null;
-    }
-
-    private static async Task<string?> ReadTextAsync(string? path, CancellationToken cancellationToken)
-    {
-        if (path is null || !File.Exists(path))
-        {
-            return null;
-        }
-
-        try
-        {
-            return await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            return null;
-        }
-    }
-
     [GeneratedRegex(@"(?m)^flutter:\s*$", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
     private static partial Regex FlutterSectionRegex();
 
     [GeneratedRegex(@"(?m)^name:\s*(?<value>[^\s#]+)", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
     private static partial Regex PubspecNameRegex();
-
-    [GeneratedRegex(@"applicationId\s*=?\s*[""'](?<value>[^""']+)[""']", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
-    private static partial Regex ApplicationIdRegex();
-
-    [GeneratedRegex(@"namespace\s*=?\s*[""'](?<value>[^""']+)[""']", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
-    private static partial Regex NamespaceRegex();
 }

@@ -10,9 +10,8 @@ namespace DroidDeck.Adb.Commands;
 /// <summary>Executes adb install, launch, and shell commands.</summary>
 public sealed partial class AdbDeviceCommandService : IDeviceCommandService
 {
-    private readonly IProcessRunner _runner;
     private readonly Func<string> _adbPathProvider;
-    private readonly ILogger<AdbDeviceCommandService> _logger;
+    private readonly AdbCommandExecutor _adb;
 
     /// <summary>Creates a command service with a provider for the current adb executable.</summary>
     public AdbDeviceCommandService(
@@ -20,9 +19,12 @@ public sealed partial class AdbDeviceCommandService : IDeviceCommandService
         Func<string> adbPathProvider,
         ILogger<AdbDeviceCommandService>? logger = null)
     {
-        _runner = runner ?? throw new ArgumentNullException(nameof(runner));
+        ArgumentNullException.ThrowIfNull(runner);
         _adbPathProvider = adbPathProvider ?? throw new ArgumentNullException(nameof(adbPathProvider));
-        _logger = logger ?? NullLogger<AdbDeviceCommandService>.Instance;
+        _adb = new AdbCommandExecutor(
+            runner,
+            _adbPathProvider,
+            logger: logger ?? NullLogger<AdbDeviceCommandService>.Instance);
     }
 
     /// <inheritdoc />
@@ -49,7 +51,7 @@ public sealed partial class AdbDeviceCommandService : IDeviceCommandService
             };
         }
 
-        var arguments = new List<string> { "-s", serial };
+        var arguments = new List<string>();
         arguments.Add(apkPaths.Count > 1 ? "install-multiple" : "install");
         if (options.Replace)
         {
@@ -82,11 +84,14 @@ public sealed partial class AdbDeviceCommandService : IDeviceCommandService
         }
 
         arguments.AddRange(apkPaths);
-        var result = await RunAsync(arguments, TimeSpan.FromMinutes(10), output, cancellationToken).ConfigureAwait(false);
-        var succeeded = result.ExitCode == 0 &&
-                        !result.Output.Contains("Failure", StringComparison.OrdinalIgnoreCase) &&
-                        !result.Output.Contains("INSTALL_FAILED_", StringComparison.Ordinal);
-        result.Succeeded = succeeded;
+        var result = await RunForDeviceAsync(
+            serial,
+            arguments,
+            TimeSpan.FromMinutes(10),
+            output,
+            cancellationToken).ConfigureAwait(false);
+        result.Succeeded = result.Succeeded &&
+                           !result.Output.Contains("INSTALL_FAILED_", StringComparison.Ordinal);
         return result;
     }
 
@@ -99,7 +104,7 @@ public sealed partial class AdbDeviceCommandService : IDeviceCommandService
         ArgumentException.ThrowIfNullOrWhiteSpace(serial);
         ArgumentNullException.ThrowIfNull(options);
         ArgumentException.ThrowIfNullOrWhiteSpace(options.PackageName);
-        var arguments = new List<string> { "-s", serial, "shell" };
+        var arguments = new List<string> { "shell" };
         var activity = NormalizeActivity(options.PackageName, options.Activity);
         if (activity is null)
         {
@@ -132,11 +137,15 @@ public sealed partial class AdbDeviceCommandService : IDeviceCommandService
             arguments.AddRange(options.ExtraArguments);
         }
 
-        var result = await RunAsync(arguments, TimeSpan.FromMinutes(2), output: null, cancellationToken).ConfigureAwait(false);
+        var result = await RunForDeviceAsync(
+            serial,
+            arguments,
+            TimeSpan.FromMinutes(2),
+            output: null,
+            cancellationToken).ConfigureAwait(false);
         result.LaunchStatus = ParseLaunchStatus(result.Output);
         result.LaunchTime = ParseLaunchTime(result.Output);
-        result.Succeeded = result.ExitCode == 0 &&
-                           !result.Output.Contains("Error:", StringComparison.OrdinalIgnoreCase) &&
+        result.Succeeded = result.Succeeded &&
                            !result.Output.Contains("Exception", StringComparison.OrdinalIgnoreCase);
         return result;
     }
@@ -148,8 +157,9 @@ public sealed partial class AdbDeviceCommandService : IDeviceCommandService
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(packageName);
-        return RunAsync(
-            ["-s", serial, "shell", "am", "force-stop", packageName],
+        return RunForDeviceAsync(
+            serial,
+            ["shell", "am", "force-stop", packageName],
             TimeSpan.FromSeconds(30),
             output: null,
             cancellationToken);
@@ -162,8 +172,9 @@ public sealed partial class AdbDeviceCommandService : IDeviceCommandService
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(packageName);
-        return RunAsync(
-            ["-s", serial, "uninstall", packageName],
+        return RunForDeviceAsync(
+            serial,
+            ["uninstall", packageName],
             TimeSpan.FromMinutes(2),
             output: null,
             cancellationToken);
@@ -176,9 +187,14 @@ public sealed partial class AdbDeviceCommandService : IDeviceCommandService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(arguments);
-        var command = new List<string> { "-s", serial, "shell" };
+        var command = new List<string> { "shell" };
         command.AddRange(arguments);
-        return RunAsync(command, TimeSpan.FromSeconds(60), output: null, cancellationToken);
+        return RunForDeviceAsync(
+            serial,
+            command,
+            TimeSpan.FromSeconds(60),
+            output: null,
+            cancellationToken);
     }
 
     /// <inheritdoc />
@@ -189,8 +205,9 @@ public sealed partial class AdbDeviceCommandService : IDeviceCommandService
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(serial);
-        return RunAsync(
-            ["-s", serial, "reverse", $"tcp:{devicePort}", $"tcp:{hostPort}"],
+        return RunForDeviceAsync(
+            serial,
+            ["reverse", $"tcp:{devicePort}", $"tcp:{hostPort}"],
             TimeSpan.FromSeconds(30),
             output: null,
             cancellationToken);
@@ -203,8 +220,9 @@ public sealed partial class AdbDeviceCommandService : IDeviceCommandService
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(packageName);
-        var result = await RunAsync(
-            ["-s", serial, "shell", "cmd", "package", "resolve-activity", "--brief", packageName],
+        var result = await RunForDeviceAsync(
+            serial,
+            ["shell", "cmd", "package", "resolve-activity", "--brief", packageName],
             TimeSpan.FromSeconds(30),
             output: null,
             cancellationToken).ConfigureAwait(false);
@@ -232,8 +250,9 @@ public sealed partial class AdbDeviceCommandService : IDeviceCommandService
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(packageName);
-        var result = await RunAsync(
-            ["-s", serial, "shell", "cmd", "package", "list", "packages", "-U", packageName],
+        var result = await RunForDeviceAsync(
+            serial,
+            ["shell", "cmd", "package", "list", "packages", "-U", packageName],
             TimeSpan.FromSeconds(30),
             output: null,
             cancellationToken).ConfigureAwait(false);
@@ -243,8 +262,9 @@ public sealed partial class AdbDeviceCommandService : IDeviceCommandService
             return uid;
         }
 
-        var dumpsys = await RunAsync(
-            ["-s", serial, "shell", "dumpsys", "package", packageName],
+        var dumpsys = await RunForDeviceAsync(
+            serial,
+            ["shell", "dumpsys", "package", packageName],
             TimeSpan.FromSeconds(30),
             output: null,
             cancellationToken).ConfigureAwait(false);
@@ -258,8 +278,9 @@ public sealed partial class AdbDeviceCommandService : IDeviceCommandService
     /// <inheritdoc />
     public async Task<long?> GetFreeStorageAsync(string serial, CancellationToken cancellationToken = default)
     {
-        var result = await RunAsync(
-            ["-s", serial, "shell", "df", "-k", "/data"],
+        var result = await RunForDeviceAsync(
+            serial,
+            ["shell", "df", "-k", "/data"],
             TimeSpan.FromSeconds(30),
             output: null,
             cancellationToken).ConfigureAwait(false);
@@ -287,26 +308,28 @@ public sealed partial class AdbDeviceCommandService : IDeviceCommandService
 
     /// <inheritdoc />
     public Task<DeviceCommandResult> ClearLogcatAsync(string serial, CancellationToken cancellationToken = default) =>
-        RunAsync(["-s", serial, "logcat", "-c"], TimeSpan.FromSeconds(30), output: null, cancellationToken);
+        RunForDeviceAsync(
+            serial,
+            ["logcat", "-c"],
+            TimeSpan.FromSeconds(30),
+            output: null,
+            cancellationToken);
 
-    private async Task<DeviceCommandResult> RunAsync(
+    private async Task<DeviceCommandResult> RunForDeviceAsync(
+        string serial,
         IReadOnlyList<string> arguments,
         TimeSpan timeout,
         IProgress<ProcessOutputLine>? output,
         CancellationToken cancellationToken)
     {
-        var request = new ProcessRequest
+        var options = new AdbCommandOptions
         {
-            FileName = AdbExecutable,
-            Arguments = arguments,
-            Timeout = timeout,
+            Output = output,
             MaxOutputCharacters = 2 * 1024 * 1024,
         };
-        var result = await _runner.RunAsync(request, output, cancellationToken).ConfigureAwait(false);
-        if (result.StartError is not null)
-        {
-            _logger.LogWarning("adb could not start: {Error}", result.StartError);
-        }
+        var result = await _adb
+            .RunForDeviceAsync(serial, arguments, timeout, options, cancellationToken)
+            .ConfigureAwait(false);
 
         return new DeviceCommandResult
         {

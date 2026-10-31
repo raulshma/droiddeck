@@ -6,7 +6,6 @@ using System.Runtime.InteropServices;
 using DroidDeck.App.Services;
 using DroidDeck.Core;
 using DroidDeck.Core.Diagnostics;
-using DroidDeck.Core.Security;
 using DroidDeck.Plugin.Abstractions;
 using DroidDeck.Plugin.Abstractions.Rendering;
 using DroidDeck.Plugins;
@@ -30,12 +29,10 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
     private readonly PluginCatalogService _catalog;
     private readonly CatalogInstaller _installer;
     private readonly PluginAuditLog _audit;
-    private readonly ISecretStore _secrets;
     private readonly ILogger<ExtensionsPage> _logger;
     private readonly DispatcherQueue? _dispatcher;
     private readonly ObservableCollection<PluginRow> _rows = [];
-    private Dictionary<string, string> _updateVersions = new(StringComparer.OrdinalIgnoreCase);
-    private Dictionary<string, string> _rollbackVersions = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, PluginInstallState> _installStates = new(StringComparer.OrdinalIgnoreCase);
     private bool _disposed;
 
     /// <summary>Creates the extensions page.</summary>
@@ -47,7 +44,6 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         PluginCatalogService catalog,
         CatalogInstaller installer,
         PluginAuditLog audit,
-        ISecretStore secrets,
         ILogger<ExtensionsPage> logger)
     {
         _plugins = plugins ?? throw new ArgumentNullException(nameof(plugins));
@@ -57,7 +53,6 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
         _installer = installer ?? throw new ArgumentNullException(nameof(installer));
         _audit = audit ?? throw new ArgumentNullException(nameof(audit));
-        _secrets = secrets ?? throw new ArgumentNullException(nameof(secrets));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _dispatcher = DispatcherQueue.GetForCurrentThread();
 
@@ -97,36 +92,25 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
             }
 
             var rollback = await _installer.GetRollbackVersionsAsync();
+            // The manager statuses come from the last scan; a catalog install or
+            // rollback changes the manifest on disk. Reconcile with the installed
+            // versions so an update does not stay offered until the next restart.
             var installed = await _installer.GetInstalledAsync();
             var installedVersions = installed.ToDictionary(
                 plugin => plugin.PluginId,
                 plugin => plugin.Version,
                 StringComparer.OrdinalIgnoreCase);
-            var updates = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var entry in _catalog.Browse(new CatalogQuery()))
-            {
-                if (entry.Compatibility == CatalogCompatibility.Incompatible ||
-                    !installedVersions.TryGetValue(entry.Plugin.Id, out var current))
-                {
-                    continue;
-                }
-
-                // Merged sources can offer several newer versions; keep the
-                // highest so the shown update never trails what the update
-                // would actually install.
-                if (SemanticVersion.TryParse(entry.Version.Version, out var candidate) &&
-                    SemanticVersion.TryParse(current, out var parsedCurrent) &&
-                    candidate > parsedCurrent &&
-                    (!updates.TryGetValue(entry.Plugin.Id, out var best) ||
-                        !SemanticVersion.TryParse(best, out var bestVersion) ||
-                        candidate > bestVersion))
-                {
-                    updates[entry.Plugin.Id] = entry.Version.Version;
-                }
-            }
-
-            _rollbackVersions = new Dictionary<string, string>(rollback, StringComparer.OrdinalIgnoreCase);
-            _updateVersions = updates;
+            var statuses = _plugins.Statuses
+                .Select(status => installedVersions.TryGetValue(status.Id, out var installedVersion)
+                    ? status with { Version = installedVersion }
+                    : status)
+                .ToArray();
+            var catalogEntries = _catalog.Browse(new CatalogQuery());
+            var states = PluginInstallStatePolicy.EvaluateAll(
+                statuses,
+                catalogEntries,
+                rollback);
+            _installStates = new Dictionary<string, PluginInstallState>(states, StringComparer.OrdinalIgnoreCase);
             Dispatch(UpdateRows);
         }
         catch (Exception exception) when (
@@ -193,9 +177,10 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         foreach (var status in _plugins.Statuses)
         {
             var health = _plugins.Health.Get(status.Id);
-            _updateVersions.TryGetValue(status.Id, out var updateVersion);
-            _rollbackVersions.TryGetValue(status.Id, out var rollbackVersion);
-            _rows.Add(new PluginRow(status, health, updateVersion, rollbackVersion));
+            var installState = _installStates.TryGetValue(status.Id, out var known)
+                ? known
+                : PluginInstallStatePolicy.Evaluate(status, [], rollbackVersion: null);
+            _rows.Add(new PluginRow(status, health, installState));
         }
 
         EmptyText.Text = _plugins.PluginsDisabled
@@ -470,10 +455,11 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
             return;
         }
 
-        // A concurrent refresh can replace the version dictionaries after the
-        // row was rendered, so never index directly: a missing version just
+        // A concurrent refresh can replace the install states after the row was
+        // rendered, so never trust the row alone: a missing version just
         // disables the button until the next render shows the current state.
-        if (!_rollbackVersions.TryGetValue(row.PluginId, out var rollbackVersion))
+        if (!_installStates.TryGetValue(row.PluginId, out var installState) ||
+            installState.RollbackVersion is not { } rollbackVersion)
         {
             button.IsEnabled = false;
             ShowAction(
@@ -591,7 +577,7 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
 
         try
         {
-            await PluginSettingsDialogs.ShowAsync(XamlRoot, row, _secrets);
+            await PluginSettingsDialogs.ShowAsync(XamlRoot, row, _plugins.SettingsFactory);
         }
         catch (Exception exception) when (
             exception is IOException or UnauthorizedAccessException or InvalidOperationException)
@@ -807,14 +793,17 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
     /// <summary>One installed plugin shaped for the extensions list.</summary>
     public sealed class PluginRow
     {
-        /// <summary>Creates a row from a plugin status, its health, and its catalog install state.</summary>
+        private readonly PluginInstallState _installState;
+
+        /// <summary>Creates a row from a plugin status, its health, and its install state.</summary>
         public PluginRow(
             PluginStatus status,
             PluginHealthSnapshot? health,
-            string? updateVersion,
-            string? rollbackVersion)
+            PluginInstallState installState)
         {
             ArgumentNullException.ThrowIfNull(status);
+            ArgumentNullException.ThrowIfNull(installState);
+            _installState = installState;
             PluginId = status.Id;
             InstallPath = status.InstallPath;
             State = status.State;
@@ -832,11 +821,11 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
             Subtitle = string.IsNullOrWhiteSpace(status.Author)
                 ? $"{status.Id} · version {status.Version} · API {status.ApiVersion}"
                 : $"{status.Id} · version {status.Version} · API {status.ApiVersion} · by {status.Author}";
-            CanUpdate = updateVersion is not null;
-            UpdateVersion = updateVersion;
-            UpdateLabel = updateVersion is null ? string.Empty : $"Update to v{updateVersion}";
-            CanRollback = rollbackVersion is not null;
-            RollbackLabel = rollbackVersion is null ? string.Empty : $"Roll back to v{rollbackVersion}";
+            CanUpdate = installState.CanUpdate;
+            UpdateVersion = installState.UpdateVersion;
+            UpdateLabel = installState.UpdateLabel;
+            CanRollback = installState.CanRollback;
+            RollbackLabel = installState.RollbackLabel;
             var capabilities = PluginCapabilities.Parse(status.Capabilities);
             CapabilitiesLabel = capabilities.Known == PluginCapability.None && !capabilities.HasUnknown
                 ? "Declared capabilities: none."
@@ -891,10 +880,10 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         public PluginState State { get; }
 
         /// <summary>Gets whether the plugin can be enabled.</summary>
-        public bool CanEnable => State is PluginState.Disabled or PluginState.DisabledByError or PluginState.Incompatible;
+        public bool CanEnable => _installState.CanEnable;
 
         /// <summary>Gets whether the plugin can be disabled now.</summary>
-        public bool CanDisable => State is PluginState.Loaded or PluginState.EnabledPendingRestart;
+        public bool CanDisable => _installState.CanDisable;
 
         /// <summary>Gets whether the plugin needs a trust decision before it can load.</summary>
         public bool CanTrust => State == PluginState.TrustRequired;

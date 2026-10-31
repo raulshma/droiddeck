@@ -688,35 +688,42 @@ public static class CatalogBrowser
         string hostVersion,
         string hostApiVersion)
     {
-        var api = PluginApi.CheckCompatibility(version.ApiVersion, hostApiVersion);
-        if (api == ApiCompatibility.Invalid)
+        var verdict = PluginCompatibilityPolicy.EvaluateVersion(
+            version.ApiVersion,
+            version.MinHostVersion,
+            version.MaxHostVersion,
+            hostVersion,
+            hostApiVersion);
+        if (verdict.Api == ApiCompatibility.Invalid)
         {
             return (CatalogCompatibility.Incompatible,
                 $"The plugin API version '{version.ApiVersion}' is not valid.");
         }
 
-        if (api == ApiCompatibility.MajorMismatch)
+        if (verdict.Api == ApiCompatibility.MajorMismatch)
         {
             return (CatalogCompatibility.Incompatible,
                 $"Targets plugin API {version.ApiVersion}; this host implements {hostApiVersion}.");
         }
 
-        if (SemanticVersion.TryParse(hostVersion, out var host))
+        foreach (var issue in verdict.HostRangeIssues)
         {
-            if (SemanticVersion.TryParse(version.MinHostVersion, out var minimum) && host < minimum)
+            switch (issue.Kind)
             {
-                return (CatalogCompatibility.Incompatible,
-                    $"Requires DroidDeck {minimum} or newer; this is {host}.");
-            }
-
-            if (SemanticVersion.TryParse(version.MaxHostVersion, out var maximum) && host > maximum)
-            {
-                return (CatalogCompatibility.Incompatible,
-                    $"Supports DroidDeck up to {maximum}; this is {host}.");
+                case PluginHostRangeIssueKind.MinimumHostVersionInvalid:
+                case PluginHostRangeIssueKind.MaximumHostVersionInvalid:
+                    return (CatalogCompatibility.Incompatible,
+                        $"Declares an unreadable DroidDeck version range; this is {verdict.HostVersion}.");
+                case PluginHostRangeIssueKind.HostTooOld:
+                    return (CatalogCompatibility.Incompatible,
+                        $"Requires DroidDeck {issue.BoundaryVersion} or newer; this is {verdict.HostVersion}.");
+                case PluginHostRangeIssueKind.HostTooNew:
+                    return (CatalogCompatibility.Incompatible,
+                        $"Supports DroidDeck up to {issue.BoundaryVersion}; this is {verdict.HostVersion}.");
             }
         }
 
-        if (api == ApiCompatibility.MinorMismatch)
+        if (verdict.Api == ApiCompatibility.MinorMismatch)
         {
             return (CatalogCompatibility.Partial,
                 $"Targets plugin API {version.ApiVersion}; this host implements {hostApiVersion}. It loads with a compatibility warning.");

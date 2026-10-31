@@ -93,6 +93,28 @@ public sealed class AdbThumbnailServiceTests : IDisposable
 
         Assert.Contains("unauthorized", exception.Message, StringComparison.Ordinal);
         Assert.Contains("authorized", exception.Message, StringComparison.Ordinal);
+        var capture = Assert.Single(_runner.Requests, request => request.Arguments.Contains("screencap"));
+        var cleanup = Assert.Single(_runner.Requests, request => request.Arguments.Contains("rm"));
+        Assert.Equal(capture.Arguments[^1], cleanup.Arguments[^1]);
+    }
+
+    [Fact]
+    public async Task CaptureAsync_SanitizesTheRemoteFileName()
+    {
+        _runner.Handler = WritePulledFile;
+        using var service = new AdbThumbnailService(
+            _runner,
+            _screens,
+            () => "adb",
+            Path.Combine(_root, "staging"));
+
+        await service.CaptureAsync("192.168.1.10:5555");
+
+        var pull = Assert.Single(_runner.Requests, request => request.Arguments.Contains("pull"));
+        Assert.StartsWith(
+            "/sdcard/DroidDeck/thumb-192-168-1-10-5555-",
+            pull.Arguments[3],
+            StringComparison.Ordinal);
     }
 
     [Fact]

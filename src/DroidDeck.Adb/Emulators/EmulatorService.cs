@@ -1,6 +1,8 @@
 using System.ComponentModel;
 using System.Globalization;
 using System.Text;
+using DroidDeck.Adb.Commands;
+using DroidDeck.Core.Devices;
 using DroidDeck.Core.Emulators;
 using DroidDeck.Core.Processes;
 using Microsoft.Extensions.Logging;
@@ -26,6 +28,7 @@ public sealed class EmulatorService : IEmulatorService, IDisposable
     private readonly TimeSpan _pollInterval;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<EmulatorService> _logger;
+    private readonly AdbCommandExecutor _adb;
     private readonly SemaphoreSlim _operationLock = new(1, 1);
     private readonly object _gate = new();
     private readonly Dictionary<string, DateTimeOffset> _starting = new(StringComparer.OrdinalIgnoreCase);
@@ -52,6 +55,7 @@ public sealed class EmulatorService : IEmulatorService, IDisposable
         _pollInterval = pollInterval ?? TimeSpan.FromSeconds(2);
         _timeProvider = timeProvider ?? TimeProvider.System;
         _logger = logger ?? NullLogger<EmulatorService>.Instance;
+        _adb = new AdbCommandExecutor(_runner, _adbPathProvider, _timeProvider, _logger);
     }
 
     /// <inheritdoc />
@@ -247,12 +251,15 @@ public sealed class EmulatorService : IEmulatorService, IDisposable
             string? commandLine = null;
             if (!string.IsNullOrWhiteSpace(serial))
             {
-                var result = await RunAdbAsync(
-                    ["-s", serial, "emu", "kill"],
-                    TimeSpan.FromSeconds(30),
-                    cancellationToken).ConfigureAwait(false);
+                var result = await _adb
+                    .RunForDeviceAsync(
+                        serial,
+                        ["emu", "kill"],
+                        TimeSpan.FromSeconds(30),
+                        cancellationToken)
+                    .ConfigureAwait(false);
                 commandLine = result.CommandLine;
-                if (result.ExitCode != 0 &&
+                if (!result.Succeeded &&
                     !result.CombinedOutput.Contains("OK", StringComparison.OrdinalIgnoreCase))
                 {
                     _logger.LogWarning(
@@ -402,11 +409,16 @@ public sealed class EmulatorService : IEmulatorService, IDisposable
             }
 
             var verb = save ? "save" : "load";
-            var result = await RunAdbAsync(
-                ["-s", avd.Serial, "emu", "avd", "snapshot", verb, snapshotName],
-                TimeSpan.FromSeconds(90),
-                cancellationToken).ConfigureAwait(false);
-            var succeeded = result.ExitCode == 0 &&
+            var result = await _adb
+                .RunForDeviceAsync(
+                    avd.Serial,
+                    ["emu", "avd", "snapshot", verb, snapshotName],
+                    TimeSpan.FromSeconds(90),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            // The emulator console reports snapshot failures as KO lines while
+            // still exiting with code 0, so the output stays part of the verdict.
+            var succeeded = result.Succeeded &&
                             !result.CombinedOutput.Contains("KO", StringComparison.Ordinal) &&
                             !result.CombinedOutput.Contains("error", StringComparison.OrdinalIgnoreCase);
             await RefreshCoreAsync(CancellationToken.None).ConfigureAwait(false);
@@ -574,24 +586,19 @@ public sealed class EmulatorService : IEmulatorService, IDisposable
     private async Task<Dictionary<string, (string Serial, bool Booted)>> GetRunningAvdsAsync(
         CancellationToken cancellationToken)
     {
-        var result = await RunAdbAsync(["devices"], TimeSpan.FromSeconds(15), cancellationToken)
+        var result = await _adb
+            .RunAsync(["devices"], TimeSpan.FromSeconds(15), cancellationToken)
             .ConfigureAwait(false);
         var running = new Dictionary<string, (string Serial, bool Booted)>(StringComparer.OrdinalIgnoreCase);
-        foreach (var line in result.StandardOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        foreach (var device in AdbDeviceParser.Parse(result.StandardOutput))
         {
-            var trimmed = line.Trim();
-            if (!trimmed.StartsWith("emulator-", StringComparison.OrdinalIgnoreCase))
+            if (!device.Serial.StartsWith("emulator-", StringComparison.OrdinalIgnoreCase) ||
+                device.State != DeviceState.Device)
             {
                 continue;
             }
 
-            var parts = trimmed.Split('\t', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            if (parts.Length < 2 || !string.Equals(parts[1], "device", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            var serial = parts[0];
+            var serial = device.Serial;
             var avd = await GetAvdNameAsync(serial, cancellationToken).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(avd))
             {
@@ -607,11 +614,14 @@ public sealed class EmulatorService : IEmulatorService, IDisposable
 
     private async Task<string?> GetAvdNameAsync(string serial, CancellationToken cancellationToken)
     {
-        var result = await RunAdbAsync(
-            ["-s", serial, "emu", "avd", "name"],
-            TimeSpan.FromSeconds(10),
-            cancellationToken).ConfigureAwait(false);
-        if (result.ExitCode != 0)
+        var result = await _adb
+            .RunForDeviceAsync(
+                serial,
+                ["emu", "avd", "name"],
+                TimeSpan.FromSeconds(10),
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (!result.Succeeded)
         {
             return null;
         }
@@ -623,11 +633,14 @@ public sealed class EmulatorService : IEmulatorService, IDisposable
 
     private async Task<bool> IsBootedAsync(string serial, CancellationToken cancellationToken)
     {
-        var result = await RunAdbAsync(
-            ["-s", serial, "shell", "getprop", "sys.boot_completed"],
-            TimeSpan.FromSeconds(10),
-            cancellationToken).ConfigureAwait(false);
-        return result.ExitCode == 0 &&
+        var result = await _adb
+            .RunForDeviceAsync(
+                serial,
+                ["shell", "getprop", "sys.boot_completed"],
+                TimeSpan.FromSeconds(10),
+                cancellationToken)
+            .ConfigureAwait(false);
+        return result.Succeeded &&
                string.Equals(result.StandardOutput.Trim(), "1", StringComparison.Ordinal);
     }
 
@@ -637,11 +650,12 @@ public sealed class EmulatorService : IEmulatorService, IDisposable
         while (_timeProvider.GetUtcNow() < deadline)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var result = await RunAdbAsync(["devices"], TimeSpan.FromSeconds(10), cancellationToken)
+            var result = await _adb
+                .RunAsync(["devices"], TimeSpan.FromSeconds(10), cancellationToken)
                 .ConfigureAwait(false);
-            var stillPresent = result.StandardOutput
-                .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
-                .Any(line => line.TrimStart().StartsWith(serial + "\t", StringComparison.Ordinal));
+            var stillPresent = AdbDeviceParser
+                .Parse(result.StandardOutput)
+                .Any(device => string.Equals(device.Serial, serial, StringComparison.Ordinal));
             if (!stillPresent)
             {
                 return;
@@ -649,22 +663,6 @@ public sealed class EmulatorService : IEmulatorService, IDisposable
 
             await Task.Delay(_pollInterval, _timeProvider, cancellationToken).ConfigureAwait(false);
         }
-    }
-
-    private Task<ProcessResult> RunAdbAsync(
-        IReadOnlyList<string> arguments,
-        TimeSpan timeout,
-        CancellationToken cancellationToken)
-    {
-        return _runner.RunAsync(
-            new ProcessRequest
-            {
-                FileName = _adbPathProvider(),
-                Arguments = arguments,
-                Timeout = timeout,
-            },
-            output: null,
-            cancellationToken);
     }
 
     private string? ResolveEmulator()

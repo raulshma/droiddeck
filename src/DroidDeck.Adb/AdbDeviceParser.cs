@@ -30,14 +30,14 @@ public static class AdbDeviceParser
     ];
 
     /// <summary>Parses every device line in a payload, sorted by serial.</summary>
-    public static IReadOnlyList<AdbDevice> Parse(string? payload)
+    public static IReadOnlyList<DeviceInfo> Parse(string? payload)
     {
         if (string.IsNullOrWhiteSpace(payload))
         {
-            return ReadOnlyCollection<AdbDevice>.Empty;
+            return ReadOnlyCollection<DeviceInfo>.Empty;
         }
 
-        var devices = new List<AdbDevice>();
+        var devices = new List<DeviceInfo>();
         foreach (var line in payload.Split('\n'))
         {
             var device = ParseLine(line);
@@ -52,7 +52,7 @@ public static class AdbDeviceParser
     }
 
     /// <summary>Parses one device line, returning <see langword="null"/> for preambles and blanks.</summary>
-    public static AdbDevice? ParseLine(string? line)
+    public static DeviceInfo? ParseLine(string? line)
     {
         if (string.IsNullOrWhiteSpace(line))
         {
@@ -68,7 +68,7 @@ public static class AdbDeviceParser
             }
         }
 
-        var tokens = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var tokens = text.Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
         if (tokens.Length < 2)
         {
             return null;
@@ -137,13 +137,13 @@ public static class AdbDeviceParser
             }
         }
 
-        return new AdbDevice
+        return new DeviceInfo
         {
             Serial = serial,
             State = state,
             Product = product,
             Model = model,
-            Device = deviceName,
+            Codename = deviceName,
             TransportId = transportId,
             IsEmulator = DetectEmulator(serial, product, deviceName),
         };

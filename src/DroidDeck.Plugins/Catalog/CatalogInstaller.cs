@@ -118,6 +118,7 @@ public sealed class CatalogInstaller
     private readonly PluginAuditLog _audit;
     private readonly int _maxBytes;
     private readonly string _userAgent;
+    private readonly string _hostVersion;
     private readonly ILogger<CatalogInstaller> _logger;
 
     /// <summary>Creates a catalog installer.</summary>
@@ -127,7 +128,8 @@ public sealed class CatalogInstaller
         PluginAuditLog audit,
         int maxBytes = DefaultMaxBytes,
         string userAgent = "DroidDeck/1.0.0",
-        ILogger<CatalogInstaller>? logger = null)
+        ILogger<CatalogInstaller>? logger = null,
+        string? hostVersion = null)
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
@@ -136,6 +138,7 @@ public sealed class CatalogInstaller
         ArgumentException.ThrowIfNullOrWhiteSpace(userAgent);
         _maxBytes = maxBytes;
         _userAgent = userAgent;
+        _hostVersion = hostVersion ?? AppInfo.Version;
         _logger = logger ?? NullLogger<CatalogInstaller>.Instance;
     }
 
@@ -472,6 +475,21 @@ public sealed class CatalogInstaller
                 cancellationToken).ConfigureAwait(false);
         }
 
+        var compatibilityError = DescribeIncompatibility(
+            PluginCompatibilityPolicy.EvaluateVersion(
+                entry.Version.ApiVersion,
+                entry.Version.MinHostVersion,
+                entry.Version.MaxHostVersion,
+                _hostVersion),
+            pluginId,
+            entry.Version.ApiVersion);
+        if (compatibilityError is not null)
+        {
+            return await FailAsync(
+                action, pluginId, fromVersion, entry.Version.Version, sourceId, compatibilityError,
+                cancellationToken).ConfigureAwait(false);
+        }
+
         var dependencyError = CheckDependencies(entry, installed);
         if (dependencyError is not null)
         {
@@ -515,6 +533,14 @@ public sealed class CatalogInstaller
                 if (error is null)
                 {
                     (manifest, error) = await ReadManifestAsync(archive, entry).ConfigureAwait(false);
+                }
+
+                if (error is null && manifest is not null)
+                {
+                    error = DescribeIncompatibility(
+                        PluginCompatibilityPolicy.Evaluate(manifest, _hostVersion),
+                        manifest.Id,
+                        manifest.ApiVersion);
                 }
 
                 if (error is null)
@@ -628,34 +654,75 @@ public sealed class CatalogInstaller
         SemanticVersion.TryParse(current, out var parsedCurrent) &&
         parsedCandidate > parsedCurrent;
 
+    /// <summary>
+    /// Explains why a catalog package cannot load on this host. The installer
+    /// enforces the same API and host-version rules as the loader so a package
+    /// it accepts is one the loader will accept.
+    /// </summary>
+    private static string? DescribeIncompatibility(
+        PluginCompatibilityVerdict verdict,
+        string pluginId,
+        string apiVersion)
+    {
+        if (verdict.Api == ApiCompatibility.Invalid)
+        {
+            return $"The plugin '{pluginId}' declares an invalid plugin API version '{apiVersion}'.";
+        }
+
+        if (verdict.Api == ApiCompatibility.MajorMismatch)
+        {
+            return $"The plugin '{pluginId}' targets plugin API {apiVersion}; " +
+                $"this host implements {PluginApi.Version}.";
+        }
+
+        foreach (var issue in verdict.HostRangeIssues)
+        {
+            switch (issue.Kind)
+            {
+                case PluginHostRangeIssueKind.MinimumHostVersionInvalid:
+                case PluginHostRangeIssueKind.MaximumHostVersionInvalid:
+                    return $"The plugin '{pluginId}' declares a host version range this host cannot read.";
+                case PluginHostRangeIssueKind.HostTooOld:
+                    return $"The plugin '{pluginId}' requires DroidDeck {issue.BoundaryVersion} or newer; " +
+                        $"this is {verdict.HostVersion}.";
+                case PluginHostRangeIssueKind.HostTooNew:
+                    return $"The plugin '{pluginId}' supports DroidDeck up to {issue.BoundaryVersion}; " +
+                        $"this is {verdict.HostVersion}.";
+            }
+        }
+
+        return null;
+    }
+
     private static string? CheckDependencies(
         CatalogEntry entry,
         IReadOnlyList<CatalogInstalledPlugin> installed)
     {
-        var unmet = new List<string>();
-        foreach (var dependency in entry.Version.Dependencies ?? [])
+        var available = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var plugin in installed)
         {
-            var found = installed.FirstOrDefault(candidate =>
-                string.Equals(candidate.PluginId, dependency.Id, StringComparison.OrdinalIgnoreCase));
-            if (found is null)
-            {
-                unmet.Add($"{dependency.Id} {dependency.MinVersion}+ (not installed)");
-                continue;
-            }
-
-            if (SemanticVersion.TryParse(dependency.MinVersion, out var minimum) &&
-                SemanticVersion.TryParse(found.Version, out var actual) &&
-                actual < minimum)
-            {
-                unmet.Add($"{dependency.Id} {dependency.MinVersion}+ (installed {found.Version})");
-            }
+            available[plugin.PluginId] = plugin.Version;
         }
 
-        return unmet.Count == 0
-            ? null
-            : $"The plugin '{entry.Plugin.Id}' has dependencies that are not satisfied: " +
-                $"{string.Join("; ", unmet)}. Install the missing versions from a catalog source first; " +
-                "DroidDeck does not install dependencies automatically.";
+        var dependencies = (entry.Version.Dependencies ?? [])
+            .Select(static dependency => new PluginDependency
+            {
+                Id = dependency.Id,
+                MinVersion = dependency.MinVersion,
+            })
+            .ToArray();
+        var unmet = PluginCompatibilityPolicy.EvaluateDependencies(dependencies, available);
+        if (unmet.Count == 0)
+        {
+            return null;
+        }
+
+        var descriptions = unmet.Select(static issue => issue.Kind == PluginDependencyIssueKind.Missing
+            ? $"{issue.DependencyId} {issue.RequiredVersion}+ (not installed)"
+            : $"{issue.DependencyId} {issue.RequiredVersion}+ (installed {issue.InstalledVersion})");
+        return $"The plugin '{entry.Plugin.Id}' has dependencies that are not satisfied: " +
+            $"{string.Join("; ", descriptions)}. Install the missing versions from a catalog source first; " +
+            "DroidDeck does not install dependencies automatically.";
     }
 
     private async Task<string?> DownloadAsync(

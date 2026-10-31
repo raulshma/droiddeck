@@ -30,7 +30,7 @@ public sealed partial class ReactNativeProjectDetector : IProjectDetector
             return null;
         }
 
-        var packageJsonText = await ReadTextAsync(packageJsonPath, cancellationToken).ConfigureAwait(false);
+        var packageJsonText = await ProjectSource.ReadTextAsync(packageJsonPath, cancellationToken).ConfigureAwait(false);
         if (packageJsonText is null ||
             !TryParsePackageJson(packageJsonText, out var packageName, out var isExpo, out var hasReactNative, out var hasAndroidScript))
         {
@@ -72,7 +72,7 @@ public sealed partial class ReactNativeProjectDetector : IProjectDetector
             });
         }
 
-        var metroConfig = FindFirst(root, "metro.config.js", "metro.config.mjs", "metro.config.cjs", "metro.config.ts");
+        var metroConfig = ProjectSource.FindFirst(root, "metro.config.js", "metro.config.mjs", "metro.config.cjs", "metro.config.ts");
         if (metroConfig is not null)
         {
             evidence.Add(new DetectionEvidence
@@ -97,7 +97,7 @@ public sealed partial class ReactNativeProjectDetector : IProjectDetector
 
         if (isExpo)
         {
-            var expoConfig = FindFirst(root, "app.json", "app.config.js", "app.config.ts");
+            var expoConfig = ProjectSource.FindFirst(root, "app.json", "app.config.js", "app.config.ts");
             if (expoConfig is not null)
             {
                 evidence.Add(new DetectionEvidence
@@ -116,13 +116,10 @@ public sealed partial class ReactNativeProjectDetector : IProjectDetector
         ManifestInfo manifest = new();
         if (hasAndroidHost)
         {
-            buildFile = FindFirst(
-                Path.Combine(androidFolder, "app"),
-                "build.gradle.kts",
-                "build.gradle");
-            var buildText = await ReadTextAsync(buildFile, cancellationToken).ConfigureAwait(false);
-            applicationId = MatchValue(ApplicationIdRegex(), buildText);
-            namespaceName = MatchValue(NamespaceRegex(), buildText);
+            buildFile = ProjectSource.FindBuildFile(Path.Combine(androidFolder, "app"));
+            var buildText = await ProjectSource.ReadTextAsync(buildFile, cancellationToken).ConfigureAwait(false);
+            applicationId = ProjectSource.MatchValue(ProjectSource.ApplicationIdPattern(), buildText);
+            namespaceName = ProjectSource.MatchValue(ProjectSource.NamespacePattern(), buildText);
             var applicationIdSource = applicationId ?? namespaceName;
             if (applicationIdSource is not null || namespaceName is not null)
             {
@@ -154,7 +151,7 @@ public sealed partial class ReactNativeProjectDetector : IProjectDetector
             }
         }
 
-        var metroPort = ParseMetroPort(await ReadTextAsync(metroConfig, cancellationToken).ConfigureAwait(false))
+        var metroPort = ParseMetroPort(await ProjectSource.ReadTextAsync(metroConfig, cancellationToken).ConfigureAwait(false))
             ?? ReactNativeAdapter.DefaultMetroPort;
         var project = new ProjectModel
         {
@@ -309,59 +306,6 @@ public sealed partial class ReactNativeProjectDetector : IProjectDetector
             : null;
     }
 
-    private static string? MatchValue(Regex regex, string? text)
-    {
-        if (string.IsNullOrEmpty(text))
-        {
-            return null;
-        }
-
-        var match = regex.Match(text);
-        return match.Success ? match.Groups["value"].Value.Trim() : null;
-    }
-
-    private static string? FindFirst(string directory, params string[] names)
-    {
-        if (!Directory.Exists(directory))
-        {
-            return null;
-        }
-
-        foreach (var name in names)
-        {
-            var candidate = Path.Combine(directory, name);
-            if (File.Exists(candidate))
-            {
-                return candidate;
-            }
-        }
-
-        return null;
-    }
-
-    private static async Task<string?> ReadTextAsync(string? path, CancellationToken cancellationToken)
-    {
-        if (path is null || !File.Exists(path))
-        {
-            return null;
-        }
-
-        try
-        {
-            return await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            return null;
-        }
-    }
-
     [GeneratedRegex(@"(?<!\w)port\s*:\s*(?<port>\d+)", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
     private static partial Regex MetroPortRegex();
-
-    [GeneratedRegex(@"applicationId\s*=?\s*[""'](?<value>[^""']+)[""']", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
-    private static partial Regex ApplicationIdRegex();
-
-    [GeneratedRegex(@"namespace\s*=?\s*[""'](?<value>[^""']+)[""']", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
-    private static partial Regex NamespaceRegex();
 }

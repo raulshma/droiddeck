@@ -30,14 +30,14 @@ public sealed partial class UnityProjectDetector : IProjectDetector
             return null;
         }
 
-        var versionText = await ReadTextAsync(
+        var versionText = await ProjectSource.ReadTextAsync(
             Path.Combine(settings, "ProjectVersion.txt"),
             cancellationToken).ConfigureAwait(false);
-        var playerSettingsText = await ReadTextAsync(
+        var playerSettingsText = await ProjectSource.ReadTextAsync(
             Path.Combine(settings, "ProjectSettings.asset"),
             cancellationToken).ConfigureAwait(false);
-        var editorVersion = MatchValue(EditorVersionRegex(), versionText)
-            ?? MatchValue(EditorVersionWithRevisionRegex(), versionText);
+        var editorVersion = ProjectSource.MatchValue(EditorVersionRegex(), versionText)
+            ?? ProjectSource.MatchValue(EditorVersionWithRevisionRegex(), versionText);
         var player = ParsePlayerSettings(playerSettingsText);
         var (artifactGlob, apkFiles) = FindBuiltApks(root);
 
@@ -210,8 +210,8 @@ public sealed partial class UnityProjectDetector : IProjectDetector
         }
 
         return new PlayerSettings(
-            MatchValue(ProductNameRegex(), text),
-            MatchValue(CompanyNameRegex(), text),
+            ProjectSource.MatchValue(ProductNameRegex(), text),
+            ProjectSource.MatchValue(CompanyNameRegex(), text),
             ParseAndroidIdentifier(text));
     }
 
@@ -257,29 +257,6 @@ public sealed partial class UnityProjectDetector : IProjectDetector
         }
 
         return null;
-    }
-
-    private static string? MatchValue(Regex regex, string? text)
-    {
-        if (string.IsNullOrEmpty(text))
-        {
-            return null;
-        }
-
-        var match = regex.Match(text);
-        return match.Success ? match.Groups["value"].Value.Trim() : null;
-    }
-
-    private static async Task<string?> ReadTextAsync(string path, CancellationToken cancellationToken)
-    {
-        try
-        {
-            return await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            return null;
-        }
     }
 
     private sealed record PlayerSettings(string? ProductName, string? CompanyName, string? ApplicationId);

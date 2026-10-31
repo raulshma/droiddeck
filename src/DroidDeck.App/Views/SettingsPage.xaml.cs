@@ -12,7 +12,6 @@ using DroidDeck.Core.Features;
 using DroidDeck.Core.Infrastructure;
 using DroidDeck.Core.Localization;
 using DroidDeck.Core.Profiles;
-using DroidDeck.Core.Security;
 using DroidDeck.Core.Sessions;
 using DroidDeck.Core.Themes;
 using DroidDeck.Core.Toolchain;
@@ -44,7 +43,6 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
     private readonly ThemeManager _themes;
     private readonly ProfileService _profiles;
     private readonly FeatureVisibilityService _features;
-    private readonly ISecretStore _secrets;
     private readonly PluginUiFaultReporter _faultReporter;
     private readonly ILogger<SettingsPage> _logger;
     private readonly DispatcherQueue _dispatcher;
@@ -69,7 +67,6 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         ThemeManager themes,
         ProfileService profiles,
         FeatureVisibilityService features,
-        ISecretStore secrets,
         PluginUiFaultReporter faultReporter,
         ILogger<SettingsPage> logger)
     {
@@ -84,7 +81,6 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         _themes = themes ?? throw new ArgumentNullException(nameof(themes));
         _profiles = profiles ?? throw new ArgumentNullException(nameof(profiles));
         _features = features ?? throw new ArgumentNullException(nameof(features));
-        _secrets = secrets ?? throw new ArgumentNullException(nameof(secrets));
         _faultReporter = faultReporter ?? throw new ArgumentNullException(nameof(faultReporter));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _dispatcher = DispatcherQueue.GetForCurrentThread();
@@ -1082,7 +1078,9 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
             return;
         }
 
-        var days = Math.Clamp((int)Math.Round(args.NewValue), 0, 365);
+        var days = SettingsValuePolicy.Clamp(
+            SettingsPaths.SessionRetentionDays,
+            (int)Math.Round(args.NewValue));
         if (days == _configuration.Current.Settings.Logging.RetentionDays)
         {
             return;
@@ -1137,7 +1135,9 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
             return;
         }
 
-        var limit = Math.Clamp((int)Math.Round(args.NewValue), 1, 16);
+        var limit = SettingsValuePolicy.Clamp(
+            SettingsPaths.RunMaxConcurrentDevices,
+            (int)Math.Round(args.NewValue));
         if (limit == _configuration.Current.Settings.Run.MaxConcurrentDevices)
         {
             return;
@@ -1161,7 +1161,9 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
             return;
         }
 
-        var interval = PerformanceSettings.ClampSampleInterval((int)Math.Round(args.NewValue));
+        var interval = SettingsValuePolicy.Clamp(
+            SettingsPaths.PerformanceSampleIntervalMs,
+            (int)Math.Round(args.NewValue));
         if (interval == _configuration.Current.Settings.Performance.SampleIntervalMs)
         {
             return;
@@ -1185,7 +1187,9 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
             return;
         }
 
-        var count = PerformanceSettings.ClampSampleCount((int)Math.Round(args.NewValue));
+        var count = SettingsValuePolicy.Clamp(
+            SettingsPaths.PerformanceMaxSamples,
+            (int)Math.Round(args.NewValue));
         if (count == _configuration.Current.Settings.Performance.MaxSamples)
         {
             return;
@@ -1209,7 +1213,9 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
             return;
         }
 
-        var depth = InspectorSettings.ClampDepth((int)Math.Round(args.NewValue));
+        var depth = SettingsValuePolicy.Clamp(
+            SettingsPaths.InspectorMaxDepth,
+            (int)Math.Round(args.NewValue));
         if (depth == _configuration.Current.Settings.Inspector.MaxDepth)
         {
             return;
@@ -2320,8 +2326,8 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
 
     /// <summary>
     /// Disposes a settings store this page owns. Schema stores are shared per
-    /// settings file with the plugin loader and the settings dialog, so they
-    /// stay owned by that registry and are never disposed here.
+    /// settings file with the plugin loader and the settings dialog, so the
+    /// settings factory owns them and they are never disposed here.
     /// </summary>
     private static void DropHostSettings(IPluginSettings settings)
     {
@@ -2341,21 +2347,19 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
             return null;
         }
 
-        var settingsPath = System.IO.Path.Combine(status.InstallPath, "settings.json");
-        if (File.Exists(PluginSettingsSchemaReader.GetSchemaPath(status.InstallPath)))
+        var creation = await _plugins.SettingsFactory
+            .CreateForInstalledPluginAsync(pluginId, status.InstallPath)
+            .ConfigureAwait(true);
+        if (creation.Issue is { } issue)
         {
-            var read = await PluginSettingsSchemaReader.ReadAsync(status.InstallPath).ConfigureAwait(true);
-            if (read.Schema is not null)
-            {
-                // Schema stores are shared per settings file (the plugin loader
-                // and the settings dialog resolve the same instance), so their
-                // writes cannot race or lose updates. Such stores are owned by
-                // that registry and never disposed here.
-                return SchemaPluginSettings.GetOrCreate(settingsPath, read.Schema, pluginId, _secrets);
-            }
+            _logger.LogWarning(
+                "The settings schema for {PluginId} was not used ({Code}): {Message}",
+                pluginId,
+                issue.Code,
+                issue.Message);
         }
 
-        return new JsonPluginSettings(settingsPath);
+        return creation.Settings;
     }
 
     private static string SourceLabel(string pluginId) =>

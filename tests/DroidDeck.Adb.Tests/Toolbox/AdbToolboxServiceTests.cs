@@ -74,6 +74,21 @@ public sealed class AdbToolboxServiceTests
     }
 
     [Fact]
+    public async Task RunShellAsync_ReportsAnOutputFailureEvenWhenAdbExitsZero()
+    {
+        var runner = new FakeProcessRunner
+        {
+            Handler = request => FakeProcessRunner.Success(request, "error: closed\n"),
+        };
+        var service = Create(runner);
+
+        var result = await service.RunShellAsync("serial", "input keyevent 3");
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(0, result.ExitCode);
+    }
+
+    [Fact]
     public async Task UninstallWithoutConfirmation_IsBlockedAndShowsTheCommand()
     {
         var runner = new FakeProcessRunner();

@@ -1,6 +1,8 @@
 using System.Net.Sockets;
 using System.Threading.Channels;
+using DroidDeck.Adb.Commands;
 using DroidDeck.Adb.Protocol;
+using DroidDeck.Core.Devices;
 using DroidDeck.Core.Processes;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -15,20 +17,20 @@ public sealed class AdbDeviceTracker : IAdbDeviceTracker
 {
     private readonly AdbTrackerOptions _options;
     private readonly IAdbSocketClient _socketClient;
-    private readonly IProcessRunner _processRunner;
+    private readonly AdbCommandExecutor _adb;
     private readonly ILogger<AdbDeviceTracker> _logger;
     private readonly SemaphoreSlim _lifecycle = new(1, 1);
     private readonly object _stateGate = new();
     private readonly object _fallbackGate = new();
     private volatile string _adbExecutable;
 
-    private AdbDevice[] _devices = [];
+    private DeviceInfo[] _devices = [];
     private bool _socketConnected;
     private bool _fallbackSucceeded;
     private string? _lastError;
 
     private CancellationTokenSource? _cts;
-    private Channel<AdbDevice[]>? _publishChannel;
+    private Channel<DeviceInfo[]>? _publishChannel;
     private Task? _trackingTask;
     private Task? _publishTask;
     private CancellationTokenSource? _fallbackCts;
@@ -43,11 +45,12 @@ public sealed class AdbDeviceTracker : IAdbDeviceTracker
         IAdbSocketClient? socketClient = null,
         ILogger<AdbDeviceTracker>? logger = null)
     {
-        _processRunner = processRunner ?? throw new ArgumentNullException(nameof(processRunner));
+        ArgumentNullException.ThrowIfNull(processRunner);
         _options = options ?? new AdbTrackerOptions();
         _adbExecutable = _options.AdbExecutable;
         _socketClient = socketClient ?? new AdbSocketClient(_options.ConnectTimeout);
         _logger = logger ?? NullLogger<AdbDeviceTracker>.Instance;
+        _adb = new AdbCommandExecutor(processRunner, () => _adbExecutable, logger: _logger);
     }
 
     /// <summary>Changes the adb executable used for bootstrap and fallback commands.</summary>
@@ -58,7 +61,7 @@ public sealed class AdbDeviceTracker : IAdbDeviceTracker
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<AdbDevice> Devices
+    public IReadOnlyList<DeviceInfo> Devices
     {
         get
         {
@@ -124,7 +127,7 @@ public sealed class AdbDeviceTracker : IAdbDeviceTracker
 
             _started = true;
             _cts = new CancellationTokenSource();
-            _publishChannel = Channel.CreateBounded<AdbDevice[]>(new BoundedChannelOptions(1)
+            _publishChannel = Channel.CreateBounded<DeviceInfo[]>(new BoundedChannelOptions(1)
             {
                 FullMode = BoundedChannelFullMode.DropOldest,
                 SingleReader = true,
@@ -238,7 +241,7 @@ public sealed class AdbDeviceTracker : IAdbDeviceTracker
     /// <inheritdoc />
     public async Task<bool> RestartServerAsync(CancellationToken cancellationToken = default)
     {
-        await RunAdbCommandAsync("kill-server", cancellationToken).ConfigureAwait(false);
+        _ = await RunAdbCommandAsync("kill-server", cancellationToken).ConfigureAwait(false);
         var started = await RunAdbCommandAsync("start-server", cancellationToken).ConfigureAwait(false);
         if (!started.Succeeded)
         {
@@ -356,7 +359,7 @@ public sealed class AdbDeviceTracker : IAdbDeviceTracker
         MutateConnection(() => { _socketConnected = false; _fallbackSucceeded = false; });
     }
 
-    private async Task RunPublishPumpAsync(ChannelReader<AdbDevice[]> reader, CancellationToken cancellationToken)
+    private async Task RunPublishPumpAsync(ChannelReader<DeviceInfo[]> reader, CancellationToken cancellationToken)
     {
         try
         {
@@ -389,7 +392,7 @@ public sealed class AdbDeviceTracker : IAdbDeviceTracker
         }
     }
 
-    private void Publish(AdbDevice[] devices)
+    private void Publish(DeviceInfo[] devices)
     {
         var channel = _publishChannel;
         if (channel is not null && channel.Writer.TryWrite(devices))
@@ -403,7 +406,7 @@ public sealed class AdbDeviceTracker : IAdbDeviceTracker
         }
     }
 
-    private void ApplySnapshot(AdbDevice[] devices)
+    private void ApplySnapshot(DeviceInfo[] devices)
     {
         lock (_stateGate)
         {
@@ -437,17 +440,15 @@ public sealed class AdbDeviceTracker : IAdbDeviceTracker
         }
     }
 
-    private async Task<ProcessResult> RunAdbCommandAsync(string command, CancellationToken cancellationToken)
+    private async Task<AdbCommandResult> RunAdbCommandAsync(string command, CancellationToken cancellationToken)
     {
-        var request = new ProcessRequest
-        {
-            FileName = _adbExecutable,
-            Arguments = [command],
-            Timeout = _options.ProcessTimeout,
-            UseJobObject = false,
-        };
-
-        return await _processRunner.RunAsync(request, cancellationToken: cancellationToken).ConfigureAwait(false);
+        return await _adb
+            .RunAsync(
+                [command],
+                _options.ProcessTimeout,
+                new AdbCommandOptions { UseJobObject = false },
+                cancellationToken)
+            .ConfigureAwait(false);
     }
 
     private void StartFallback()
@@ -526,18 +527,13 @@ public sealed class AdbDeviceTracker : IAdbDeviceTracker
         }
     }
 
-    private async Task<AdbDevice[]?> TryPollProcessAsync(CancellationToken cancellationToken)
+    private async Task<DeviceInfo[]?> TryPollProcessAsync(CancellationToken cancellationToken)
     {
         try
         {
-            var request = new ProcessRequest
-            {
-                FileName = _adbExecutable,
-                Arguments = ["devices", "-l"],
-                Timeout = _options.ProcessTimeout,
-            };
-
-            var result = await _processRunner.RunAsync(request, cancellationToken: cancellationToken).ConfigureAwait(false);
+            var result = await _adb
+                .RunAsync(["devices", "-l"], _options.ProcessTimeout, cancellationToken)
+                .ConfigureAwait(false);
             if (!result.Succeeded)
             {
                 MutateConnection(() =>
@@ -629,24 +625,14 @@ public sealed class AdbDeviceTracker : IAdbDeviceTracker
         }
     }
 
-    private static string DescribeFailure(ProcessResult result, string commandLine)
+    private static string DescribeFailure(AdbCommandResult result, string commandLine)
     {
         if (!string.IsNullOrWhiteSpace(result.StartError))
         {
             return $"{commandLine} could not start: {result.StartError}";
         }
 
-        if (result.TimedOut)
-        {
-            return $"{commandLine} timed out.";
-        }
-
-        var detail = result.StandardError.Trim();
-        if (detail.Length == 0)
-        {
-            detail = result.StandardOutput.Trim();
-        }
-
+        var detail = result.FailureMessage ?? result.CombinedOutput.Trim();
         return detail.Length == 0
             ? $"{commandLine} exited with code {result.ExitCode}."
             : $"{commandLine} failed: {detail}";
@@ -663,7 +649,7 @@ public sealed class AdbDeviceTracker : IAdbDeviceTracker
         }
     }
 
-    private void RaiseDevicesChanged(IReadOnlyList<AdbDevice> devices)
+    private void RaiseDevicesChanged(IReadOnlyList<DeviceInfo> devices)
     {
         try
         {

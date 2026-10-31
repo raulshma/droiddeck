@@ -119,20 +119,6 @@ public sealed class ConfigurationHealthService
         (SettingsPaths.DotNetPath, ToolKind.DotNet, false),
     ];
 
-    private static readonly (string Path, int Minimum, int Maximum)[] IntegerRanges =
-    [
-        (
-            SettingsPaths.PerformanceSampleIntervalMs,
-            PerformanceSettings.MinimumSampleIntervalMs,
-            PerformanceSettings.MaximumSampleIntervalMs),
-        (SettingsPaths.PerformanceMaxSamples, PerformanceSettings.MinimumSampleCount, PerformanceSettings.MaximumSampleCount),
-        (SettingsPaths.InspectorMaxDepth, InspectorSettings.MinimumDepth, InspectorSettings.MaximumDepth),
-        (SettingsPaths.ScreenWarnAtPercent, 1, 100),
-        (SettingsPaths.ProjectScanDepth, 1, 10),
-        (SettingsPaths.RunMaxConcurrentDevices, 1, 32),
-        (SettingsPaths.SessionRetentionDays, 1, 3_650),
-    ];
-
     private readonly IConfigurationService _configuration;
     private readonly IToolchainService? _toolchain;
 
@@ -357,24 +343,24 @@ public sealed class ConfigurationHealthService
 
     private void AddRangeIssues(List<SettingsHealthIssue> issues, ConfigSnapshot snapshot)
     {
-        foreach (var (path, minimum, maximum) in IntegerRanges)
+        foreach (var range in SettingsValuePolicy.Ranges)
         {
-            var value = _configuration.GetValue<int>(path);
-            if (value >= minimum && value <= maximum)
+            var value = _configuration.GetValue<int>(range.Path);
+            if (range.Contains(value))
             {
                 continue;
             }
 
-            var clamped = Math.Clamp(value, minimum, maximum);
-            var label = SettingsCatalog.Default.Find(path)?.Label ?? path;
+            var clamped = range.Clamp(value);
+            var label = SettingsCatalog.Default.Find(range.Path)?.Label ?? range.Path;
             issues.Add(new SettingsHealthIssue
             {
-                Id = "settings.range:" + path,
+                Id = "settings.range:" + range.Path,
                 Severity = SettingsHealthSeverity.Warning,
                 Title = label + " is out of range",
-                Detail = $"{path} is {value}; supported values are {minimum} to {maximum}.",
-                Path = path,
-                Scope = snapshot.GetSource(path).Scope,
+                Detail = $"{range.Path} is {value}; supported values are {range.Minimum} to {range.Maximum}.",
+                Path = range.Path,
+                Scope = snapshot.GetSource(range.Path).Scope,
                 Fix = new SettingsFix(SettingsFixKind.ClampSetting, $"Use {clamped}"),
                 FixValue = JsonValue.Create(clamped),
             });

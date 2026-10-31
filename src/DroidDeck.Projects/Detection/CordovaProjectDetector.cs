@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using DroidDeck.Core.Projects;
 using DroidDeck.Projects.Adapters;
@@ -10,7 +9,7 @@ namespace DroidDeck.Projects.Detection;
 /// Detects Apache Cordova projects from config.xml, package.json, and the generated android
 /// platform. The detector never invokes Node or the Cordova CLI.
 /// </summary>
-public sealed partial class CordovaProjectDetector : IProjectDetector
+public sealed class CordovaProjectDetector : IProjectDetector
 {
     /// <inheritdoc />
     public string Id => "cordova";
@@ -31,13 +30,13 @@ public sealed partial class CordovaProjectDetector : IProjectDetector
             return null;
         }
 
-        var configText = await ReadTextAsync(configPath, cancellationToken).ConfigureAwait(false);
+        var configText = await ProjectSource.ReadTextAsync(configPath, cancellationToken).ConfigureAwait(false);
         if (configText is null || TryParseConfig(configText) is not { } config)
         {
             return null;
         }
 
-        var packageJsonText = await ReadTextAsync(
+        var packageJsonText = await ProjectSource.ReadTextAsync(
             Path.Combine(root, "package.json"),
             cancellationToken).ConfigureAwait(false);
         var packageName = packageJsonText is null ? null : TryParsePackageName(packageJsonText);
@@ -83,13 +82,10 @@ public sealed partial class CordovaProjectDetector : IProjectDetector
         ManifestInfo manifest = new();
         if (hasAndroidHost)
         {
-            buildFile = FindFirst(
-                Path.Combine(androidFolder, "app"),
-                "build.gradle.kts",
-                "build.gradle");
-            var buildText = await ReadTextAsync(buildFile, cancellationToken).ConfigureAwait(false);
-            gradleApplicationId = MatchValue(ApplicationIdRegex(), buildText)
-                ?? MatchValue(NamespaceRegex(), buildText);
+            buildFile = ProjectSource.FindBuildFile(Path.Combine(androidFolder, "app"));
+            var buildText = await ProjectSource.ReadTextAsync(buildFile, cancellationToken).ConfigureAwait(false);
+            gradleApplicationId = ProjectSource.MatchValue(ProjectSource.ApplicationIdPattern(), buildText)
+                ?? ProjectSource.MatchValue(ProjectSource.NamespacePattern(), buildText);
             var manifestPath = Path.Combine(androidFolder, "app", "src", "main", "AndroidManifest.xml");
             if (File.Exists(manifestPath))
             {
@@ -278,58 +274,5 @@ public sealed partial class CordovaProjectDetector : IProjectDetector
         return false;
     }
 
-    private static string? MatchValue(Regex regex, string? text)
-    {
-        if (string.IsNullOrEmpty(text))
-        {
-            return null;
-        }
-
-        var match = regex.Match(text);
-        return match.Success ? match.Groups["value"].Value.Trim() : null;
-    }
-
-    private static string? FindFirst(string directory, params string[] names)
-    {
-        if (!Directory.Exists(directory))
-        {
-            return null;
-        }
-
-        foreach (var name in names)
-        {
-            var candidate = Path.Combine(directory, name);
-            if (File.Exists(candidate))
-            {
-                return candidate;
-            }
-        }
-
-        return null;
-    }
-
-    private static async Task<string?> ReadTextAsync(string? path, CancellationToken cancellationToken)
-    {
-        if (path is null || !File.Exists(path))
-        {
-            return null;
-        }
-
-        try
-        {
-            return await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            return null;
-        }
-    }
-
     private sealed record ParsedConfig(string? WidgetId, string? Name);
-
-    [GeneratedRegex(@"applicationId\s*=?\s*[""'](?<value>[^""']+)[""']", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
-    private static partial Regex ApplicationIdRegex();
-
-    [GeneratedRegex(@"namespace\s*=?\s*[""'](?<value>[^""']+)[""']", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
-    private static partial Regex NamespaceRegex();
 }
