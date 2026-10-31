@@ -23,6 +23,7 @@ public sealed partial class DevicesPage : Page, IRefreshablePage, IDisposable
     private readonly IThumbnailService _thumbnails;
     private readonly IConfigurationService _configuration;
     private readonly PluginHost _plugins;
+    private readonly IShellDialogs _dialogs;
     private readonly DispatcherQueue? _dispatcher;
     private CancellationTokenSource? _thumbnailCts;
     private bool _disposed;
@@ -32,12 +33,14 @@ public sealed partial class DevicesPage : Page, IRefreshablePage, IDisposable
         DevicesViewModel viewModel,
         IThumbnailService thumbnails,
         IConfigurationService configuration,
-        PluginHost plugins)
+        PluginHost plugins,
+        IShellDialogs dialogs)
     {
         ViewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         _thumbnails = thumbnails ?? throw new ArgumentNullException(nameof(thumbnails));
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         _plugins = plugins ?? throw new ArgumentNullException(nameof(plugins));
+        _dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
         _dispatcher = DispatcherQueue.GetForCurrentThread();
 
         InitializeComponent();
@@ -298,7 +301,7 @@ public sealed partial class DevicesPage : Page, IRefreshablePage, IDisposable
         }
 
         if (entry.Action.RequiresConfirmation &&
-            !await ConfirmAsync(
+            !await _dialogs.ConfirmAsync(
                 "Run plugin action?",
                 $"{entry.Action.Name} from {entry.SourceLabel} changes device state. Run it on {device.DisplayName}?"))
         {
@@ -319,20 +322,6 @@ public sealed partial class DevicesPage : Page, IRefreshablePage, IDisposable
         {
             ViewModel.SetErrorMessage($"{entry.Action.Name} from {entry.SourceLabel} failed: {result.Error}");
         }
-    }
-
-    private async Task<bool> ConfirmAsync(string title, string message)
-    {
-        var dialog = new ContentDialog
-        {
-            Title = title,
-            Content = message,
-            PrimaryButtonText = "Continue",
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Close,
-            XamlRoot = XamlRoot,
-        };
-        return await dialog.ShowAsync() == ContentDialogResult.Primary;
     }
 
     private void Dispatch(Action action)

@@ -315,6 +315,11 @@ public partial class App : Application, IDisposable
             () => (provider.GetRequiredService<MainWindow>().Content as FrameworkElement)?.XamlRoot,
             DispatcherQueue.GetForCurrentThread()));
 
+        services.AddSingleton<IShellDialogs>(provider => new ShellDialogs(
+            () => (provider.GetRequiredService<MainWindow>().Content as FrameworkElement)?.XamlRoot,
+            () => provider.GetRequiredService<MainWindow>(),
+            loggerFactory.CreateLogger<ShellDialogs>()));
+
         services.AddSingleton(_ => new PluginUiOrderStore(
             System.IO.Path.Combine(_paths.DataDirectory, "ui-order.json")));
 

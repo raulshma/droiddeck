@@ -1,8 +1,8 @@
+using DroidDeck.App.Services;
 using DroidDeck.Core.Configuration;
 using DroidDeck.Core.Devices;
 using DroidDeck.Core.Projects;
 using DroidDeck.Core.Toolchain;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
@@ -26,6 +26,7 @@ public sealed partial class OnboardingPage : Page, IRefreshablePage, IDisposable
     private readonly IToolchainService _toolchain;
     private readonly IProjectService _projects;
     private readonly IDeviceService _devices;
+    private readonly IShellDialogs _dialogs;
     private readonly ILogger<OnboardingPage> _logger;
     private readonly DispatcherQueue? _dispatcher;
     private string _step = ToolsStep;
@@ -40,12 +41,14 @@ public sealed partial class OnboardingPage : Page, IRefreshablePage, IDisposable
         IToolchainService toolchain,
         IProjectService projects,
         IDeviceService devices,
+        IShellDialogs dialogs,
         ILogger<OnboardingPage> logger)
     {
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         _toolchain = toolchain ?? throw new ArgumentNullException(nameof(toolchain));
         _projects = projects ?? throw new ArgumentNullException(nameof(projects));
         _devices = devices ?? throw new ArgumentNullException(nameof(devices));
+        _dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _dispatcher = DispatcherQueue.GetForCurrentThread();
 
@@ -328,7 +331,7 @@ public sealed partial class OnboardingPage : Page, IRefreshablePage, IDisposable
             ViewMode = PickerViewMode.List,
         };
         picker.FileTypeFilter.Add(".apk");
-        InitializePicker(picker);
+        _dialogs.InitializePicker(picker);
         var files = await picker.PickMultipleFilesAsync();
         if (files is null || files.Count == 0)
         {
@@ -465,22 +468,15 @@ public sealed partial class OnboardingPage : Page, IRefreshablePage, IDisposable
         _dispatcher.TryEnqueue(() => action());
     }
 
-    private static FolderPicker CreateFolderPicker()
+    private FolderPicker CreateFolderPicker()
     {
         var picker = new FolderPicker
         {
             SuggestedStartLocation = PickerLocationId.ComputerFolder,
         };
         picker.FileTypeFilter.Add("*");
-        InitializePicker(picker);
+        _dialogs.InitializePicker(picker);
         return picker;
-    }
-
-    private static void InitializePicker(object picker)
-    {
-        var window = App.Instance.Services.GetRequiredService<MainWindow>();
-        var handle = WinRT.Interop.WindowNative.GetWindowHandle(window);
-        WinRT.Interop.InitializeWithWindow.Initialize(picker, handle);
     }
 
     /// <summary>One tool row in the tools step.</summary>

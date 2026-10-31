@@ -242,7 +242,7 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         {
             _logger.LogWarning(exception, "The command {Command} failed.", row.Command.Id);
             ShowAction(
-                $"\"{row.Title}\" failed: {exception.Message} (Diagnostics ID {_diagnostics.DiagnosticsId}).",
+                FailureNotice.Format($"\"{row.Title}\"", exception, _diagnostics.DiagnosticsId),
                 isError: true);
         }
     }
@@ -270,7 +270,7 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         {
             _logger.LogWarning(exception, "The plugin {PluginId} could not be enabled.", row.PluginId);
             ShowAction(
-                $"Enabling {row.Title} failed: {exception.Message} (Diagnostics ID {_diagnostics.DiagnosticsId}).",
+                FailureNotice.Format($"Enabling {row.Title}", exception, _diagnostics.DiagnosticsId),
                 isError: true);
         }
         finally
@@ -350,7 +350,7 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         {
             _logger.LogWarning(exception, "The plugin {PluginId} could not be trusted.", row.PluginId);
             ShowAction(
-                $"Trusting {row.Title} failed: {exception.Message} (Diagnostics ID {_diagnostics.DiagnosticsId}).",
+                FailureNotice.Format($"Trusting {row.Title}", exception, _diagnostics.DiagnosticsId),
                 isError: true);
         }
         finally
@@ -385,7 +385,7 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         {
             _logger.LogWarning(exception, "The plugin {PluginId} could not be disabled.", row.PluginId);
             ShowAction(
-                $"Disabling {row.Title} failed: {exception.Message} (Diagnostics ID {_diagnostics.DiagnosticsId}).",
+                FailureNotice.Format($"Disabling {row.Title}", exception, _diagnostics.DiagnosticsId),
                 isError: true);
         }
         finally
@@ -437,7 +437,8 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             _logger.LogWarning(exception, "Updating {PluginId} failed.", row.PluginId);
-            ShowAction($"Updating {row.Title} failed: {exception.Message} (Diagnostics ID {_diagnostics.DiagnosticsId}).",
+            ShowAction(
+                FailureNotice.Format($"Updating {row.Title}", exception, _diagnostics.DiagnosticsId),
                 isError: true);
         }
         finally
@@ -502,7 +503,8 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             _logger.LogWarning(exception, "Rolling back {PluginId} failed.", row.PluginId);
-            ShowAction($"Rolling back {row.Title} failed: {exception.Message} (Diagnostics ID {_diagnostics.DiagnosticsId}).",
+            ShowAction(
+                FailureNotice.Format($"Rolling back {row.Title}", exception, _diagnostics.DiagnosticsId),
                 isError: true);
         }
         finally
@@ -554,7 +556,8 @@ public sealed partial class ExtensionsPage : Page, IRefreshablePage, IDisposable
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             _logger.LogWarning(exception, "Uninstalling {PluginId} failed.", row.PluginId);
-            ShowAction($"Uninstalling {row.Title} failed: {exception.Message} (Diagnostics ID {_diagnostics.DiagnosticsId}).",
+            ShowAction(
+                FailureNotice.Format($"Uninstalling {row.Title}", exception, _diagnostics.DiagnosticsId),
                 isError: true);
         }
         finally

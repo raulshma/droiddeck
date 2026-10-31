@@ -5,12 +5,12 @@ using DroidDeck.App.Services;
 using DroidDeck.Core;
 using DroidDeck.Core.Configuration;
 using DroidDeck.Core.Devices;
+using DroidDeck.Core.Diagnostics;
 using DroidDeck.Core.Projects;
 using DroidDeck.Core.Runs;
 using DroidDeck.Plugins;
 using DroidDeck.Plugin.UI.Kit;
 using DroidDeck.Projects.Adapters;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
@@ -31,6 +31,7 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
     private readonly IConfigurationService _configuration;
     private readonly PluginHost _plugins;
     private readonly PluginUiFaultReporter _faultReporter;
+    private readonly IShellDialogs _dialogs;
     private readonly ILogger<ProjectsPage> _logger;
     private readonly DispatcherQueue? _dispatcher;
     private readonly List<IDisposable> _pluginTabContents = [];
@@ -50,6 +51,7 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
         IConfigurationService configuration,
         PluginHost plugins,
         PluginUiFaultReporter faultReporter,
+        IShellDialogs dialogs,
         ILogger<ProjectsPage> logger)
     {
         _projects = projects ?? throw new ArgumentNullException(nameof(projects));
@@ -60,6 +62,7 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         _plugins = plugins ?? throw new ArgumentNullException(nameof(plugins));
         _faultReporter = faultReporter ?? throw new ArgumentNullException(nameof(faultReporter));
+        _dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _dispatcher = DispatcherQueue.GetForCurrentThread();
 
@@ -218,13 +221,12 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
 
     private void UpdateDeviceChoices()
     {
-        var previous = (DeviceCombo.SelectedItem as DeviceInfo)?.Serial;
-        var devices = _devices.Devices
-            .Where(device => device.State == DeviceState.Device)
-            .ToArray();
-        DeviceCombo.ItemsSource = devices;
-        DeviceCombo.SelectedItem = devices.FirstOrDefault(device =>
-            string.Equals(device.Serial, previous, StringComparison.Ordinal)) ?? devices.FirstOrDefault();
+        var target = DeviceTargetSelection.Resolve(
+            _devices.Devices,
+            (DeviceCombo.SelectedItem as DeviceInfo)?.Serial,
+            _workspace.DeviceSerial);
+        DeviceCombo.ItemsSource = target.Usable;
+        DeviceCombo.SelectedItem = target.Selected;
     }
 
     private void ReloadRunConfigurations()
@@ -320,7 +322,7 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
             SuggestedStartLocation = PickerLocationId.ComputerFolder,
         };
         picker.FileTypeFilter.Add("*");
-        InitializePicker(picker);
+        _dialogs.InitializePicker(picker);
         var folder = await picker.PickSingleFolderAsync();
         if (folder is null)
         {
@@ -344,7 +346,7 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
             ViewMode = PickerViewMode.List,
         };
         picker.FileTypeFilter.Add(".apk");
-        InitializePicker(picker);
+        _dialogs.InitializePicker(picker);
         var files = await picker.PickMultipleFilesAsync();
         if (files is null || files.Count == 0)
         {
@@ -367,7 +369,7 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
             SuggestedStartLocation = PickerLocationId.ComputerFolder,
         };
         picker.FileTypeFilter.Add("*");
-        InitializePicker(picker);
+        _dialogs.InitializePicker(picker);
         var folder = await picker.PickSingleFolderAsync();
         if (folder is null)
         {
@@ -1061,37 +1063,12 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
             DryRun = dryRun,
         };
 
-        string? sessionId = null;
-        void OnChanged(object? sender, RunSessionChangedEventArgs args)
-        {
-            if (sessionId is null &&
-                string.Equals(args.Session.ProjectId, _selected.Id, StringComparison.Ordinal) &&
-                string.Equals(args.Session.ConfigurationId, _selectedConfiguration.Id, StringComparison.Ordinal))
-            {
-                sessionId = args.Session.Id;
-            }
-        }
-
-        _runs.SessionChanged += OnChanged;
-        Task<RunSession> task;
         try
         {
-            task = _runs.RunAsync(request);
-        }
-        finally
-        {
-            _runs.SessionChanged -= OnChanged;
-        }
-
-        if (sessionId is not null)
-        {
-            _workspace.OpenSession(sessionId);
+            var handle = _runs.Start(request);
+            _workspace.OpenSession(handle.Session.Id);
             App.Instance.Navigate("session");
-        }
-
-        try
-        {
-            await task;
+            await handle.Completion;
         }
         catch (Exception exception)
         {
@@ -1191,7 +1168,7 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
             InvalidDataException or FileNotFoundException or ArgumentException)
         {
             _logger.LogWarning(exception, "{Action} failed.", action);
-            ShowAction($"{action} failed: {exception.Message}", isError: true);
+            ShowAction(FailureNotice.Format(action, exception), isError: true);
         }
     }
 
@@ -1251,13 +1228,6 @@ public sealed partial class ProjectsPage : Page, IRefreshablePage, IDisposable
         return Application.Current.Resources.TryGetValue(key, out var resource) && resource is Brush brush
             ? brush
             : new SolidColorBrush(Microsoft.UI.Colors.Gray);
-    }
-
-    private static void InitializePicker(object picker)
-    {
-        var window = App.Instance.Services.GetRequiredService<MainWindow>();
-        var handle = WinRT.Interop.WindowNative.GetWindowHandle(window);
-        WinRT.Interop.InitializeWithWindow.Initialize(picker, handle);
     }
 
     /// <summary>One project row in the list.</summary>

@@ -18,7 +18,6 @@ using DroidDeck.Core.Toolchain;
 using DroidDeck.Plugins;
 using DroidDeck.Plugin.Abstractions;
 using DroidDeck.Plugin.UI.Kit;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
@@ -44,6 +43,7 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
     private readonly ProfileService _profiles;
     private readonly FeatureVisibilityService _features;
     private readonly PluginUiFaultReporter _faultReporter;
+    private readonly IShellDialogs _dialogs;
     private readonly ILogger<SettingsPage> _logger;
     private readonly DispatcherQueue _dispatcher;
     private readonly ConfigurationHealthService _health;
@@ -68,6 +68,7 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         ProfileService profiles,
         FeatureVisibilityService features,
         PluginUiFaultReporter faultReporter,
+        IShellDialogs dialogs,
         ILogger<SettingsPage> logger)
     {
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
@@ -82,6 +83,7 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         _profiles = profiles ?? throw new ArgumentNullException(nameof(profiles));
         _features = features ?? throw new ArgumentNullException(nameof(features));
         _faultReporter = faultReporter ?? throw new ArgumentNullException(nameof(faultReporter));
+        _dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         _health = new ConfigurationHealthService(configuration, toolchain);
@@ -414,7 +416,13 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
                 CloseButtonText = "Cancel",
                 DefaultButton = ContentDialogButton.Close,
             };
-            if (await ShowDialogAsync(dialog) != ContentDialogResult.Primary)
+            var result = await _dialogs.ShowAsync(dialog);
+            if (result.WasBlocked)
+            {
+                ShowAction("Close the open dialog and try again.", isError: true);
+            }
+
+            if (result.Result != ContentDialogResult.Primary)
             {
                 return;
             }
@@ -439,7 +447,7 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
                 ViewMode = PickerViewMode.List,
             };
             picker.FileTypeFilter.Add(".json");
-            InitializePicker(picker);
+            _dialogs.InitializePicker(picker);
             var file = await picker.PickSingleFileAsync();
             if (file is null)
             {
@@ -480,7 +488,7 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
                 DefaultFileExtension = ".json",
             };
             picker.FileTypeChoices.Add("JSON", new List<string> { ".json" });
-            InitializePicker(picker);
+            _dialogs.InitializePicker(picker);
             var file = await picker.PickSaveFileAsync();
             if (file is null)
             {
@@ -697,7 +705,11 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
             Content = CreateDialogContent(message),
             CloseButtonText = "Close",
         };
-        await ShowDialogAsync(dialog);
+        var result = await _dialogs.ShowAsync(dialog);
+        if (result.WasBlocked)
+        {
+            ShowAction("Close the open dialog and try again.", isError: true);
+        }
     }
 
     private async Task<ContentDialogResult> ConfirmApplyAsync(string title, string message)
@@ -710,7 +722,13 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
         };
-        return await ShowDialogAsync(dialog);
+        var result = await _dialogs.ShowAsync(dialog);
+        if (result.WasBlocked)
+        {
+            ShowAction("Close the open dialog and try again.", isError: true);
+        }
+
+        return result.Result;
     }
 
     private static ScrollViewer CreateDialogContent(string message) => new()
@@ -745,13 +763,6 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         ConfigScope.Session => "session",
         _ => scope.ToString(),
     };
-
-    private static void InitializePicker(object picker)
-    {
-        var window = App.Instance.Services.GetRequiredService<MainWindow>();
-        var handle = WinRT.Interop.WindowNative.GetWindowHandle(window);
-        WinRT.Interop.InitializeWithWindow.Initialize(picker, handle);
-    }
 
     /// <summary>One settings search match shaped for the results list.</summary>
     public sealed class SearchResultRow
@@ -844,7 +855,13 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         }
 
         var dialog = new ShortcutCaptureDialog(command, _keybindings.GetEffectiveChord(command));
-        if (await ShowDialogAsync(dialog) != ContentDialogResult.Primary ||
+        var result = await _dialogs.ShowAsync(dialog);
+        if (result.WasBlocked)
+        {
+            ShowAction("Close the open dialog and try again.", isError: true);
+        }
+
+        if (result.Result != ContentDialogResult.Primary ||
             dialog.CapturedChord is not { } chord)
         {
             return;
@@ -909,7 +926,7 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
                 DefaultFileExtension = ".json",
             };
             picker.FileTypeChoices.Add("JSON", new List<string> { ".json" });
-            InitializePicker(picker);
+            _dialogs.InitializePicker(picker);
             var file = await picker.PickSaveFileAsync();
             if (file is null)
             {
@@ -936,7 +953,7 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
                 ViewMode = PickerViewMode.List,
             };
             picker.FileTypeFilter.Add(".json");
-            InitializePicker(picker);
+            _dialogs.InitializePicker(picker);
             var file = await picker.PickSingleFileAsync();
             if (file is null)
             {
@@ -974,21 +991,6 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
             exception is IOException or UnauthorizedAccessException or COMException or InvalidOperationException)
         {
             ReportFailure("Importing keyboard shortcuts", exception);
-        }
-    }
-
-    private async Task<ContentDialogResult> ShowDialogAsync(ContentDialog dialog)
-    {
-        dialog.XamlRoot = XamlRoot;
-        try
-        {
-            return await dialog.ShowAsync();
-        }
-        catch (InvalidOperationException exception)
-        {
-            _logger.LogWarning(exception, "A dialog could not be opened because another dialog is active.");
-            ShowAction("Close the open dialog and try again.", isError: true);
-            return ContentDialogResult.None;
         }
     }
 
@@ -1427,8 +1429,6 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
                 ThemeFileStatusText.Text = $"Theme file '{applied.Name}' is applied.";
                 DeleteThemeButton.IsEnabled = ThemeCatalog.FindBuiltIn(choice.Id) is null;
             }
-
-            App.Instance.Window?.ApplyShellTheme();
         }
         catch (ThemeValidationException exception)
         {
@@ -1452,7 +1452,7 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
                 ViewMode = PickerViewMode.List,
             };
             picker.FileTypeFilter.Add(".json");
-            InitializePicker(picker);
+            _dialogs.InitializePicker(picker);
             var file = await picker.PickSingleFileAsync();
             if (file is null)
             {
@@ -1460,7 +1460,6 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
             }
 
             var applied = await _themes.ImportAsync(await File.ReadAllTextAsync(file.Path));
-            App.Instance.Window?.ApplyShellTheme();
             await RefreshThemeFilesAsync();
             ShowAction($"Imported and applied theme '{applied.Name}'.");
         }
@@ -1488,7 +1487,7 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
                 DefaultFileExtension = ".json",
             };
             picker.FileTypeChoices.Add("JSON", new List<string> { ".json" });
-            InitializePicker(picker);
+            _dialogs.InitializePicker(picker);
             var file = await picker.PickSaveFileAsync();
             if (file is null)
             {
@@ -1521,7 +1520,6 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
             }
 
             await _configuration.ResetAsync(SettingsPaths.ThemeId);
-            App.Instance.Window?.ApplyShellTheme();
             await RefreshThemeFilesAsync();
             ShowAction("The custom theme was deleted; the base palette is used again.");
         }
@@ -1544,7 +1542,6 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         try
         {
             await _themes.SetAccentAsync(color);
-            App.Instance.Window?.ApplyShellTheme();
             AccentStatusText.Text = $"Accent {color.ToUpperInvariant()} applies on top of the theme file.";
             ShowAction("Accent color saved.");
         }
@@ -1564,7 +1561,6 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         try
         {
             await _themes.SetAccentAsync(null);
-            App.Instance.Window?.ApplyShellTheme();
             AccentBox.Text = string.Empty;
             AccentStatusText.Text = "The theme file accent is used.";
             ShowAction("Accent color reset to the theme value.");
@@ -1582,7 +1578,6 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         try
         {
             await _themes.SetFontAsync(family.Length == 0 ? null : family);
-            App.Instance.Window?.ApplyShellTheme();
             ShowAction(family.Length == 0
                 ? "The theme font is used."
                 : $"UI font set to {family}.");
@@ -1599,7 +1594,6 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         try
         {
             await _themes.SetFontAsync(null);
-            App.Instance.Window?.ApplyShellTheme();
             FontBox.Text = string.Empty;
             ShowAction("The theme font is used.");
         }
@@ -1721,7 +1715,13 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary,
         };
-        return await ShowDialogAsync(dialog) == ContentDialogResult.Primary ? box.Text.Trim() : null;
+        var result = await _dialogs.ShowAsync(dialog);
+        if (result.WasBlocked)
+        {
+            ShowAction("Close the open dialog and try again.", isError: true);
+        }
+
+        return result.Result == ContentDialogResult.Primary ? box.Text.Trim() : null;
     }
 
     private async void OnCreateProfileClick(object sender, RoutedEventArgs e)
@@ -1758,7 +1758,7 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
                 ViewMode = PickerViewMode.List,
             };
             picker.FileTypeFilter.Add(".json");
-            InitializePicker(picker);
+            _dialogs.InitializePicker(picker);
             var file = await picker.PickSingleFileAsync();
             if (file is null)
             {
@@ -1835,7 +1835,7 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
                 DefaultFileExtension = ".json",
             };
             picker.FileTypeChoices.Add("JSON", new List<string> { ".json" });
-            InitializePicker(picker);
+            _dialogs.InitializePicker(picker);
             var file = await picker.PickSaveFileAsync();
             if (file is null)
             {
@@ -2164,7 +2164,7 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         }
 
         ShowAction(
-            $"{action} failed: {exception.Message} (Diagnostics ID {_diagnostics.DiagnosticsId}).",
+            FailureNotice.Format(action, exception, _diagnostics.DiagnosticsId),
             isError: true);
     }
 

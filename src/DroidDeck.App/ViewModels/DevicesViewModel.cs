@@ -463,10 +463,7 @@ public sealed class DevicesViewModel : ObservableObject, IDisposable
             _logger.LogWarning(exception, "{Action} failed.", action);
         }
 
-        SetErrorMessage(
-            string.Create(
-                CultureInfo.InvariantCulture,
-                $"{action} failed: {exception.Message} (Diagnostics ID {_diagnostics.DiagnosticsId})."));
+        SetErrorMessage(FailureNotice.Format(action, exception, _diagnostics.DiagnosticsId));
     }
 
     private void Enqueue(Action action)

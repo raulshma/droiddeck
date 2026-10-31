@@ -727,36 +727,12 @@ public sealed partial class HomePage : Page, IRefreshablePage, IDisposable
                 DeviceSerial = serial,
             };
 
-            string? sessionId = null;
-            void OnChanged(object? sender, RunSessionChangedEventArgs args)
-            {
-                if (sessionId is null &&
-                    string.Equals(args.Session.ProjectId, project.Id, StringComparison.Ordinal) &&
-                    string.Equals(args.Session.ConfigurationId, configuration.Id, StringComparison.Ordinal))
-                {
-                    sessionId = args.Session.Id;
-                }
-            }
+            var handle = _runs.Start(request);
+            _workspace.OpenProject(project.Id);
+            _workspace.OpenSession(handle.Session.Id);
+            App.Instance.Navigate("session");
 
-            Task<RunSession> run;
-            _runs.SessionChanged += OnChanged;
-            try
-            {
-                run = _runs.RunAsync(request);
-            }
-            finally
-            {
-                _runs.SessionChanged -= OnChanged;
-            }
-
-            if (sessionId is not null)
-            {
-                _workspace.OpenProject(project.Id);
-                _workspace.OpenSession(sessionId);
-                App.Instance.Navigate("session");
-            }
-
-            await run;
+            await handle.Completion;
         }
         catch (Exception exception)
         {
@@ -931,7 +907,7 @@ public sealed partial class HomePage : Page, IRefreshablePage, IDisposable
     {
         LogRegionFailure(action, exception);
         ShowAction(
-            $"{action} failed: {exception.Message} (Diagnostics ID {_diagnostics.DiagnosticsId}).",
+            FailureNotice.Format(action, exception, _diagnostics.DiagnosticsId),
             isError: true);
     }
 

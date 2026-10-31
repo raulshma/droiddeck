@@ -9,7 +9,6 @@ using DroidDeck.Core.Runs;
 using DroidDeck.Core.Toolbox;
 using DroidDeck.Plugin.Abstractions.Rendering;
 using DroidDeck.Plugin.UI.Rendering;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -33,6 +32,7 @@ public sealed partial class PerformancePage : Page, IRefreshablePage, IDisposabl
     private readonly IRunSessionService _sessions;
     private readonly PerformanceSampler _sampler;
     private readonly RendererPane _chartRenderer;
+    private readonly IShellDialogs _dialogs;
     private readonly DispatcherQueue? _dispatcher;
     private readonly UiOutputBuffer? _outputBuffer;
     private readonly List<PerformanceSample> _samples = [];
@@ -51,7 +51,8 @@ public sealed partial class PerformancePage : Page, IRefreshablePage, IDisposabl
         IConfigurationService configuration,
         IRunSessionService sessions,
         IRendererHost renderers,
-        IServiceProvider services)
+        IServiceProvider services,
+        IShellDialogs dialogs)
     {
         _toolbox = toolbox ?? throw new ArgumentNullException(nameof(toolbox));
         _devices = devices ?? throw new ArgumentNullException(nameof(devices));
@@ -59,6 +60,7 @@ public sealed partial class PerformancePage : Page, IRefreshablePage, IDisposabl
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
         _sampler = new PerformanceSampler(toolbox);
+        _dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         _outputBuffer = _dispatcher is null ? null : new UiOutputBuffer(_dispatcher, AppendOutputText);
 
@@ -157,17 +159,13 @@ public sealed partial class PerformancePage : Page, IRefreshablePage, IDisposabl
 
     private void RefreshDevices()
     {
-        var previous = SelectedSerial;
-        var usable = _devices.Devices
-            .Where(device => device.State == DeviceState.Device)
-            .ToArray();
-        DeviceCombo.ItemsSource = usable;
-        DeviceCombo.SelectedItem = usable.FirstOrDefault(device =>
-            string.Equals(device.Serial, previous, StringComparison.Ordinal))
-            ?? usable.FirstOrDefault(device =>
-                string.Equals(device.Serial, _workspace.DeviceSerial, StringComparison.Ordinal))
-            ?? usable.FirstOrDefault();
-        if (usable.Length == 0)
+        var target = DeviceTargetSelection.Resolve(
+            _devices.Devices,
+            SelectedSerial,
+            _workspace.DeviceSerial);
+        DeviceCombo.ItemsSource = target.Usable;
+        DeviceCombo.SelectedItem = target.Selected;
+        if (target.Usable.Count == 0)
         {
             ShowGuidance(_devices.LastError
                 ?? "Connect a device with USB debugging enabled to collect performance metrics.");
@@ -524,7 +522,7 @@ public sealed partial class PerformancePage : Page, IRefreshablePage, IDisposabl
                 DefaultFileExtension = ".csv",
             };
             picker.FileTypeChoices.Add("CSV", new List<string> { ".csv" });
-            InitializePicker(picker);
+            _dialogs.InitializePicker(picker);
             var file = await picker.PickSaveFileAsync();
             if (file is null)
             {
@@ -822,13 +820,6 @@ public sealed partial class PerformancePage : Page, IRefreshablePage, IDisposabl
     {
         var invalid = Path.GetInvalidFileNameChars();
         return string.Concat(value.Select(character => invalid.Contains(character) ? '-' : character));
-    }
-
-    private static void InitializePicker(object picker)
-    {
-        var window = App.Instance.Services.GetRequiredService<MainWindow>();
-        var handle = WinRT.Interop.WindowNative.GetWindowHandle(window);
-        WinRT.Interop.InitializeWithWindow.Initialize(picker, handle);
     }
 
     /// <summary>One installed application shaped for the picker.</summary>

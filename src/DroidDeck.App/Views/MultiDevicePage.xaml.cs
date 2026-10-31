@@ -419,17 +419,12 @@ public sealed partial class MultiDevicePage : Page, IRefreshablePage, IDisposabl
             DryRun = dryRun,
             Options = new RunOptions { AttachLogs = !dryRun },
         };
-        var previousGroupId = _activeGroupId;
         SetBusy(true);
         try
         {
-            var task = _runs.RunAsync(request);
-            var newest = _runs.Groups.Count > 0 ? _runs.Groups[0] : null;
-            if (newest is not null && !string.Equals(newest.Id, previousGroupId, StringComparison.Ordinal))
-            {
-                _activeGroupId = newest.Id;
-                ApplyGroup(newest);
-            }
+            var handle = _runs.Start(request);
+            _activeGroupId = handle.Group.Id;
+            ApplyGroup(handle.Group);
 
             ShowResult(
                 true,
@@ -438,7 +433,7 @@ public sealed partial class MultiDevicePage : Page, IRefreshablePage, IDisposabl
                     : $"Building once for {devices.Length} device(s).",
                 null,
                 "Each device gets its own session. Switching tabs keeps each device's log and filter.");
-            await ObserveGroupAsync(task);
+            await ObserveGroupAsync(handle.Completion);
         }
         catch (Exception exception) when (
             exception is IOException or InvalidOperationException or UnauthorizedAccessException)

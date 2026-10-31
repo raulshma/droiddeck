@@ -1,20 +1,17 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
-using System.Runtime.InteropServices;
 using DroidDeck.App.Services;
 using DroidDeck.Core.Devices;
 using DroidDeck.Core.Processes;
 using DroidDeck.Core.Toolbox;
 using DroidDeck.Plugin.Abstractions;
 using DroidDeck.Plugins;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Windows.Storage.Pickers;
-using WinRT.Interop;
 
 namespace DroidDeck.App.Views;
 
@@ -29,6 +26,7 @@ public sealed partial class DeviceToolsPage : Page, IRefreshablePage, IDisposabl
     private readonly IDeviceIntentService _intents;
     private readonly SessionWorkspace _workspace;
     private readonly PluginHost _plugins;
+    private readonly IShellDialogs _dialogs;
     private readonly ILogger<DeviceToolsPage> _logger;
     private readonly DispatcherQueue? _dispatcher;
     private readonly UiOutputBuffer? _shellOutput;
@@ -60,6 +58,7 @@ public sealed partial class DeviceToolsPage : Page, IRefreshablePage, IDisposabl
         IDeviceIntentService intents,
         SessionWorkspace workspace,
         PluginHost plugins,
+        IShellDialogs dialogs,
         ILogger<DeviceToolsPage> logger)
     {
         _devices = devices ?? throw new ArgumentNullException(nameof(devices));
@@ -68,6 +67,7 @@ public sealed partial class DeviceToolsPage : Page, IRefreshablePage, IDisposabl
         _intents = intents ?? throw new ArgumentNullException(nameof(intents));
         _workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
         _plugins = plugins ?? throw new ArgumentNullException(nameof(plugins));
+        _dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         _shellOutput = _dispatcher is null ? null : new UiOutputBuffer(_dispatcher, AppendShellText);
@@ -133,32 +133,27 @@ public sealed partial class DeviceToolsPage : Page, IRefreshablePage, IDisposabl
 
     private void RefreshDevices()
     {
-        var previous = SelectedSerial;
-        var usable = _devices.Devices
-            .Where(device => device.State == DeviceState.Device)
-            .ToArray();
+        var target = DeviceTargetSelection.Resolve(
+            _devices.Devices,
+            SelectedSerial,
+            _workspace.DeviceSerial);
         _syncingDevice = true;
         try
         {
-            DeviceCombo.ItemsSource = usable;
-            var selected = usable.FirstOrDefault(device =>
-                string.Equals(device.Serial, previous, StringComparison.Ordinal))
-                ?? usable.FirstOrDefault(device =>
-                    string.Equals(device.Serial, _workspace.DeviceSerial, StringComparison.Ordinal))
-                ?? usable.FirstOrDefault();
-            DeviceCombo.SelectedItem = selected;
+            DeviceCombo.ItemsSource = target.Usable;
+            DeviceCombo.SelectedItem = target.Selected;
         }
         finally
         {
             _syncingDevice = false;
         }
 
-        AvailabilityBar.Message = usable.Length == 0
+        AvailabilityBar.Message = target.Usable.Count == 0
             ? _devices.LastError
               ?? "Connect a device with USB debugging enabled and authorize this computer. Emulators appear here too."
             : string.Empty;
-        AvailabilityBar.IsOpen = usable.Length == 0;
-        if (usable.Length > 0)
+        AvailabilityBar.IsOpen = target.Usable.Count == 0;
+        if (target.Usable.Count > 0)
         {
             OnDeviceChanged();
         }
@@ -449,7 +444,7 @@ public sealed partial class DeviceToolsPage : Page, IRefreshablePage, IDisposabl
             return;
         }
 
-        if (!await ConfirmAsync(title, string.Format(CultureInfo.InvariantCulture, confirmation, app.App.PackageName)))
+        if (!await _dialogs.ConfirmAsync(title, string.Format(CultureInfo.InvariantCulture, confirmation, app.App.PackageName)))
         {
             return;
         }
@@ -517,7 +512,7 @@ public sealed partial class DeviceToolsPage : Page, IRefreshablePage, IDisposabl
             var result = await _toolbox.RunShellAsync(serial, command, output: progress, cancellationToken: token);
             if (result.Blocked && result.IsDestructive)
             {
-                if (await ConfirmAsync(
+                if (await _dialogs.ConfirmAsync(
                         "Run state-changing command?",
                         $"This command changes device state:\n\n{command}\n\nRun it anyway?"))
                 {
@@ -707,7 +702,7 @@ public sealed partial class DeviceToolsPage : Page, IRefreshablePage, IDisposabl
             return;
         }
 
-        if (!await ConfirmAsync(
+        if (!await _dialogs.ConfirmAsync(
                 "Remove every port mapping?",
                 $"Remove every {CurrentPortDirection.ToString().ToLowerInvariant()} mapping for {serial}?"))
         {
@@ -820,7 +815,7 @@ public sealed partial class DeviceToolsPage : Page, IRefreshablePage, IDisposabl
             ViewMode = PickerViewMode.List,
         };
         picker.FileTypeFilter.Add("*");
-        InitializePicker(picker);
+        _dialogs.InitializePicker(picker);
         var file = await picker.PickSingleFileAsync();
         if (file is null)
         {
@@ -850,7 +845,7 @@ public sealed partial class DeviceToolsPage : Page, IRefreshablePage, IDisposabl
             SuggestedStartLocation = PickerLocationId.Downloads,
         };
         picker.FileTypeFilter.Add("*");
-        InitializePicker(picker);
+        _dialogs.InitializePicker(picker);
         var folder = await picker.PickSingleFolderAsync();
         if (folder is null)
         {
@@ -938,7 +933,7 @@ public sealed partial class DeviceToolsPage : Page, IRefreshablePage, IDisposabl
             return;
         }
 
-        if (!await ConfirmAsync(
+        if (!await _dialogs.ConfirmAsync(
                 "Delete device file?",
                 $"Delete {(file.Entry.IsDirectory ? "the folder" : "the file")} {file.Entry.FullPath}? This cannot be undone."))
         {
@@ -1087,7 +1082,7 @@ public sealed partial class DeviceToolsPage : Page, IRefreshablePage, IDisposabl
             RebootMode.Bootloader => "bootloader",
             _ => "system",
         };
-        if (!await ConfirmAsync(
+        if (!await _dialogs.ConfirmAsync(
                 $"Reboot to {target}?",
                 $"Reboot {serial} into {target}? The device disconnects immediately, and any unsaved state is lost."))
         {
@@ -1149,7 +1144,7 @@ public sealed partial class DeviceToolsPage : Page, IRefreshablePage, IDisposabl
 
         var context = new DeviceActionContext(device.Serial, device.Model);
         if (row.Entry.Action.RequiresConfirmation &&
-            !await ConfirmAsync(
+            !await _dialogs.ConfirmAsync(
                 "Run plugin action?",
                 $"{row.Entry.Action.Name} from {row.SourceLabel} changes device state. Run it on {device.DisplayName}?"))
         {
@@ -1269,20 +1264,6 @@ public sealed partial class DeviceToolsPage : Page, IRefreshablePage, IDisposabl
         UpdateFileSelection();
     }
 
-    private async Task<bool> ConfirmAsync(string title, string message)
-    {
-        var dialog = new ContentDialog
-        {
-            Title = title,
-            Content = message,
-            PrimaryButtonText = "Continue",
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Close,
-            XamlRoot = XamlRoot,
-        };
-        return await dialog.ShowAsync() == ContentDialogResult.Primary;
-    }
-
     private void Dispatch(Action action)
     {
         if (_dispatcher is null || _dispatcher.HasThreadAccess)
@@ -1359,13 +1340,6 @@ public sealed partial class DeviceToolsPage : Page, IRefreshablePage, IDisposabl
         {
             return false;
         }
-    }
-
-    private static void InitializePicker(object picker)
-    {
-        var window = App.Instance.Services.GetRequiredService<MainWindow>();
-        var handle = WindowNative.GetWindowHandle(window);
-        InitializeWithWindow.Initialize(picker, handle);
     }
 
     /// <summary>One installed application shaped for the list and picker.</summary>

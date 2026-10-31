@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
+using DroidDeck.App.Services;
 using DroidDeck.Core.Emulators;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
@@ -15,15 +16,17 @@ public sealed partial class EmulatorsPage : Page, IRefreshablePage, IDisposable
     private const string AvdHelpUrl = "https://developer.android.com/studio/run/managing-avds";
 
     private readonly IEmulatorService _emulators;
+    private readonly IShellDialogs _dialogs;
     private readonly DispatcherQueue? _dispatcher;
     private readonly ObservableCollection<AvdRow> _rows = [];
     private bool _busy;
     private bool _disposed;
 
     /// <summary>Creates the emulator page.</summary>
-    public EmulatorsPage(IEmulatorService emulators)
+    public EmulatorsPage(IEmulatorService emulators, IShellDialogs dialogs)
     {
         _emulators = emulators ?? throw new ArgumentNullException(nameof(emulators));
+        _dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         InitializeComponent();
         AvdList.ItemsSource = _rows;
@@ -187,7 +190,7 @@ public sealed partial class EmulatorsPage : Page, IRefreshablePage, IDisposable
             return;
         }
 
-        if (!await ConfirmAsync("Stop emulator", $"Stop {avd.Name}? Unsaved app state is lost."))
+        if (!await _dialogs.ConfirmAsync("Stop emulator", $"Stop {avd.Name}? Unsaved app state is lost."))
         {
             return;
         }
@@ -202,7 +205,7 @@ public sealed partial class EmulatorsPage : Page, IRefreshablePage, IDisposable
             return;
         }
 
-        if (!await ConfirmAsync(
+        if (!await _dialogs.ConfirmAsync(
                 "Wipe emulator data",
                 $"Wipe all user data and snapshots for {avd.Name}? This cannot be undone."))
         {
@@ -265,20 +268,6 @@ public sealed partial class EmulatorsPage : Page, IRefreshablePage, IDisposable
         ActionBar.Severity = InfoBarSeverity.Informational;
         ActionBar.Message = message;
         ActionBar.IsOpen = true;
-    }
-
-    private async Task<bool> ConfirmAsync(string title, string message)
-    {
-        var dialog = new ContentDialog
-        {
-            Title = title,
-            Content = message,
-            PrimaryButtonText = "Continue",
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Close,
-            XamlRoot = XamlRoot,
-        };
-        return await dialog.ShowAsync() == ContentDialogResult.Primary;
     }
 
     private void OnOpenDeviceManagerClick(object sender, RoutedEventArgs e)

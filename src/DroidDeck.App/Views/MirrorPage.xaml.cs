@@ -28,6 +28,7 @@ public sealed partial class MirrorPage : Page, IRefreshablePage, IDisposable
     private readonly IConfigurationService _configuration;
     private readonly SessionWorkspace _workspace;
     private readonly AppPaths _paths;
+    private readonly IShellDialogs _dialogs;
     private readonly ILogger<MirrorPage> _logger;
     private readonly DispatcherQueue? _dispatcher;
     private readonly HashSet<string> _startedSerials = new(StringComparer.Ordinal);
@@ -46,6 +47,7 @@ public sealed partial class MirrorPage : Page, IRefreshablePage, IDisposable
         IConfigurationService configuration,
         SessionWorkspace workspace,
         AppPaths paths,
+        IShellDialogs dialogs,
         ILogger<MirrorPage> logger)
     {
         _screen = screen ?? throw new ArgumentNullException(nameof(screen));
@@ -53,6 +55,7 @@ public sealed partial class MirrorPage : Page, IRefreshablePage, IDisposable
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         _workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
+        _dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _dispatcher = DispatcherQueue.GetForCurrentThread();
 
@@ -103,19 +106,15 @@ public sealed partial class MirrorPage : Page, IRefreshablePage, IDisposable
 
     private void RefreshDevices()
     {
-        var previous = SelectedSerial;
-        var usable = _devices.Devices
-            .Where(device => device.State == DeviceState.Device)
-            .ToArray();
-        DeviceCombo.ItemsSource = usable;
-        DeviceCombo.SelectedItem = usable.FirstOrDefault(device =>
-            string.Equals(device.Serial, previous, StringComparison.Ordinal))
-            ?? usable.FirstOrDefault(device =>
-                string.Equals(device.Serial, _workspace.DeviceSerial, StringComparison.Ordinal))
-            ?? usable.FirstOrDefault();
+        var target = DeviceTargetSelection.Resolve(
+            _devices.Devices,
+            SelectedSerial,
+            _workspace.DeviceSerial);
+        DeviceCombo.ItemsSource = target.Usable;
+        DeviceCombo.SelectedItem = target.Selected;
         AvailabilityBar.Message = _screen.AvailabilityError ?? string.Empty;
         AvailabilityBar.IsOpen = _screen.AvailabilityError is not null;
-        if (usable.Length == 0)
+        if (target.Usable.Count == 0)
         {
             ShowGuidance(_devices.LastError
                 ?? "Connect a device with USB debugging enabled and authorize this computer.");
@@ -404,7 +403,7 @@ public sealed partial class MirrorPage : Page, IRefreshablePage, IDisposable
         try
         {
             if (session.IsRecording &&
-                !await ConfirmAsync(
+                !await _dialogs.ConfirmAsync(
                     "Recording in progress",
                     "Popping out restarts the mirror, which stops the current recording. The clip recorded so far is saved. Continue?"))
             {
@@ -434,20 +433,6 @@ public sealed partial class MirrorPage : Page, IRefreshablePage, IDisposable
         {
             SetBusy(false);
         }
-    }
-
-    private async Task<bool> ConfirmAsync(string title, string message)
-    {
-        var dialog = new ContentDialog
-        {
-            Title = title,
-            Content = message,
-            PrimaryButtonText = "Continue",
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Close,
-            XamlRoot = XamlRoot,
-        };
-        return await dialog.ShowAsync() == ContentDialogResult.Primary;
     }
 
     private async void OnFocusClick(object sender, RoutedEventArgs e)

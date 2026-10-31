@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using DroidDeck.Core.Diagnostics;
 using DroidDeck.Plugin.Abstractions;
 using DroidDeck.Plugins.Catalog;
 using Microsoft.Extensions.Logging;
@@ -240,7 +241,7 @@ public sealed partial class CatalogPage : Page, IRefreshablePage, IDisposable
                 isUpdate ? "Updating" : "Installing",
                 entry.Plugin.Id);
             ShowAction(
-                $"{(isUpdate ? "Updating" : "Installing")} {row.Title} failed: {exception.Message}",
+                FailureNotice.Format($"{(isUpdate ? "Updating" : "Installing")} {row.Title}", exception),
                 isError: true);
         }
         finally
@@ -280,7 +281,7 @@ public sealed partial class CatalogPage : Page, IRefreshablePage, IDisposable
         catch (Exception exception)
         {
             _logger.LogWarning(exception, "The catalog refresh failed.");
-            ShowAction($"The catalog refresh failed: {exception.Message}", isError: true);
+            ShowAction(FailureNotice.Format("The catalog refresh", exception), isError: true);
         }
         finally
         {

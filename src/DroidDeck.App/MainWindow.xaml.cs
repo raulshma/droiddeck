@@ -124,6 +124,7 @@ public sealed partial class MainWindow : Window
     private readonly ShellCommandCatalog _commandCatalog;
     private readonly AppThemeService _themeService;
     private readonly ThemeManager _themeManager;
+    private readonly IShellDialogs _dialogs;
     private readonly FeatureVisibilityService _features;
     private readonly PluginUiOrderStore _uiOrder;
     private readonly ChordRouter _chords = new();
@@ -161,6 +162,7 @@ public sealed partial class MainWindow : Window
         KeybindingMap keybindings,
         AppThemeService themeService,
         ThemeManager themeManager,
+        IShellDialogs dialogs,
         FeatureVisibilityService features,
         PluginUiOrderStore uiOrder,
         ILogger<MainWindow> logger)
@@ -180,6 +182,7 @@ public sealed partial class MainWindow : Window
         _keybindings = keybindings ?? throw new ArgumentNullException(nameof(keybindings));
         _themeService = themeService ?? throw new ArgumentNullException(nameof(themeService));
         _themeManager = themeManager ?? throw new ArgumentNullException(nameof(themeManager));
+        _dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
         _features = features ?? throw new ArgumentNullException(nameof(features));
         _uiOrder = uiOrder ?? throw new ArgumentNullException(nameof(uiOrder));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -381,7 +384,7 @@ public sealed partial class MainWindow : Window
                 ViewMode = PickerViewMode.List,
             };
             picker.FileTypeFilter.Add(".apk");
-            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
+            _dialogs.InitializePicker(picker);
             var files = await picker.PickMultipleFilesAsync();
             if (files.Count > 0)
             {
@@ -1140,6 +1143,11 @@ public sealed partial class MainWindow : Window
         {
             DispatcherQueue.TryEnqueue(UpdateFeatureVisibility);
         }
+
+        if (e.Path.StartsWith("appearance.", StringComparison.OrdinalIgnoreCase))
+        {
+            DispatcherQueue.TryEnqueue(ApplyShellTheme);
+        }
     }
 
     private void UpdateStatus()
@@ -1310,8 +1318,13 @@ public sealed partial class MainWindow : Window
             }
 
             var dialog = new ApkInstallDialog(inspection, _devices.Devices);
-            var choice = await ShowDialogAsync(dialog);
-            if (choice == ContentDialogResult.None || dialog.SelectedPlan is not { } plan)
+            var choice = await _dialogs.ShowAsync(dialog);
+            if (choice.WasBlocked)
+            {
+                ShowStatusMessage(_localizer.Get(LocalizationKeys.ShellMessageDialogActive));
+            }
+
+            if (choice.Result == ContentDialogResult.None || dialog.SelectedPlan is not { } plan)
             {
                 ShowStatusMessage(_localizer.Get(LocalizationKeys.ShellMessageInstallCanceled));
                 return;
@@ -1344,27 +1357,16 @@ public sealed partial class MainWindow : Window
                 summary.Succeeded,
                 summary.Failed,
                 summary.Skipped));
-            await ShowDialogAsync(new ApkInstallResultDialog(plan, results));
+            var resultChoice = await _dialogs.ShowAsync(new ApkInstallResultDialog(plan, results));
+            if (resultChoice.WasBlocked)
+            {
+                ShowStatusMessage(_localizer.Get(LocalizationKeys.ShellMessageDialogActive));
+            }
         }
         finally
         {
             _apkInstallBusy = false;
             InstallApkButton.IsEnabled = true;
-        }
-    }
-
-    private async Task<ContentDialogResult> ShowDialogAsync(ContentDialog dialog)
-    {
-        dialog.XamlRoot = RootGrid.XamlRoot;
-        try
-        {
-            return await dialog.ShowAsync();
-        }
-        catch (InvalidOperationException exception)
-        {
-            _logger.LogWarning(exception, "A dialog could not be opened because another dialog is active.");
-            ShowStatusMessage(_localizer.Get(LocalizationKeys.ShellMessageDialogActive));
-            return ContentDialogResult.None;
         }
     }
 
@@ -1381,7 +1383,11 @@ public sealed partial class MainWindow : Window
             CloseButtonText = _localizer.Get(LocalizationKeys.ShellMessageClose),
             DefaultButton = ContentDialogButton.Close,
         };
-        await ShowDialogAsync(dialog);
+        var result = await _dialogs.ShowAsync(dialog);
+        if (result.WasBlocked)
+        {
+            ShowStatusMessage(_localizer.Get(LocalizationKeys.ShellMessageDialogActive));
+        }
     }
 
     private void ShowStatusMessage(string message)

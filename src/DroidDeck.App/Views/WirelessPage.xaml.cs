@@ -1,4 +1,5 @@
 using System.Globalization;
+using DroidDeck.App.Services;
 using DroidDeck.Core.Configuration;
 using DroidDeck.Core.Wireless;
 using Microsoft.UI.Dispatching;
@@ -17,6 +18,7 @@ public sealed partial class WirelessPage : Page, IRefreshablePage, IDisposable
 {
     private readonly IWirelessAdbService _wireless;
     private readonly IConfigurationService _configuration;
+    private readonly IShellDialogs _dialogs;
     private readonly DispatcherQueue? _dispatcher;
     private CancellationTokenSource? _qrCts;
     private WirelessPairingSession? _pairingSession;
@@ -26,10 +28,12 @@ public sealed partial class WirelessPage : Page, IRefreshablePage, IDisposable
     /// <summary>Creates the wireless page.</summary>
     public WirelessPage(
         IWirelessAdbService wireless,
-        IConfigurationService configuration)
+        IConfigurationService configuration,
+        IShellDialogs dialogs)
     {
         _wireless = wireless ?? throw new ArgumentNullException(nameof(wireless));
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+        _dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
         _dispatcher = DispatcherQueue.GetForCurrentThread();
 
         InitializeComponent();
@@ -357,10 +361,11 @@ public sealed partial class WirelessPage : Page, IRefreshablePage, IDisposable
             return;
         }
 
-        if (!await ConfirmAsync(
+        if (!await _dialogs.ConfirmAsync(
                 "Forget wireless device?",
                 $"Remove {row.Title} ({row.Address}) from remembered devices? " +
-                "You can pair it again from the device's Wireless debugging screen."))
+                "You can pair it again from the device's Wireless debugging screen.",
+                "Forget"))
         {
             return;
         }
@@ -465,20 +470,6 @@ public sealed partial class WirelessPage : Page, IRefreshablePage, IDisposable
     {
         GuidanceBar.Message = guidance ?? string.Empty;
         GuidanceBar.IsOpen = guidance is { Length: > 0 };
-    }
-
-    private async Task<bool> ConfirmAsync(string title, string message)
-    {
-        var dialog = new ContentDialog
-        {
-            XamlRoot = XamlRoot,
-            Title = title,
-            Content = message,
-            PrimaryButtonText = "Forget",
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Close,
-        };
-        return await dialog.ShowAsync() == ContentDialogResult.Primary;
     }
 
     private void SetBusy(bool busy, string? status = null)

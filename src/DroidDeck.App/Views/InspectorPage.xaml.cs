@@ -109,18 +109,14 @@ public sealed partial class InspectorPage : Page, IRefreshablePage, IDisposable
 
     private void RefreshDevices()
     {
-        var previous = SelectedSerial;
-        var usable = _devices.Devices
-            .Where(device => device.State == DeviceState.Device)
-            .ToArray();
-        DeviceCombo.ItemsSource = usable;
-        DeviceCombo.SelectedItem = usable.FirstOrDefault(device =>
-            string.Equals(device.Serial, previous, StringComparison.Ordinal))
-            ?? usable.FirstOrDefault(device =>
-                string.Equals(device.Serial, _workspace.DeviceSerial, StringComparison.Ordinal))
-            ?? usable.FirstOrDefault();
+        var target = DeviceTargetSelection.Resolve(
+            _devices.Devices,
+            SelectedSerial,
+            _workspace.DeviceSerial);
+        DeviceCombo.ItemsSource = target.Usable;
+        DeviceCombo.SelectedItem = target.Selected;
 
-        if (usable.Length == 0)
+        if (target.Usable.Count == 0)
         {
             ShowGuidance(_devices.LastError
                 ?? "Connect a device with USB debugging enabled and unlock it before dumping the hierarchy.");

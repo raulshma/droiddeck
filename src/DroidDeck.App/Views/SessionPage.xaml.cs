@@ -22,6 +22,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.UI.Text;
+using FailureNotice = DroidDeck.Core.Diagnostics.FailureNotice;
 
 namespace DroidDeck.App.Views;
 
@@ -47,6 +48,7 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
     private readonly PluginUiOrderStore _uiOrder;
     private readonly PluginUiFaultReporter _faultReporter;
     private readonly RendererPane _logRenderer;
+    private readonly IShellDialogs _dialogs;
     private readonly ILogger<SessionPage> _logger;
     private readonly DispatcherQueue? _dispatcher;
     private readonly BulkObservableCollection<string> _buildLines = [];
@@ -86,6 +88,7 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         PluginUiFaultReporter faultReporter,
         IRendererHost renderers,
         IServiceProvider services,
+        IShellDialogs dialogs,
         ILogger<SessionPage> logger)
     {
         _runs = runs ?? throw new ArgumentNullException(nameof(runs));
@@ -98,6 +101,7 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         _plugins = plugins ?? throw new ArgumentNullException(nameof(plugins));
         _uiOrder = uiOrder ?? throw new ArgumentNullException(nameof(uiOrder));
         _faultReporter = faultReporter ?? throw new ArgumentNullException(nameof(faultReporter));
+        _dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _dispatcher = DispatcherQueue.GetForCurrentThread();
 
@@ -457,7 +461,7 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         }
 
         if (entry.Action.RequiresConfirmation &&
-            !await ConfirmAsync(
+            !await _dialogs.ConfirmAsync(
                 "Run plugin action?",
                 $"{entry.Action.Title} from {entry.SourceLabel} changes device state. Run it on {_session?.DeviceName ?? serial}?"))
         {
@@ -671,20 +675,6 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
             _session?.IsFinished ?? true,
             entries.Count,
             recent);
-    }
-
-    private async Task<bool> ConfirmAsync(string title, string message)
-    {
-        var dialog = new ContentDialog
-        {
-            Title = title,
-            Content = message,
-            PrimaryButtonText = "Continue",
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Close,
-            XamlRoot = XamlRoot,
-        };
-        return await dialog.ShowAsync() == ContentDialogResult.Primary;
     }
 
     /// <summary>Persists a surface order when it changed; IO failures are logged and retried on the next render.</summary>
@@ -1434,7 +1424,7 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
             exception is IOException or InvalidOperationException or TimeoutException)
         {
             _logger.LogWarning(exception, "{Verb} failed.", verb);
-            ShowAction($"{verb} failed: {exception.Message}", isError: true);
+            ShowAction(FailureNotice.Format(verb, exception), isError: true);
         }
         finally
         {
@@ -1482,7 +1472,7 @@ public sealed partial class SessionPage : Page, IRefreshablePage, IDisposable
         catch (Exception exception) when (exception is IOException or InvalidOperationException)
         {
             _logger.LogWarning(exception, "Recovery action {Action} failed.", row.Kind);
-            ShowAction($"The recovery action failed: {exception.Message}", isError: true);
+            ShowAction(FailureNotice.Format("The recovery action", exception), isError: true);
         }
     }
 

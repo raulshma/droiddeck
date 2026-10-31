@@ -5,7 +5,6 @@ using DroidDeck.App.Services;
 using DroidDeck.Core.Configuration;
 using DroidDeck.Core.Runs;
 using DroidDeck.Core.Sessions;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -20,6 +19,7 @@ public sealed partial class HistoryPage : Page, IRefreshablePage
     private readonly ISessionStore _store;
     private readonly SessionWorkspace _workspace;
     private readonly IConfigurationService _configuration;
+    private readonly IShellDialogs _dialogs;
     private readonly ILogger<HistoryPage> _logger;
     private bool _loading;
 
@@ -28,11 +28,13 @@ public sealed partial class HistoryPage : Page, IRefreshablePage
         ISessionStore store,
         SessionWorkspace workspace,
         IConfigurationService configuration,
+        IShellDialogs dialogs,
         ILogger<HistoryPage> logger)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+        _dialogs = dialogs ?? throw new ArgumentNullException(nameof(dialogs));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         InitializeComponent();
         Refresh();
@@ -160,7 +162,7 @@ public sealed partial class HistoryPage : Page, IRefreshablePage
             picker.FileTypeChoices.Add(
                 format == SessionExportFormat.Json ? "JSON" : "Text",
                 new List<string> { format == SessionExportFormat.Json ? ".json" : ".txt" });
-            InitializePicker(picker);
+            _dialogs.InitializePicker(picker);
             var file = await picker.PickSaveFileAsync();
             if (file is null)
             {
@@ -254,13 +256,6 @@ public sealed partial class HistoryPage : Page, IRefreshablePage
             .ToArray())
             .Trim('-', ' ');
         return cleaned.Length == 0 ? "session" : cleaned;
-    }
-
-    private static void InitializePicker(object picker)
-    {
-        var window = App.Instance.Services.GetRequiredService<MainWindow>();
-        var handle = WinRT.Interop.WindowNative.GetWindowHandle(window);
-        WinRT.Interop.InitializeWithWindow.Initialize(picker, handle);
     }
 
     private static Brush BrushForState(RunSessionState state)
