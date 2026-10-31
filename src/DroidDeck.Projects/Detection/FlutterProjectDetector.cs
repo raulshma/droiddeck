@@ -24,14 +24,19 @@ public sealed partial class FlutterProjectDetector : IProjectDetector
         ArgumentNullException.ThrowIfNull(context);
         var root = context.RootPath;
         var pubspec = Path.Combine(root, "pubspec.yaml");
-        var androidFolder = Path.Combine(root, "android");
-        if (!File.Exists(pubspec) || !Directory.Exists(androidFolder))
+        if (!File.Exists(pubspec))
         {
             return null;
         }
 
         var pubspecText = await ProjectSource.ReadTextAsync(pubspec, cancellationToken).ConfigureAwait(false);
         if (pubspecText is null || !IsFlutterProject(pubspecText))
+        {
+            return null;
+        }
+
+        var host = await AndroidHostProbe.ProbeAsync(root, "android", cancellationToken).ConfigureAwait(false);
+        if (!host.HasAndroidHost)
         {
             return null;
         }
@@ -65,35 +70,27 @@ public sealed partial class FlutterProjectDetector : IProjectDetector
             });
         }
 
-        var buildFile = ProjectSource.FindBuildFile(Path.Combine(androidFolder, "app"));
-        var buildText = await ProjectSource.ReadTextAsync(buildFile, cancellationToken).ConfigureAwait(false);
-        var applicationId = ProjectSource.MatchValue(ProjectSource.ApplicationIdPattern(), buildText);
-        var namespaceName = ProjectSource.MatchValue(ProjectSource.NamespacePattern(), buildText);
-        var applicationIdSource = applicationId ?? namespaceName;
-        if (applicationIdSource is not null || namespaceName is not null)
+        var buildFile = host.BuildFile;
+        if (host.ApplicationId is not null || host.Namespace is not null)
         {
             evidence.Add(new DetectionEvidence
             {
                 Id = "flutter-application-id",
-                Source = buildFile is null ? "android/app" : Path.GetRelativePath(root, buildFile),
-                Detail = $"The Android host declares application ID {applicationIdSource ?? "unknown"}.",
-                Snippet = applicationIdSource,
+                Source = host.BuildFileEvidenceSource("android/app"),
+                Detail = $"The Android host declares application ID {host.GradleApplicationId ?? "unknown"}.",
+                Snippet = host.GradleApplicationId,
                 Confidence = DetectionConfidence.High,
             });
         }
 
-        var manifestPath = Path.Combine(androidFolder, "app", "src", "main", "AndroidManifest.xml");
-        var manifest = File.Exists(manifestPath)
-            ? await AndroidManifestParser.ParseAsync(manifestPath, cancellationToken).ConfigureAwait(false)
-            : new ManifestInfo();
-        if (manifest.LauncherActivity is not null)
+        if (host.LauncherActivity is not null)
         {
             evidence.Add(new DetectionEvidence
             {
                 Id = "flutter-launcher-activity",
-                Source = "android/app/src/main/AndroidManifest.xml",
-                Detail = $"The launcher activity is {manifest.LauncherActivity}.",
-                Snippet = manifest.LauncherActivity,
+                Source = host.ManifestSource,
+                Detail = $"The launcher activity is {host.LauncherActivity}.",
+                Snippet = host.LauncherActivity,
                 Confidence = DetectionConfidence.Medium,
             });
         }
@@ -108,13 +105,13 @@ public sealed partial class FlutterProjectDetector : IProjectDetector
             DetectionVersion = 1,
             Kind = ProjectKind.Flutter,
             KindLabel = ProjectModel.GetKindLabel(ProjectKind.Flutter),
-            Confidence = buildFile is not null && applicationIdSource is not null
+            Confidence = buildFile is not null && host.GradleApplicationId is not null
                 ? DetectionConfidence.High
                 : DetectionConfidence.Medium,
-            ApplicationId = applicationIdSource,
-            Namespace = namespaceName,
-            LauncherActivity = manifest.LauncherActivity,
-            ApplicationLabel = manifest.ApplicationLabel,
+            ApplicationId = host.GradleApplicationId,
+            Namespace = host.Namespace,
+            LauncherActivity = host.LauncherActivity,
+            ApplicationLabel = host.ApplicationLabel,
             FlutterEnvironment = ParseEnvironmentSdk(pubspecText),
             ApplicationModule = "android/app",
             Capabilities = ProjectCapability.Build |
@@ -129,10 +126,10 @@ public sealed partial class FlutterProjectDetector : IProjectDetector
                     {
                         Name = "android/app",
                         Path = "android/app",
-                        BuildFile = Path.GetRelativePath(root, buildFile).Replace('\\', '/'),
+                        BuildFile = host.BuildFileModulePath,
                         Type = ProjectModuleType.Application,
-                        ApplicationId = applicationIdSource,
-                        Namespace = namespaceName,
+                        ApplicationId = host.GradleApplicationId,
+                        Namespace = host.Namespace,
                         HasAndroidTarget = true,
                     },
                 ],

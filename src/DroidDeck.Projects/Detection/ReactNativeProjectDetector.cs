@@ -42,8 +42,11 @@ public sealed partial class ReactNativeProjectDetector : IProjectDetector
             return null;
         }
 
-        var androidFolder = Path.Combine(root, ReactNativeAdapter.AndroidHostFolder);
-        var hasAndroidHost = Directory.Exists(androidFolder);
+        var host = await AndroidHostProbe.ProbeAsync(
+            root,
+            ReactNativeAdapter.AndroidHostFolder,
+            cancellationToken).ConfigureAwait(false);
+        var hasAndroidHost = host.HasAndroidHost;
         var workflow = isExpo
             ? (hasAndroidHost ? "expo-prebuild" : "expo-managed")
             : "bare";
@@ -110,45 +113,29 @@ public sealed partial class ReactNativeProjectDetector : IProjectDetector
             }
         }
 
-        string? applicationId = null;
-        string? namespaceName = null;
-        string? buildFile = null;
-        ManifestInfo manifest = new();
-        if (hasAndroidHost)
+        var buildFile = host.BuildFile;
+        if (hasAndroidHost && (host.ApplicationId is not null || host.Namespace is not null))
         {
-            buildFile = ProjectSource.FindBuildFile(Path.Combine(androidFolder, "app"));
-            var buildText = await ProjectSource.ReadTextAsync(buildFile, cancellationToken).ConfigureAwait(false);
-            applicationId = ProjectSource.MatchValue(ProjectSource.ApplicationIdPattern(), buildText);
-            namespaceName = ProjectSource.MatchValue(ProjectSource.NamespacePattern(), buildText);
-            var applicationIdSource = applicationId ?? namespaceName;
-            if (applicationIdSource is not null || namespaceName is not null)
+            evidence.Add(new DetectionEvidence
             {
-                evidence.Add(new DetectionEvidence
-                {
-                    Id = "react-native-application-id",
-                    Source = buildFile is null ? "android/app" : Path.GetRelativePath(root, buildFile),
-                    Detail = $"The Android host declares application ID {applicationIdSource ?? "unknown"}.",
-                    Snippet = applicationIdSource,
-                    Confidence = DetectionConfidence.High,
-                });
-            }
+                Id = "react-native-application-id",
+                Source = host.BuildFileEvidenceSource("android/app"),
+                Detail = $"The Android host declares application ID {host.GradleApplicationId ?? "unknown"}.",
+                Snippet = host.GradleApplicationId,
+                Confidence = DetectionConfidence.High,
+            });
+        }
 
-            var manifestPath = Path.Combine(androidFolder, "app", "src", "main", "AndroidManifest.xml");
-            if (File.Exists(manifestPath))
+        if (hasAndroidHost && host.LauncherActivity is not null)
+        {
+            evidence.Add(new DetectionEvidence
             {
-                manifest = await AndroidManifestParser.ParseAsync(manifestPath, cancellationToken).ConfigureAwait(false);
-                if (manifest.LauncherActivity is not null)
-                {
-                    evidence.Add(new DetectionEvidence
-                    {
-                        Id = "react-native-launcher-activity",
-                        Source = "android/app/src/main/AndroidManifest.xml",
-                        Detail = $"The launcher activity is {manifest.LauncherActivity}.",
-                        Snippet = manifest.LauncherActivity,
-                        Confidence = DetectionConfidence.Medium,
-                    });
-                }
-            }
+                Id = "react-native-launcher-activity",
+                Source = host.ManifestSource,
+                Detail = $"The launcher activity is {host.LauncherActivity}.",
+                Snippet = host.LauncherActivity,
+                Confidence = DetectionConfidence.Medium,
+            });
         }
 
         var metroPort = ParseMetroPort(await ProjectSource.ReadTextAsync(metroConfig, cancellationToken).ConfigureAwait(false))
@@ -163,13 +150,13 @@ public sealed partial class ReactNativeProjectDetector : IProjectDetector
             DetectionVersion = 1,
             Kind = ProjectKind.ReactNative,
             KindLabel = isExpo && managedExpo ? "Expo (managed)" : ProjectModel.GetKindLabel(ProjectKind.ReactNative),
-            Confidence = !managedExpo && buildFile is not null && (applicationId ?? namespaceName) is not null
+            Confidence = !managedExpo && buildFile is not null && host.GradleApplicationId is not null
                 ? DetectionConfidence.High
                 : DetectionConfidence.Medium,
-            ApplicationId = applicationId ?? namespaceName,
-            Namespace = namespaceName,
-            LauncherActivity = manifest.LauncherActivity,
-            ApplicationLabel = manifest.ApplicationLabel,
+            ApplicationId = host.GradleApplicationId,
+            Namespace = host.Namespace,
+            LauncherActivity = host.LauncherActivity,
+            ApplicationLabel = host.ApplicationLabel,
             ApplicationModule = hasAndroidHost ? "android/app" : null,
             ReactNativeInfo = new ReactNativeProjectInfo
             {
@@ -191,10 +178,10 @@ public sealed partial class ReactNativeProjectDetector : IProjectDetector
                     {
                         Name = "android/app",
                         Path = "android/app",
-                        BuildFile = Path.GetRelativePath(root, buildFile).Replace('\\', '/'),
+                        BuildFile = host.BuildFileModulePath,
                         Type = ProjectModuleType.Application,
-                        ApplicationId = applicationId ?? namespaceName,
-                        Namespace = namespaceName,
+                        ApplicationId = host.GradleApplicationId,
+                        Namespace = host.Namespace,
                         HasAndroidTarget = true,
                     },
                 ],

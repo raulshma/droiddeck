@@ -42,8 +42,11 @@ public sealed partial class CapacitorProjectDetector : IProjectDetector
         var configText = await ProjectSource.ReadTextAsync(configFile, cancellationToken).ConfigureAwait(false);
         var configAppId = ProjectSource.MatchValue(AppIdRegex(), configText);
         var configAppName = ProjectSource.MatchValue(AppNameRegex(), configText);
-        var androidFolder = Path.Combine(root, CapacitorAdapter.AndroidHostFolder);
-        var hasAndroidHost = Directory.Exists(androidFolder);
+        var host = await AndroidHostProbe.ProbeAsync(
+            root,
+            CapacitorAdapter.AndroidHostFolder,
+            cancellationToken).ConfigureAwait(false);
+        var hasAndroidHost = host.HasAndroidHost;
 
         var evidence = new List<DetectionEvidence>
         {
@@ -78,23 +81,8 @@ public sealed partial class CapacitorProjectDetector : IProjectDetector
             });
         }
 
-        string? buildFile = null;
-        string? gradleApplicationId = null;
-        ManifestInfo manifest = new();
-        if (hasAndroidHost)
-        {
-            buildFile = ProjectSource.FindBuildFile(Path.Combine(androidFolder, "app"));
-            var buildText = await ProjectSource.ReadTextAsync(buildFile, cancellationToken).ConfigureAwait(false);
-            gradleApplicationId = ProjectSource.MatchValue(ProjectSource.ApplicationIdPattern(), buildText)
-                ?? ProjectSource.MatchValue(ProjectSource.NamespacePattern(), buildText);
-            var manifestPath = Path.Combine(androidFolder, "app", "src", "main", "AndroidManifest.xml");
-            if (File.Exists(manifestPath))
-            {
-                manifest = await AndroidManifestParser.ParseAsync(manifestPath, cancellationToken).ConfigureAwait(false);
-            }
-        }
-
-        var applicationId = configAppId ?? gradleApplicationId;
+        var buildFile = host.BuildFile;
+        var applicationId = configAppId ?? host.GradleApplicationId;
         if (applicationId is not null)
         {
             evidence.Add(new DetectionEvidence
@@ -102,21 +90,21 @@ public sealed partial class CapacitorProjectDetector : IProjectDetector
                 Id = "capacitor-application-id",
                 Source = configAppId is not null
                     ? Path.GetFileName(configFile!)
-                    : buildFile is null ? CapacitorAdapter.AndroidHostFolder : Path.GetRelativePath(root, buildFile),
+                    : host.BuildFileEvidenceSource(CapacitorAdapter.AndroidHostFolder),
                 Detail = $"The project declares application ID {applicationId}.",
                 Snippet = applicationId,
                 Confidence = DetectionConfidence.High,
             });
         }
 
-        if (manifest.LauncherActivity is not null)
+        if (host.LauncherActivity is not null)
         {
             evidence.Add(new DetectionEvidence
             {
                 Id = "capacitor-launcher-activity",
-                Source = "android/app/src/main/AndroidManifest.xml",
-                Detail = $"The launcher activity is {manifest.LauncherActivity}.",
-                Snippet = manifest.LauncherActivity,
+                Source = host.ManifestSource,
+                Detail = $"The launcher activity is {host.LauncherActivity}.",
+                Snippet = host.LauncherActivity,
                 Confidence = DetectionConfidence.Medium,
             });
         }
@@ -124,7 +112,7 @@ public sealed partial class CapacitorProjectDetector : IProjectDetector
         var project = new ProjectModel
         {
             Id = ProjectModel.CreateId(root),
-            Name = configAppName ?? manifest.ApplicationLabel ?? packageName ?? new DirectoryInfo(root).Name,
+            Name = configAppName ?? host.ApplicationLabel ?? packageName ?? new DirectoryInfo(root).Name,
             RootPath = root,
             RepositoryRoot = context.RepositoryRoot,
             DetectedAt = DateTimeOffset.UtcNow,
@@ -135,8 +123,8 @@ public sealed partial class CapacitorProjectDetector : IProjectDetector
                 ? DetectionConfidence.High
                 : DetectionConfidence.Medium,
             ApplicationId = applicationId,
-            LauncherActivity = manifest.LauncherActivity,
-            ApplicationLabel = manifest.ApplicationLabel ?? configAppName,
+            LauncherActivity = host.LauncherActivity,
+            ApplicationLabel = host.ApplicationLabel ?? configAppName,
             ApplicationModule = hasAndroidHost ? "android/app" : null,
             CapacitorInfo = new CapacitorProjectInfo
             {
@@ -149,7 +137,7 @@ public sealed partial class CapacitorProjectDetector : IProjectDetector
                     {
                         Name = "android/app",
                         Path = "android/app",
-                        BuildFile = buildFile is null ? null : Path.GetRelativePath(root, buildFile).Replace('\\', '/'),
+                        BuildFile = host.BuildFileModulePath,
                         Type = ProjectModuleType.Application,
                         ApplicationId = applicationId,
                         HasAndroidTarget = true,

@@ -15,8 +15,7 @@ public sealed class ProjectService : IProjectService, IDisposable
 {
     private static readonly StringComparer PathComparer = StringComparer.OrdinalIgnoreCase;
     private readonly IProjectStore _store;
-    private readonly IReadOnlyList<IProjectDetector> _detectors;
-    private readonly CustomProjectDetector _customDetector = new();
+    private readonly ProjectDetectionRunner _detectionRunner;
     private readonly ProjectScanner _scanner;
     private readonly IApkInspector _apkInspector;
     private readonly IConfigurationService? _configuration;
@@ -37,8 +36,8 @@ public sealed class ProjectService : IProjectService, IDisposable
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         ArgumentNullException.ThrowIfNull(detectors);
-        _detectors = detectors.OrderBy(detector => detector.Priority).ToArray();
-        _scanner = new ProjectScanner(_detectors);
+        _detectionRunner = new ProjectDetectionRunner(detectors, new CustomProjectDetector());
+        _scanner = new ProjectScanner(_detectionRunner);
         _apkInspector = apkInspector ?? throw new ArgumentNullException(nameof(apkInspector));
         _configuration = configuration;
         _toolchain = toolchain;
@@ -484,56 +483,17 @@ public sealed class ProjectService : IProjectService, IDisposable
         }
 
         var context = CreateContext(project.RootPath, CreateScanOptions());
-        foreach (var detector in _detectors)
-        {
-            var result = await detector.DetectAsync(context, cancellationToken).ConfigureAwait(false);
-            if (result is not null)
-            {
-                return result.Project;
-            }
-        }
-
-        return project.Clone();
+        var detected = await _detectionRunner.DetectAsync(context, cancellationToken).ConfigureAwait(false);
+        return detected?.Project ?? project.Clone();
     }
 
-    private async Task<ProjectModel> DetectAsync(
+    private Task<ProjectModel> DetectAsync(
         string root,
         ProjectKind? kind,
         CancellationToken cancellationToken)
     {
         var context = CreateContext(root, CreateScanOptions());
-        if (kind == ProjectKind.Custom)
-        {
-            var custom = await _customDetector.DetectAsync(context, cancellationToken).ConfigureAwait(false);
-            return custom?.Project ?? new ProjectModel { RootPath = root, Name = new DirectoryInfo(root).Name };
-        }
-
-        foreach (var detector in _detectors)
-        {
-            var result = await detector.DetectAsync(context, cancellationToken).ConfigureAwait(false);
-            if (result is null)
-            {
-                continue;
-            }
-
-            if (kind is not null && result.Project.Kind != kind)
-            {
-                result.Project.Kind = kind.Value;
-                result.Project.KindLabel = ProjectModel.GetKindLabel(kind.Value);
-            }
-
-            return result.Project;
-        }
-
-        var fallback = await _customDetector.DetectAsync(context, cancellationToken).ConfigureAwait(false);
-        return fallback?.Project ?? new ProjectModel
-        {
-            Id = ProjectModel.CreateId(root),
-            Name = new DirectoryInfo(root).Name,
-            RootPath = root,
-            Kind = kind ?? ProjectKind.Custom,
-            KindLabel = ProjectModel.GetKindLabel(kind ?? ProjectKind.Custom),
-        };
+        return _detectionRunner.DetectProjectAsync(context, kind, cancellationToken);
     }
 
     private ProjectScanOptions CreateScanOptions()

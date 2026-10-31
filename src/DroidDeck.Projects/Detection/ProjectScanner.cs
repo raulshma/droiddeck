@@ -6,13 +6,19 @@ namespace DroidDeck.Projects.Detection;
 /// <summary>Scans a folder tree for project candidates with depth, folder, and time limits.</summary>
 public sealed class ProjectScanner
 {
-    private readonly IReadOnlyList<IProjectDetector> _detectors;
+    private readonly ProjectDetectionRunner _runner;
 
     /// <summary>Creates a scanner with the supplied detectors.</summary>
     public ProjectScanner(IEnumerable<IProjectDetector> detectors)
+        : this(new ProjectDetectionRunner(detectors))
     {
-        ArgumentNullException.ThrowIfNull(detectors);
-        _detectors = detectors.OrderBy(detector => detector.Priority).ToArray();
+    }
+
+    /// <summary>Creates a scanner that shares an already ordered detection runner.</summary>
+    internal ProjectScanner(ProjectDetectionRunner runner)
+    {
+        ArgumentNullException.ThrowIfNull(runner);
+        _runner = runner;
     }
 
     /// <summary>Scans for projects without adding them.</summary>
@@ -72,7 +78,7 @@ public sealed class ProjectScanner
                 GradlePath = context.GradlePath,
                 AndroidSdkPath = context.AndroidSdkPath,
             };
-            var detected = await DetectAsync(detectionContext, cancellationToken).ConfigureAwait(false);
+            var detected = await _runner.DetectAsync(detectionContext, cancellationToken).ConfigureAwait(false);
             if (detected is not null)
             {
                 candidates.Add(ToCandidate(detected.Project, known));
@@ -108,23 +114,6 @@ public sealed class ProjectScanner
             .ToList();
         result.Duration = stopwatch.Elapsed;
         return result;
-    }
-
-    private async Task<ProjectDetectionResult?> DetectAsync(
-        ProjectScanContext context,
-        CancellationToken cancellationToken)
-    {
-        foreach (var detector in _detectors)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var result = await detector.DetectAsync(context, cancellationToken).ConfigureAwait(false);
-            if (result is not null)
-            {
-                return result;
-            }
-        }
-
-        return null;
     }
 
     private static ProjectScanCandidate ToCandidate(ProjectModel project, HashSet<string> known) => new()

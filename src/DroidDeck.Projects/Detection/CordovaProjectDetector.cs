@@ -41,8 +41,11 @@ public sealed class CordovaProjectDetector : IProjectDetector
             cancellationToken).ConfigureAwait(false);
         var packageName = packageJsonText is null ? null : TryParsePackageName(packageJsonText);
         var hasCordovaPackage = packageJsonText is not null && HasCordovaDependency(packageJsonText);
-        var androidFolder = Path.Combine(root, CordovaAdapter.AndroidHostFolder);
-        var hasAndroidHost = Directory.Exists(androidFolder);
+        var host = await AndroidHostProbe.ProbeAsync(
+            root,
+            CordovaAdapter.AndroidHostFolder,
+            cancellationToken).ConfigureAwait(false);
+        var hasAndroidHost = host.HasAndroidHost;
 
         var evidence = new List<DetectionEvidence>
         {
@@ -77,23 +80,8 @@ public sealed class CordovaProjectDetector : IProjectDetector
             });
         }
 
-        string? buildFile = null;
-        string? gradleApplicationId = null;
-        ManifestInfo manifest = new();
-        if (hasAndroidHost)
-        {
-            buildFile = ProjectSource.FindBuildFile(Path.Combine(androidFolder, "app"));
-            var buildText = await ProjectSource.ReadTextAsync(buildFile, cancellationToken).ConfigureAwait(false);
-            gradleApplicationId = ProjectSource.MatchValue(ProjectSource.ApplicationIdPattern(), buildText)
-                ?? ProjectSource.MatchValue(ProjectSource.NamespacePattern(), buildText);
-            var manifestPath = Path.Combine(androidFolder, "app", "src", "main", "AndroidManifest.xml");
-            if (File.Exists(manifestPath))
-            {
-                manifest = await AndroidManifestParser.ParseAsync(manifestPath, cancellationToken).ConfigureAwait(false);
-            }
-        }
-
-        var applicationId = config.WidgetId ?? gradleApplicationId;
+        var buildFile = host.BuildFile;
+        var applicationId = config.WidgetId ?? host.GradleApplicationId;
         if (applicationId is not null)
         {
             evidence.Add(new DetectionEvidence
@@ -101,21 +89,21 @@ public sealed class CordovaProjectDetector : IProjectDetector
                 Id = "cordova-application-id",
                 Source = config.WidgetId is not null
                     ? "config.xml"
-                    : buildFile is null ? CordovaAdapter.AndroidHostFolder : Path.GetRelativePath(root, buildFile),
+                    : host.BuildFileEvidenceSource(CordovaAdapter.AndroidHostFolder),
                 Detail = $"The project declares application ID {applicationId}.",
                 Snippet = applicationId,
                 Confidence = DetectionConfidence.High,
             });
         }
 
-        if (manifest.LauncherActivity is not null)
+        if (host.LauncherActivity is not null)
         {
             evidence.Add(new DetectionEvidence
             {
                 Id = "cordova-launcher-activity",
-                Source = "platforms/android/app/src/main/AndroidManifest.xml",
-                Detail = $"The launcher activity is {manifest.LauncherActivity}.",
-                Snippet = manifest.LauncherActivity,
+                Source = host.ManifestSource,
+                Detail = $"The launcher activity is {host.LauncherActivity}.",
+                Snippet = host.LauncherActivity,
                 Confidence = DetectionConfidence.Medium,
             });
         }
@@ -123,7 +111,7 @@ public sealed class CordovaProjectDetector : IProjectDetector
         var project = new ProjectModel
         {
             Id = ProjectModel.CreateId(root),
-            Name = config.Name ?? manifest.ApplicationLabel ?? packageName ?? new DirectoryInfo(root).Name,
+            Name = config.Name ?? host.ApplicationLabel ?? packageName ?? new DirectoryInfo(root).Name,
             RootPath = root,
             RepositoryRoot = context.RepositoryRoot,
             DetectedAt = DateTimeOffset.UtcNow,
@@ -134,8 +122,8 @@ public sealed class CordovaProjectDetector : IProjectDetector
                 ? DetectionConfidence.High
                 : DetectionConfidence.Medium,
             ApplicationId = applicationId,
-            LauncherActivity = manifest.LauncherActivity,
-            ApplicationLabel = manifest.ApplicationLabel ?? config.Name,
+            LauncherActivity = host.LauncherActivity,
+            ApplicationLabel = host.ApplicationLabel ?? config.Name,
             ApplicationModule = hasAndroidHost ? "platforms/android/app" : null,
             CordovaInfo = new CordovaProjectInfo
             {
@@ -148,7 +136,7 @@ public sealed class CordovaProjectDetector : IProjectDetector
                     {
                         Name = "platforms/android/app",
                         Path = "platforms/android/app",
-                        BuildFile = buildFile is null ? null : Path.GetRelativePath(root, buildFile).Replace('\\', '/'),
+                        BuildFile = host.BuildFileModulePath,
                         Type = ProjectModuleType.Application,
                         ApplicationId = applicationId,
                         HasAndroidTarget = true,
