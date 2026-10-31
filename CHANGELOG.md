@@ -5,7 +5,11 @@ All notable changes are recorded here. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Prereleases sort below
 their release: `0.0.1-alpha` precedes `0.0.1`.
 
-## [Unreleased]
+## [0.2.0] - 2026-11-01
+
+Installer and code-signing release. The shell consolidates: one sidebar for
+every screen, command menus in the title bar, and docked mirror windows that
+embed into the app instead of floating on the taskbar.
 
 ### Added
 
@@ -22,12 +26,22 @@ their release: `0.0.1-alpha` precedes `0.0.1`.
   when the window is short. Settings, diagnostics, and about stay pinned at
   the bottom.
 - Home device rows open the screen mirror for that device directly.
+- Docked scrcpy mirror windows embed into the app window so the taskbar no
+  longer shows a separate entry per mirror.
 
 ### Changed
 
 - The command menus moved into the title bar row next to the app title and
   connected-device count, freeing a row of vertical space; the menu bar
   stays clickable over the drag region.
+- The settings page switched to selector bar tabs.
+
+### Fixed
+
+- Embedded window state is guarded by a lock, fixing crashes when stopping a
+  mirror.
+
+## [Unreleased]
 
 ## [0.1.0] - 2026-10-31
 
@@ -165,7 +179,8 @@ First public alpha. Portable `win-x64` build; no installer and no auto-update.
   pass are deferred for this alpha and documented in the release notes.
 - Plugins run in-process with full trust. Only install plugins you trust.
 
-[Unreleased]: https://github.com/raulshma/droiddeck/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/raulshma/droiddeck/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/raulshma/droiddeck/releases/tag/v0.2.0
 [0.1.0]: https://github.com/raulshma/droiddeck/releases/tag/v0.1.0
 [0.0.2-alpha]: https://github.com/raulshma/droiddeck/releases/tag/v0.0.2-alpha
 [0.0.1-alpha]: https://github.com/raulshma/droiddeck/releases/tag/v0.0.1-alpha

@@ -1,0 +1,35 @@
+{
+  "command": "startup",
+  "timestampUtc": "2026-10-31T21:50:32.7232968+00:00",
+  "label": "0.2.0 evidence",
+  "passed": true,
+  "environment": {
+    "machineName": "LAPTOP-A7DN623F",
+    "osVersion": "Microsoft Windows NT 10.0.26300.0",
+    "processorCount": 18,
+    "dotnetVersion": "10.0.14",
+    "architecture": "X64"
+  },
+  "executable": "C:\\Code\\Projects\\droiddeck\\artifacts\\publish\\DroidDeck-0.2.0-win-x64\\DroidDeck.exe",
+  "runs": 10,
+  "warmupRuns": 2,
+  "timeoutSeconds": 60,
+  "samplesMilliseconds": [
+    1141.0972,
+    1079.8008,
+    1211.6025,
+    1437.5598,
+    1332.9028,
+    1213.9596,
+    1326.0178,
+    1318.3761
+  ],
+  "timedOutRuns": [],
+  "failedStartupRuns": [],
+  "medianMilliseconds": 1266.1678499999998,
+  "p95Milliseconds": 1400.92985,
+  "maxMilliseconds": 1437.5598,
+  "medianBudgetMilliseconds": 2000,
+  "p95BudgetMilliseconds": 3000,
+  "failures": []
+}
