@@ -2,7 +2,7 @@ using System.Globalization;
 
 namespace DroidDeck.ReleaseCheck;
 
-internal sealed record SizeMeasurement(long ExtractedBytes, long? ZipBytes);
+internal sealed record SizeMeasurement(long ExtractedBytes, long? ZipBytes, long? InstallerBytes);
 
 internal static class SizeCheck
 {
@@ -20,7 +20,10 @@ internal static class SizeCheck
         var maxZipBytes = (long)(
             options.OptionalDouble("max-zip-mb", ReleaseBudgets.MaxZipMegabytes) *
             1024 * 1024);
-        if (maxExtractedBytes <= 0 || maxZipBytes <= 0)
+        var maxInstallerBytes = (long)(
+            options.OptionalDouble("max-installer-mb", ReleaseBudgets.MaxInstallerMegabytes) *
+            1024 * 1024);
+        if (maxExtractedBytes <= 0 || maxZipBytes <= 0 || maxInstallerBytes <= 0)
         {
             throw new ArgumentException("Size budgets must be positive.");
         }
@@ -37,8 +40,20 @@ internal static class SizeCheck
             zipBytes = new FileInfo(fullZipPath).Length;
         }
 
-        var measurement = new SizeMeasurement(DirectorySizer.Measure(directory), zipBytes);
-        var result = Evaluate(measurement, maxExtractedBytes, maxZipBytes);
+        long? installerBytes = null;
+        if (options.Optional("installer") is { } installerPath)
+        {
+            var fullInstallerPath = Path.GetFullPath(installerPath);
+            if (!File.Exists(fullInstallerPath))
+            {
+                throw new ArgumentException($"The installer '{fullInstallerPath}' does not exist.");
+            }
+
+            installerBytes = new FileInfo(fullInstallerPath).Length;
+        }
+
+        var measurement = new SizeMeasurement(DirectorySizer.Measure(directory), zipBytes, installerBytes);
+        var result = Evaluate(measurement, maxExtractedBytes, maxZipBytes, maxInstallerBytes);
 
         Console.Out.WriteLine(
             string.Create(
@@ -51,6 +66,13 @@ internal static class SizeCheck
                 string.Create(
                     CultureInfo.InvariantCulture,
                     $"Zip: {ByteSize.Format(zip)}; budget {ByteSize.Format(maxZipBytes)}."));
+        }
+        if (measurement.InstallerBytes is { } installer)
+        {
+            Console.Out.WriteLine(
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"Installer: {ByteSize.Format(installer)}; budget {ByteSize.Format(maxInstallerBytes)}."));
         }
 
         Reports.WriteSummary(result, "Size budget");
@@ -66,8 +88,10 @@ internal static class SizeCheck
                 directory,
                 extractedBytes = measurement.ExtractedBytes,
                 zipBytes = measurement.ZipBytes,
+                installerBytes = measurement.InstallerBytes,
                 maxExtractedBytes,
                 maxZipBytes,
+                maxInstallerBytes,
                 failures = result.Failures,
             });
         return result.Passed ? 0 : 1;
@@ -76,7 +100,8 @@ internal static class SizeCheck
     public static CheckResult Evaluate(
         SizeMeasurement measurement,
         long maxExtractedBytes,
-        long maxZipBytes)
+        long maxZipBytes,
+        long maxInstallerBytes)
     {
         var failures = new List<string>();
         if (measurement.ExtractedBytes > maxExtractedBytes)
@@ -95,6 +120,15 @@ internal static class SizeCheck
                     CultureInfo.InvariantCulture,
                     $"The zip size is {ByteSize.Format(zip)}, " +
                     $"over the {ByteSize.Format(maxZipBytes)} budget."));
+        }
+
+        if (measurement.InstallerBytes is { } installer && installer > maxInstallerBytes)
+        {
+            failures.Add(
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"The installer size is {ByteSize.Format(installer)}, " +
+                    $"over the {ByteSize.Format(maxInstallerBytes)} budget."));
         }
 
         return new CheckResult(failures);

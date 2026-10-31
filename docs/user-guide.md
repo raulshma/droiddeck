@@ -7,18 +7,28 @@ feature described in [Privacy](privacy.md).
 
 ## Install and start
 
-Download `DroidDeck-<version>-win-x64.zip` from the
-[releases page](https://github.com/raulshma/droiddeck/releases), verify it against
-the attached `SHA256SUMS.txt`, then unzip the folder and run `DroidDeck.exe`. No
-installer or Windows App SDK runtime is required.
+Download the `DroidDeck-<version>-setup-win-x64.exe` installer from the
+[releases page](https://github.com/raulshma/droiddeck/releases) and run it. The
+installer is per-user: no administrator rights, installs to
+`%LocalAppData%\Programs\DroidDeck`, adds Start-menu and optional desktop
+shortcuts, and registers an uninstall entry under Settings > Apps > Installed
+apps. Verify the download against the attached `SHA256SUMS.txt` first.
 
-Release binaries are currently unsigned, so Windows SmartScreen may show an
-unknown-publisher or "Windows protected your PC" warning. Only continue after
-`Get-FileHash <zip> -Algorithm SHA256` matches the published checksum.
+A portable alternative is `DroidDeck-<version>-win-x64.zip`: verify it against
+`SHA256SUMS.txt`, unzip the folder, and run `DroidDeck.exe`. Neither variant
+needs the Windows App SDK runtime.
+
+Release binaries are signed with DroidDeck's self-signed certificate
+(`Get-AuthenticodeSignature` reports a valid signature from `CN=DroidDeck,
+O=DroidDeck contributors`). Because the certificate is not issued by a
+certificate authority, Windows SmartScreen may still show an unknown-publisher
+or "Windows protected your PC" warning; only choose More info > Run anyway
+after the SHA-256 checksum matches.
 
 The in-app update check reads the latest stable GitHub release. Prereleases such
 as `0.0.1-alpha` do not appear there, so the check reports no update while only
-prereleases exist; upgrade by replacing the portable folder.
+prereleases exist; upgrade by running the new installer or replacing the
+portable folder.
 
 By default DroidDeck stores data in `%LocalAppData%\DroidDeck`. Two portable options
 move it:

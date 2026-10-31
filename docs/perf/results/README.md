@@ -39,6 +39,7 @@ Command-specific fields:
 | --- | --- |
 | Extracted portable folder | 250 MiB |
 | Portable zip | 120 MiB |
+| Installer | 150 MiB |
 | Startup median | 2,000 ms |
 | Startup p95 | 3,000 ms |
 | Eight-hour memory growth | under 5 percent |

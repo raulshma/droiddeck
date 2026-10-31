@@ -64,7 +64,7 @@ propagate to class-library project references.
 ## 3. Size budget
 
 The release workflow creates the zip with a single
-`DroidDeck-<version>-win-x64` folder and enforces both budgets:
+`DroidDeck-<version>-win-x64` folder and enforces all three budgets:
 
 ```powershell
 $version = "0.1.0"
@@ -74,16 +74,26 @@ Compress-Archive -Path "artifacts/publish/DroidDeck-$version-win-x64" `
 dotnet run --project tools/DroidDeck.ReleaseCheck -c Release -- `
   size --directory "artifacts/publish/DroidDeck-$version-win-x64" `
   --zip "artifacts/DroidDeck-$version-win-x64.zip" `
+  --installer "artifacts/DroidDeck-$version-setup-win-x64.exe" `
   --label "$version <commit>" `
   --json "docs/perf/results/<date>-size-$version.json"
 ```
 
-Budget: extracted folder at most 250 MiB, zip at most 120 MiB. The portable zip
-must not contain symbols, test files, caches, or local settings; symbols are
-embedded in the assemblies.
+Budget: extracted folder at most 250 MiB, zip at most 120 MiB, installer at most
+150 MiB. The portable zip must not contain symbols, test files, caches, or local
+settings; symbols are embedded in the assemblies.
+
+The workflow also compiles the per-user installer from the same publish output
+(`packaging/installer/droiddeck.iss`, Inno Setup) and signs the portable
+payload, the installer, and the SDK packages with the self-signed code-signing
+certificate stored in the `WINDOWS_CODESIGN_*` secrets (JKS keystore converted
+to PFX per run; signatures carry an RFC 3161 timestamp). The signature gate
+fails the release if any asset is unsigned, mistimestamped, or signed by a
+different certificate.
 
 - [ ] Extracted size passes.
 - [ ] Zip size passes.
+- [ ] Installer size passes.
 - [ ] Any exception is recorded with an owner and rationale.
 
 ## 4. Startup budget

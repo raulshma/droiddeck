@@ -6,9 +6,10 @@
 ## Commands
 
 ```powershell
-# Portable folder and zip size (250 MiB / 120 MiB)
+# Portable folder, zip, and installer size (250 MiB / 120 MiB / 150 MiB)
 dotnet run --project tools/DroidDeck.ReleaseCheck -c Release -- `
   size --directory artifacts/publish/win-x64 --zip artifacts/DroidDeck-win-x64.zip `
+  --installer artifacts/DroidDeck-setup-win-x64.exe `
   --json docs/perf/results/2026-10-31-size.json
 
 # Process start to main window (median 2,000 ms, p95 3,000 ms)

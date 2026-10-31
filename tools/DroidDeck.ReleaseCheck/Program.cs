@@ -8,7 +8,7 @@ internal static class Program
         DroidDeck release checks
 
         Usage:
-          droiddeck-release-check size    --directory <publish-dir> [--zip <file>] [--max-extracted-mb 250] [--max-zip-mb 120] [--json <file>]
+          droiddeck-release-check size    --directory <publish-dir> [--zip <file>] [--installer <file>] [--max-extracted-mb 250] [--max-zip-mb 120] [--max-installer-mb 150] [--json <file>]
           droiddeck-release-check startup --exe <DroidDeck.exe> [--runs 10] [--warmup-runs 1] [--timeout-seconds 60] [--budget-median-ms 2000] [--budget-p95-ms 3000] [--json <file>]
           droiddeck-release-check soak    (--pid <id> | --process <name>) [--duration 08:00:00] [--interval 00:00:10] [--warmup 00:05:00] [--max-memory-growth-percent 5] [--max-handle-growth 32] [--json <file>]
 

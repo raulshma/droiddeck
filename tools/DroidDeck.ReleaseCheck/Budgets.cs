@@ -6,6 +6,7 @@ internal static class ReleaseBudgets
 {
     public const double MaxExtractedMegabytes = 250;
     public const double MaxZipMegabytes = 120;
+    public const double MaxInstallerMegabytes = 150;
     public const double StartupMedianMilliseconds = 2_000;
     public const double StartupP95Milliseconds = 3_000;
     public const double MaxMemoryGrowthPercent = 5;

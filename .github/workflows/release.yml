@@ -44,6 +44,61 @@ jobs:
             global.json
             Directory.Packages.props
 
+      - name: Set up JDK for code signing tools
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Prepare code signing material
+        shell: pwsh
+        env:
+          CODESIGN_JKS_B64: ${{ secrets.WINDOWS_CODESIGN_JKS }}
+          CODESIGN_STORE_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_STORE_PASSWORD }}
+          CODESIGN_KEY_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_KEY_PASSWORD }}
+          CODESIGN_ALIAS: ${{ secrets.WINDOWS_CODESIGN_ALIAS }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($name in @('CODESIGN_JKS_B64', 'CODESIGN_STORE_PASSWORD', 'CODESIGN_KEY_PASSWORD', 'CODESIGN_ALIAS')) {
+            if ([string]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($name))) {
+              throw "Missing code signing secret '$name'."
+            }
+          }
+
+          $jks = Join-Path $env:RUNNER_TEMP 'codesign.jks'
+          $pfx = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
+          $cer = Join-Path $env:RUNNER_TEMP 'codesign.cer'
+          [IO.File]::WriteAllBytes($jks, [Convert]::FromBase64String($env:CODESIGN_JKS_B64))
+
+          $keytool = Join-Path $env:JAVA_HOME 'bin\keytool.exe'
+          if (-not (Test-Path -LiteralPath $keytool)) { throw 'keytool.exe was not found.' }
+
+          # signtool and dotnet nuget sign require PKCS#12 (PFX); the JKS is
+          # converted per run and never leaves the runner temp directory.
+          & $keytool -importkeystore -noprompt `
+            -srckeystore $jks -srcstoretype JKS `
+            -srcstorepass $env:CODESIGN_STORE_PASSWORD `
+            -srckeypass $env:CODESIGN_KEY_PASSWORD `
+            -srcalias $env:CODESIGN_ALIAS `
+            -destkeystore $pfx -deststoretype PKCS12 `
+            -deststorepass $env:CODESIGN_STORE_PASSWORD `
+            -destalias $env:CODESIGN_ALIAS
+          if ($LASTEXITCODE -ne 0) { throw 'Converting the JKS keystore to PFX failed.' }
+
+          $cert = [Security.Cryptography.X509Certificates.X509Certificate2]::new(
+            $pfx, $env:CODESIGN_STORE_PASSWORD)
+          [IO.File]::WriteAllBytes($cer, $cert.Export([Security.Cryptography.X509Certificates.X509ContentType]::Cert))
+          $fingerprint = $cert.GetCertHashString([Security.Cryptography.HashAlgorithmName]::SHA256)
+
+          # The self-signed certificate must be a trust anchor for
+          # Get-AuthenticodeSignature and dotnet nuget verify to pass.
+          $imported = Import-Certificate -FilePath $cer -CertStoreLocation Cert:\LocalMachine\Root
+          if (-not $imported) { throw 'Importing the signing certificate for verification failed.' }
+
+          "CODESIGN_PFX=$pfx" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "CODESIGN_FP=$fingerprint" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Signing certificate ready (SHA-256 fingerprint $fingerprint)."
+
       - name: Verify tag, version, and source
         shell: pwsh
         env:
@@ -141,6 +196,34 @@ jobs:
           $viewCount = @(Get-ChildItem -Path (Join-Path $publish "Views") -Filter *.xbf).Count
           if ($viewCount -eq 0) { throw "The portable publish is missing the compiled view XAML." }
 
+      - name: Sign portable binaries
+        shell: pwsh
+        env:
+          CODESIGN_STORE_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_STORE_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $signtool = @(Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe |
+            Where-Object { $_.Directory.Name -eq 'x64' -and $_.Directory.Parent.Name -match '^\d+\.\d+' } |
+            Sort-Object { [version]$_.Directory.Parent.Name } |
+            Select-Object -Last 1).FullName
+          if (-not $signtool) { throw 'signtool.exe was not found.' }
+
+          $publish = "artifacts/publish/DroidDeck-$env:RELEASE_VERSION-win-x64"
+          $targets = @(Get-ChildItem -Path $publish -Recurse -Include *.exe, *.dll -File)
+          if ($targets.Count -eq 0) { throw 'No executables or libraries found to sign.' }
+
+          $signArguments = @(
+            'sign', '/fd', 'SHA256', '/td', 'SHA256', '/tr', 'http://timestamp.digicert.com',
+            '/f', $env:CODESIGN_PFX, '/p', $env:CODESIGN_STORE_PASSWORD,
+            '/d', 'DroidDeck', '/du', 'https://github.com/raulshma/droiddeck')
+
+          for ($i = 0; $i -lt $targets.Count; $i += 50) {
+            $end = [Math]::Min($i + 49, $targets.Count - 1)
+            & $signtool @signArguments @($targets[$i..$end].FullName) | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "signtool failed on batch starting at index $i." }
+          }
+          Write-Host "Signed $($targets.Count) binaries."
+
       - name: Create portable zip
         shell: pwsh
         run: |
@@ -155,12 +238,50 @@ jobs:
             [System.IO.Compression.CompressionLevel]::Optimal,
             $true)
 
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          choco install innosetup --yes --no-progress
+          $iscc = @(Get-Item 'C:\Program Files (x86)\Inno Setup *\ISCC.exe' |
+            Sort-Object { $_.Directory.Name } -Descending |
+            Select-Object -First 1).FullName
+          if (-not $iscc) { throw 'ISCC.exe was not found after installing Inno Setup.' }
+
+          & $iscc "/DAppVersion=$env:RELEASE_VERSION" `
+            "/DAppSource=$env:GITHUB_WORKSPACE/artifacts/publish/DroidDeck-$env:RELEASE_VERSION-win-x64" `
+            "/DAppOutput=$env:GITHUB_WORKSPACE/artifacts" `
+            "$env:GITHUB_WORKSPACE/packaging/installer/droiddeck.iss"
+          if ($LASTEXITCODE -ne 0) { throw 'Compiling the installer failed.' }
+
+          $setup = "artifacts/DroidDeck-$env:RELEASE_VERSION-setup-win-x64.exe"
+          if (-not (Test-Path -LiteralPath $setup)) { throw "The installer output '$setup' is missing." }
+
+      - name: Sign Windows installer
+        shell: pwsh
+        env:
+          CODESIGN_STORE_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_STORE_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $signtool = @(Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe |
+            Where-Object { $_.Directory.Name -eq 'x64' -and $_.Directory.Parent.Name -match '^\d+\.\d+' } |
+            Sort-Object { [version]$_.Directory.Parent.Name } |
+            Select-Object -Last 1).FullName
+          if (-not $signtool) { throw 'signtool.exe was not found.' }
+
+          $setup = "artifacts/DroidDeck-$env:RELEASE_VERSION-setup-win-x64.exe"
+          & $signtool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com `
+            /f $env:CODESIGN_PFX /p $env:CODESIGN_STORE_PASSWORD `
+            /d 'DroidDeck' /du 'https://github.com/raulshma/droiddeck' $setup
+          if ($LASTEXITCODE -ne 0) { throw 'Signing the installer failed.' }
+
       - name: Enforce size budget
         shell: pwsh
         run: |
           dotnet run --project tools/DroidDeck.ReleaseCheck/DroidDeck.ReleaseCheck.csproj -c Release --no-build -- `
             size --directory "artifacts/publish/DroidDeck-$env:RELEASE_VERSION-win-x64" `
             --zip "artifacts/DroidDeck-$env:RELEASE_VERSION-win-x64.zip" `
+            --installer "artifacts/DroidDeck-$env:RELEASE_VERSION-setup-win-x64.exe" `
             --label "$env:RELEASE_VERSION $env:GITHUB_SHA no-r2r" `
             --json artifacts/release/size.json
           if ($LASTEXITCODE -ne 0) { throw "The portable size budget failed." }
@@ -188,6 +309,59 @@ jobs:
             -LiteralPath (Join-Path $manifestDirectory "_manifest/spdx_2.2/manifest.spdx.json") `
             -Destination "artifacts/DroidDeck-$env:RELEASE_VERSION.spdx.json"
 
+      - name: Sign NuGet packages
+        shell: pwsh
+        env:
+          CODESIGN_STORE_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_STORE_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $packages = @(Get-ChildItem -Path artifacts/nuget/*.nupkg)
+          if ($packages.Count -ne 4) { throw "Expected four SDK packages, found $($packages.Count)." }
+
+          foreach ($package in $packages) {
+            dotnet nuget sign $package.FullName `
+              --certificate-path $env:CODESIGN_PFX `
+              --certificate-password $env:CODESIGN_STORE_PASSWORD `
+              --timestamper http://timestamp.digicert.com `
+              --hash-algorithm SHA256
+            if ($LASTEXITCODE -ne 0) { throw "Signing '$($package.Name)' failed." }
+          }
+
+      - name: Verify code signatures
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fingerprint = $env:CODESIGN_FP
+          $publish = "artifacts/publish/DroidDeck-$env:RELEASE_VERSION-win-x64"
+          $setup = "artifacts/DroidDeck-$env:RELEASE_VERSION-setup-win-x64.exe"
+
+          $failures = @()
+          $checked = 0
+          foreach ($file in @(Get-ChildItem -Path $publish -Recurse -Include *.exe, *.dll -File) + @(Get-Item $setup)) {
+            $signature = Get-AuthenticodeSignature -FilePath $file.FullName
+            $certMatch = $false
+            if ($signature.SignerCertificate) {
+              $certMatch = $signature.SignerCertificate.GetCertHashString(
+                [Security.Cryptography.HashAlgorithmName]::SHA256) -eq $fingerprint
+            }
+            $checked++
+            if ($signature.Status -ne 'Valid' -or -not $certMatch -or -not $signature.TimeStamperCertificate) {
+              $failures += "$($file.FullName): status=$($signature.Status), certMatch=$certMatch, " +
+                "timestamped=$([bool]$signature.TimeStamperCertificate)"
+            }
+          }
+
+          foreach ($package in Get-ChildItem -Path artifacts/nuget/*.nupkg) {
+            dotnet nuget verify $package.FullName --certificate-fingerprint $fingerprint
+            if ($LASTEXITCODE -ne 0) { $failures += "$($package.FullName): NuGet signature verification failed." }
+            $checked++
+          }
+
+          if ($failures.Count -gt 0) {
+            throw "Signature verification failed for $($failures.Count) of $checked assets:`n$($failures -join "`n")"
+          }
+          Write-Host "Verified $checked signed assets."
+
       - name: Generate checksums and verify assets
         shell: pwsh
         run: |
@@ -196,6 +370,7 @@ jobs:
 
           $assets = @(
             "artifacts/DroidDeck-$env:RELEASE_VERSION-win-x64.zip",
+            "artifacts/DroidDeck-$env:RELEASE_VERSION-setup-win-x64.exe",
             "artifacts/DroidDeck-$env:RELEASE_VERSION.spdx.json"
           ) + $packages
 
@@ -223,6 +398,7 @@ jobs:
 
           $assets = @(
             "artifacts/DroidDeck-$env:RELEASE_VERSION-win-x64.zip",
+            "artifacts/DroidDeck-$env:RELEASE_VERSION-setup-win-x64.exe",
             "artifacts/DroidDeck-$env:RELEASE_VERSION.spdx.json",
             "artifacts/SHA256SUMS.txt"
           ) + @(Get-ChildItem -Path artifacts/nuget/*.nupkg | ForEach-Object FullName)
@@ -247,6 +423,14 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Creating draft release '$tag' failed." }
           }
           Write-Host "Draft release: https://github.com/$env:GITHUB_REPOSITORY/releases/tag/$tag"
+
+      - name: Remove code signing material
+        if: always()
+        shell: pwsh
+        run: |
+          foreach ($name in @('codesign.jks', 'codesign.pfx', 'codesign.cer')) {
+            Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP $name) -Force -ErrorAction SilentlyContinue
+          }
 
       - name: Upload release evidence
         if: always()

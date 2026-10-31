@@ -8,10 +8,12 @@ diagnostics reports are generated locally and redacted.
 
 `0.1.0` is published on the
 [releases page](https://github.com/raulshma/droiddeck/releases/tag/v0.1.0).
-Download `DroidDeck-0.1.0-win-x64.zip`, verify it against
-`SHA256SUMS.txt`, extract the folder, and run `DroidDeck.exe`. The portable build
-is self-contained and needs no .NET SDK or Windows App SDK runtime. It is
-unsigned, so Windows SmartScreen may warn; see the
+Future releases ship a per-user installer (`DroidDeck-<version>-setup-win-x64.exe`)
+alongside the portable zip. Verify the download against `SHA256SUMS.txt`, then
+either run the installer or extract the zip folder and run `DroidDeck.exe`. The
+portable build is self-contained and needs no .NET SDK or Windows App SDK
+runtime. Release binaries are signed with DroidDeck's self-signed certificate,
+so Windows SmartScreen may still warn; see the
 [release notes](docs/releases/v0.1.0.md) for limitations and checksum
 steps. The same release carries the plugin SDK packages and the SBOM.
 
@@ -30,7 +32,7 @@ The same pages build as a GitHub Pages site from `docs/` (see
 
 ## Requirements
 
-For the portable download: Windows 11 (or Windows 10 1809+), x64.
+For the installer and the portable download: Windows 11 (or Windows 10 1809+), x64.
 
 To build from source:
 

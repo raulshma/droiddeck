@@ -7,6 +7,17 @@ their release: `0.0.1-alpha` precedes `0.0.1`.
 
 ## [Unreleased]
 
+### Added
+
+- Windows installer: releases now include a per-user
+  `DroidDeck-<version>-setup-win-x64.exe` (Inno Setup, no administrator
+  rights) alongside the portable zip.
+- Code-signed release assets: the portable payload, installer, and SDK
+  packages are signed with a self-signed certificate (JKS keystore, RFC 3161
+  timestamps) and the release workflow fails when a signature is missing,
+  mistimestamped, or from another certificate.
+- `droiddeck-release-check size` gained an `--installer` budget (150 MiB).
+
 ## [0.1.0] - 2026-10-31
 
 Project-detection and shell-consistency release. Internals continue the
