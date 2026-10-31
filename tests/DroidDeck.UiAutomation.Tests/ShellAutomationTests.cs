@@ -6,6 +6,7 @@ using System.Text.Json;
 using FlaUI.Core;
 using FlaUI.Core.AutomationElements;
 using FlaUI.Core.Definitions;
+using FlaUI.Core.WindowsAPI;
 using FlaUI.UIA3;
 using DroidDeck.TestSupport;
 
@@ -294,6 +295,53 @@ public sealed class ShellAutomationTests
             Assert.True(
                 window.FindFirstDescendant(cf => cf.ByAutomationId("HomeDevicesEmptyText")) is null,
                 "The home device empty state stayed visible after a device connected.");
+        }
+        finally
+        {
+            CloseApplication(application, processId);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "UI")]
+    public async Task TitleBarMenuStaysClickableOverTheDragRegion()
+    {
+        if (!UiTestsEnabled())
+        {
+            return;
+        }
+
+        using var temp = new TempDirectory("droiddeck-ui");
+        var stateDirectory = temp.CreateDirectory("state");
+        var dataDirectory = temp.CreateDirectory("data");
+        WriteSettings(dataDirectory);
+        await using var server = await FakeAdbServerProcess.StartAsync(stateDirectory, "empty", "FAKE-UI-05");
+
+        var process = StartApplication(dataDirectory, stateDirectory, server.Port, "empty", "FAKE-UI-05");
+        var processId = process.Id;
+        using var application = Application.Attach(process);
+        try
+        {
+            using var automation = new UIA3Automation();
+            var window = application.GetMainWindow(automation, TimeSpan.FromSeconds(30)) ??
+                throw new InvalidOperationException("The DroidDeck main window did not appear.");
+
+            // The menu bar lives in the custom title bar, so a click only reaches
+            // it when the shell carved a passthrough region out of the drag area.
+            var appMenu = window.FindFirstDescendant(cf => cf.ByAutomationId("Menu_App")) ??
+                throw new InvalidOperationException("The App menu was not found in the title bar.");
+            appMenu.Click();
+
+            await Wait.UntilAsync(
+                () => window.FindFirstDescendant(cf => cf.ByAutomationId("MenuCommand_shell.palette")) is not null,
+                TimeSpan.FromSeconds(5),
+                "The App menu did not open after clicking it in the title bar.");
+
+            FlaUI.Core.Input.Keyboard.Press(VirtualKeyShort.ESCAPE);
+            await Wait.UntilAsync(
+                () => window.FindFirstDescendant(cf => cf.ByAutomationId("MenuCommand_shell.palette")) is null,
+                TimeSpan.FromSeconds(5),
+                "The App menu did not close after pressing Escape.");
         }
         finally
         {

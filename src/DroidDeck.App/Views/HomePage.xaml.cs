@@ -784,6 +784,16 @@ public sealed partial class HomePage : Page, IRefreshablePage, IDisposable
         App.Instance.Navigate("devices");
     }
 
+    private void OnMirrorDeviceClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is DeviceRowViewModel row)
+        {
+            _workspace.OpenDevice(row.Serial);
+        }
+
+        App.Instance.Navigate("devices/mirror");
+    }
+
     private void OnSeeAllSessionsClick(object sender, RoutedEventArgs e) => App.Instance.Navigate("history");
 
     private void OnOpenProjectsClick(object sender, RoutedEventArgs e) => App.Instance.Navigate("projects");

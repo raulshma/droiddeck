@@ -87,7 +87,7 @@ public sealed partial class LocalizationArchitectureTests
             .Descendants()
             .Where(element => element.Name.LocalName == "NavigationViewItem")
             .ToArray();
-        Assert.Equal(14, navigationItems.Length);
+        Assert.Equal(19, navigationItems.Length);
         Assert.All(navigationItems, item =>
         {
             Assert.StartsWith(

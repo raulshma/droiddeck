@@ -421,8 +421,9 @@
                                                         VerticalAlignment="Center">
                                                         <Button
                                                             Content="Mirror"
-                                                            IsEnabled="False"
-                                                            ToolTipService.ToolTip="Screen mirroring arrives with the screen tools milestone."
+                                                            IsEnabled="{Binding IsReady}"
+                                                            Click="OnMirrorDeviceClick"
+                                                            ToolTipService.ToolTip="Open the screen mirror for this device."
                                                             AutomationProperties.AutomationId="HomeMirrorDeviceButton" />
                                                         <Button
                                                             Content="Open"

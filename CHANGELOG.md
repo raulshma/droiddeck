@@ -17,6 +17,17 @@ their release: `0.0.1-alpha` precedes `0.0.1`.
   timestamps) and the release workflow fails when a signature is missing,
   mistimestamped, or from another certificate.
 - `droiddeck-release-check size` gained an `--installer` budget (150 MiB).
+- The sidebar lists every screen: device tools, mirror, performance,
+  inspector, and session joined the existing entries, and the pane scrolls
+  when the window is short. Settings, diagnostics, and about stay pinned at
+  the bottom.
+- Home device rows open the screen mirror for that device directly.
+
+### Changed
+
+- The command menus moved into the title bar row next to the app title and
+  connected-device count, freeing a row of vertical space; the menu bar
+  stays clickable over the drag region.
 
 ## [0.1.0] - 2026-10-31
 

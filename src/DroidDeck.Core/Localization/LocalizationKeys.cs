@@ -15,6 +15,18 @@ public static class LocalizationKeys
     /// <summary>Devices navigation label.</summary>
     public const string NavDevices = "shell.nav.devices";
 
+    /// <summary>Device tools navigation label.</summary>
+    public const string NavDeviceTools = "shell.nav.device-tools";
+
+    /// <summary>Mirror navigation label.</summary>
+    public const string NavMirror = "shell.nav.mirror";
+
+    /// <summary>Performance navigation label.</summary>
+    public const string NavPerformance = "shell.nav.performance";
+
+    /// <summary>Inspector navigation label.</summary>
+    public const string NavInspector = "shell.nav.inspector";
+
     /// <summary>Multi-device navigation label.</summary>
     public const string NavMultiDevice = "shell.nav.multi-device";
 
@@ -26,6 +38,9 @@ public static class LocalizationKeys
 
     /// <summary>Projects navigation label.</summary>
     public const string NavProjects = "shell.nav.projects";
+
+    /// <summary>Session navigation label.</summary>
+    public const string NavSession = "shell.nav.session";
 
     /// <summary>Tests navigation label.</summary>
     public const string NavTests = "shell.nav.tests";

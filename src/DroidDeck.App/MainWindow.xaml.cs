@@ -21,6 +21,7 @@ using DroidDeck.Plugin.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI;
+using Microsoft.UI.Input;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -76,10 +77,15 @@ public sealed partial class MainWindow : Window
         {
             ["home"] = LocalizationKeys.NavHome,
             ["devices"] = LocalizationKeys.NavDevices,
+            ["devices/tools"] = LocalizationKeys.NavDeviceTools,
+            ["devices/mirror"] = LocalizationKeys.NavMirror,
+            ["devices/performance"] = LocalizationKeys.NavPerformance,
+            ["devices/inspector"] = LocalizationKeys.NavInspector,
             ["multi-device"] = LocalizationKeys.NavMultiDevice,
             ["devices/emulators"] = LocalizationKeys.NavEmulators,
             ["devices/wireless"] = LocalizationKeys.NavWireless,
             ["projects"] = LocalizationKeys.NavProjects,
+            ["session"] = LocalizationKeys.NavSession,
             ["tests"] = LocalizationKeys.NavTests,
             ["history"] = LocalizationKeys.NavHistory,
             ["activity"] = LocalizationKeys.NavActivity,
@@ -197,7 +203,7 @@ public sealed partial class MainWindow : Window
         }
 
         ExtendsContentIntoTitleBar = true;
-        SetTitleBar(TitleBarDragRegion);
+        EnableTitleBarInteractivity();
         TryEnableMica();
 
         _devices.DevicesChanged += OnDevicesChanged;
@@ -290,6 +296,7 @@ public sealed partial class MainWindow : Window
         DiagnosticsIdText.Text = _localizer.Format(
             LocalizationKeys.ShellStatusDiagnosticsId,
             _diagnostics.DiagnosticsId);
+        UpdateTitleBarPassthrough();
         UpdateStatus();
     }
 
@@ -356,7 +363,7 @@ public sealed partial class MainWindow : Window
             _palette.Opened += (_, _) => SetAcceleratorsEnabled(false);
             _palette.Closed += (_, _) => SetAcceleratorsEnabled(true);
             _palette.ExecuteRequested += OnPaletteExecuteRequested;
-            Grid.SetRowSpan(_palette, 4);
+            Grid.SetRowSpan(_palette, 3);
             RootGrid.Children.Add(_palette);
         }
 
@@ -1457,6 +1464,61 @@ public sealed partial class MainWindow : Window
         catch (COMException exception)
         {
             _logger.LogInformation(exception, "Mica is not available; using the default backdrop.");
+        }
+    }
+
+    /// <summary>
+    /// Sets up the title bar row so the menu bar stays clickable while the rest
+    /// of the row keeps dragging the window: the default title bar drag region
+    /// is used, and interactive content carves out explicit passthrough areas.
+    /// </summary>
+    private void EnableTitleBarInteractivity()
+    {
+        try
+        {
+            AppWindow.TitleBar.PreferredHeightOption = TitleBarHeightOption.Tall;
+        }
+        catch (COMException exception)
+        {
+            _logger.LogInformation(exception, "The tall title bar height is not available.");
+        }
+
+        ShellMenuBar.SizeChanged += (_, _) => UpdateTitleBarPassthrough();
+        TitleBarRow.SizeChanged += (_, _) => UpdateTitleBarPassthrough();
+    }
+
+    /// <summary>Recomputes the passthrough region over the title bar menus.</summary>
+    private void UpdateTitleBarPassthrough()
+    {
+        if (TitleBarRow.XamlRoot is not { } root)
+        {
+            return;
+        }
+
+        var scale = root.RasterizationScale > 0 ? root.RasterizationScale : 1;
+        try
+        {
+            var regions = Array.Empty<RectInt32>();
+            if (ShellMenuBar.ActualWidth > 0 && ShellMenuBar.ActualHeight > 0)
+            {
+                var bounds = ShellMenuBar.TransformToVisual(null).TransformBounds(
+                    new Windows.Foundation.Rect(0, 0, ShellMenuBar.ActualWidth, ShellMenuBar.ActualHeight));
+                regions =
+                [
+                    new RectInt32(
+                        (int)Math.Round(bounds.X * scale),
+                        (int)Math.Round(bounds.Y * scale),
+                        Math.Max(1, (int)Math.Round(bounds.Width * scale)),
+                        Math.Max(1, (int)Math.Round(bounds.Height * scale))),
+                ];
+            }
+
+            var nonClient = InputNonClientPointerSource.GetForWindowId(AppWindow.Id);
+            nonClient.SetRegionRects(NonClientRegionKind.Passthrough, regions);
+        }
+        catch (COMException exception)
+        {
+            _logger.LogInformation(exception, "The title bar passthrough region could not be updated.");
         }
     }
 

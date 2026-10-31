@@ -19,16 +19,21 @@
         TabFocusNavigation="Cycle">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" MinHeight="48" />
-            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" MinHeight="34" />
         </Grid.RowDefinitions>
 
         <Grid
-            x:Name="TitleBarDragRegion"
+            x:Name="TitleBarRow"
             Grid.Row="0"
-            Padding="16,0,150,0"
-            Background="Transparent">
+            MinHeight="48"
+            Background="Transparent"
+            ColumnSpacing="16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
             <StackPanel
                 Orientation="Horizontal"
                 Spacing="10"
@@ -46,17 +51,17 @@
                     TextTrimming="CharacterEllipsis"
                     AutomationProperties.LiveSetting="Polite" />
             </StackPanel>
+            <MenuBar
+                x:Name="ShellMenuBar"
+                Grid.Column="1"
+                VerticalAlignment="Center"
+                AutomationProperties.AutomationId="MainMenu"
+                AutomationProperties.Name="{StaticResource Loc.shell.menu.name}" />
         </Grid>
-
-        <MenuBar
-            x:Name="ShellMenuBar"
-            Grid.Row="1"
-            AutomationProperties.AutomationId="MainMenu"
-            AutomationProperties.Name="{StaticResource Loc.shell.menu.name}" />
 
         <NavigationView
             x:Name="Navigation"
-            Grid.Row="2"
+            Grid.Row="1"
             IsBackButtonVisible="Collapsed"
             IsSettingsVisible="False"
             PaneDisplayMode="Left"
@@ -82,6 +87,42 @@
                     AutomationProperties.AutomationId="NavDevices">
                     <NavigationViewItem.Icon>
                         <SymbolIcon Symbol="Phone" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem
+                    Content="{StaticResource Loc.shell.nav.device-tools}"
+                    AccessKey="O"
+                    Tag="devices/tools"
+                    AutomationProperties.AutomationId="NavDeviceTools">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Manage" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem
+                    Content="{StaticResource Loc.shell.nav.mirror}"
+                    AccessKey="R"
+                    Tag="devices/mirror"
+                    AutomationProperties.AutomationId="NavMirror">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Remote" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem
+                    Content="{StaticResource Loc.shell.nav.performance}"
+                    AccessKey="F"
+                    Tag="devices/performance"
+                    AutomationProperties.AutomationId="NavPerformance">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Target" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem
+                    Content="{StaticResource Loc.shell.nav.inspector}"
+                    AccessKey="N"
+                    Tag="devices/inspector"
+                    AutomationProperties.AutomationId="NavInspector">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Find" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
                 <NavigationViewItem
@@ -118,6 +159,15 @@
                     AutomationProperties.AutomationId="NavProjects">
                     <NavigationViewItem.Icon>
                         <SymbolIcon Symbol="Library" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem
+                    Content="{StaticResource Loc.shell.nav.session}"
+                    AccessKey="U"
+                    Tag="session"
+                    AutomationProperties.AutomationId="NavSession">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Go" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
                 <NavigationViewItem
@@ -206,7 +256,7 @@
 
         <InfoBar
             x:Name="NotificationBar"
-            Grid.Row="2"
+            Grid.Row="1"
             MaxWidth="380"
             MinWidth="240"
             Margin="16"
@@ -227,7 +277,7 @@
         </InfoBar>
 
         <Grid
-            Grid.Row="3"
+            Grid.Row="2"
             Padding="12,0"
             Background="{ThemeResource LayerFillColorDefaultBrush}"
             BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
@@ -336,7 +386,7 @@
 
         <Border
             x:Name="DropOverlay"
-            Grid.RowSpan="4"
+            Grid.RowSpan="3"
             Background="{ThemeResource SystemFillColorAttentionBackgroundBrush}"
             IsHitTestVisible="False"
             Visibility="Collapsed">

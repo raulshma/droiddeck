@@ -71,7 +71,8 @@ never block startup; only the features that need them are disabled.
 - **Active sessions** lists running builds, installs, and launches with their state
   and current step.
 - **Recent projects** reopens a project page.
-- **Devices** shows connected devices and their state.
+- **Devices** shows connected devices and their state. Each ready device has a
+  **Mirror** button that opens the screen mirror for that device.
 - **Environment** summarizes toolchain health.
 - **Plugin widgets** mount home widgets contributed by plugins.
 
