@@ -100,8 +100,10 @@ every action:
 
 ### Mirror and capture
 
-**Mirror** starts scrcpy docked over the pane or in an external window. Docked
-mirrors stop when you leave the page; external windows stay open.
+**Mirror** starts scrcpy docked over the pane or in an external window. A docked
+mirror is embedded inside the app window: it has no taskbar button of its own,
+never takes the foreground away from the app, and minimizes and moves with the
+app. Docked mirrors stop when you leave the page; external windows stay open.
 
 - **Start/Stop**, **Pop out**, **Focus window**, and **Toggle fullscreen** control the
   session.

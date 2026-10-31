@@ -11,6 +11,7 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using WinRT.Interop;
 
 namespace DroidDeck.App.Views;
 
@@ -299,6 +300,7 @@ public sealed partial class MirrorPage : Page, IRefreshablePage, IDisposable
 
         var settings = _configuration.Current.Settings.Screen;
         ScreenBounds? bounds = null;
+        var host = IntPtr.Zero;
         if (mode == ScreenHostingMode.DockedCompanion)
         {
             bounds = GetPaneBounds();
@@ -311,6 +313,12 @@ public sealed partial class MirrorPage : Page, IRefreshablePage, IDisposable
                     "Resize or reopen the page, or choose External window.");
                 return;
             }
+
+            // Embedding makes the scrcpy window a child of the app window, so it
+            // has no taskbar button of its own and never steals the foreground.
+            host = App.Instance.Window is { } window
+                ? WindowNative.GetWindowHandle(window)
+                : IntPtr.Zero;
         }
 
         SetBusy(true);
@@ -320,6 +328,7 @@ public sealed partial class MirrorPage : Page, IRefreshablePage, IDisposable
             {
                 HostingMode = mode,
                 Bounds = bounds,
+                HostHandle = host,
                 MaxSize = settings.MaxSize,
                 MaxFps = settings.MaxFps,
                 VideoBitRate = settings.VideoBitRate,
@@ -339,14 +348,16 @@ public sealed partial class MirrorPage : Page, IRefreshablePage, IDisposable
                 var focus = await _screen.FocusAsync(device.Serial);
                 if (!focus.Succeeded)
                 {
-                    ShowGuidance("The mirror started, but its window could not be focused. Select it from the taskbar.");
+                    ShowGuidance(mode == ScreenHostingMode.ExternalWindow
+                        ? "The mirror started, but its window could not be focused. Select it from the taskbar."
+                        : "The mirror started, but its window could not be focused. Click the mirror pane to interact with the device.");
                 }
                 else
                 {
                     ShowGuidance(
                         mode == ScreenHostingMode.ExternalWindow
                             ? "The scrcpy window has focus. Use it for touch, keyboard, and clipboard input."
-                            : "The scrcpy window is docked over the pane and has focus.");
+                            : "The mirror is embedded in the pane and has keyboard focus. Click the pane to control the device.");
                 }
             }
             else if (result.Guidance is { Length: > 0 } guidance)

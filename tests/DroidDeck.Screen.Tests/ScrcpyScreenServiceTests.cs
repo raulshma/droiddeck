@@ -197,6 +197,68 @@ public sealed class ScrcpyScreenServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task StartAsync_WithHostHandleEmbedsTheDockedWindow()
+    {
+        await using var service = CreateService();
+        var host = new IntPtr(12345);
+        var options = new ScreenStartOptions
+        {
+            HostingMode = ScreenHostingMode.DockedCompanion,
+            Bounds = new ScreenBounds(15, 25, 900, 700),
+            HostHandle = host,
+        };
+
+        var result = await service.StartAsync("serial", options);
+
+        Assert.True(result.Succeeded);
+        await WaitForConditionAsync(() => _windows.Embeds.Count > 0);
+        var embed = Assert.Single(_windows.Embeds);
+        Assert.Equal(host, embed.Host);
+        Assert.Equal(new ScreenBounds(15, 25, 900, 700), embed.Bounds);
+        Assert.Null(Assert.Single(service.ActiveSessions).Notice);
+    }
+
+    [Fact]
+    public async Task StartAsync_EmbedFailureKeepsTheOverlayAndRecordsANotice()
+    {
+        _windows.EmbedResult = false;
+        await using var service = CreateService(windowWait: TimeSpan.Zero);
+        var options = new ScreenStartOptions
+        {
+            HostingMode = ScreenHostingMode.DockedCompanion,
+            Bounds = new ScreenBounds(15, 25, 900, 700),
+            HostHandle = new IntPtr(12345),
+        };
+
+        var result = await service.StartAsync("serial", options);
+
+        Assert.True(result.Succeeded);
+        Assert.Single(_windows.Embeds);
+        await WaitForConditionAsync(() =>
+            service.ActiveSessions.SingleOrDefault(session => session.Serial == "serial")?.Notice is not null);
+        Assert.Contains("embedded", Assert.Single(service.ActiveSessions).Notice, StringComparison.Ordinal);
+        Assert.Equal(ScreenHostingMode.DockedCompanion, Assert.Single(service.ActiveSessions).HostingMode);
+    }
+
+    [Fact]
+    public async Task StartAsync_DockedWithoutHostOrExternalWindowNeverEmbeds()
+    {
+        await using var service = CreateService();
+        await service.StartAsync("overlay", new ScreenStartOptions
+        {
+            HostingMode = ScreenHostingMode.DockedCompanion,
+            Bounds = new ScreenBounds(1, 2, 300, 400),
+        });
+        await service.StartAsync("external", new ScreenStartOptions
+        {
+            HostingMode = ScreenHostingMode.ExternalWindow,
+            HostHandle = new IntPtr(12345),
+        });
+
+        Assert.Empty(_windows.Embeds);
+    }
+
+    [Fact]
     public async Task PressKeyAsync_MapsKeyAndShowsCommand()
     {
         await using var service = CreateService();
@@ -342,6 +404,16 @@ public sealed class ScrcpyScreenServiceTests : IDisposable
 
             Assert.Empty(service.ActiveSessions);
             Assert.Empty(_guard.Snapshot.Active);
+        }
+    }
+
+    /// <summary>Waits for the fire-and-forget embed attempt to run on the service.</summary>
+    private static async Task WaitForConditionAsync(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (!condition() && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
         }
     }
 

@@ -21,6 +21,9 @@ public sealed class ScrcpyScreenService : IScreenService
         "Install scrcpy 2.0 or newer (winget install Genymobile.scrcpy) or set the scrcpy path " +
         "in Settings > Tools, then retry. Enable USB debugging and authorize this computer on the device.";
 
+    private const string EmbedFailedNotice =
+        "The mirror could not be embedded in the pane; it floats over the pane instead.";
+
     private static readonly TimeSpan StartupProbe = TimeSpan.FromMilliseconds(300);
     private static readonly TimeSpan GracefulCloseWait = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan WindowRetryInterval = TimeSpan.FromMilliseconds(100);
@@ -213,6 +216,13 @@ public sealed class ScrcpyScreenService : IScreenService
 
         context.Monitor = MonitorSessionAsync(context);
         RaiseChanged();
+        if (mode == ScreenHostingMode.DockedCompanion &&
+            effective.HostHandle != IntPtr.Zero &&
+            effective.Bounds is { IsValid: true } hostBounds)
+        {
+            _ = EmbedAsync(context, effective.HostHandle, hostBounds);
+        }
+
         if (notice is not null)
         {
             _logger.LogWarning("{Notice}", notice);
@@ -736,6 +746,46 @@ public sealed class ScrcpyScreenService : IScreenService
 
             await Task.Delay(WindowRetryInterval, _timeProvider, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Embeds a docked mirror into the app window once its SDL window exists.
+    /// Failure keeps the overlay behavior, so the mirror still floats over the
+    /// pane and remains usable.
+    /// </summary>
+    private async Task EmbedAsync(SessionContext context, IntPtr host, ScreenBounds bounds)
+    {
+        bool embedded;
+        try
+        {
+            embedded = await WaitForWindowAsync(
+                context.Info.ProcessId,
+                processId => _windows.TryEmbed(processId, host, bounds),
+                CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "The {Serial} mirror could not be embedded.", context.Info.Serial);
+            embedded = false;
+        }
+
+        if (embedded)
+        {
+            return;
+        }
+
+        lock (_gate)
+        {
+            if (_sessions.TryGetValue(context.Info.Serial, out var current) && ReferenceEquals(current, context))
+            {
+                current.Info = current.Info with { Notice = EmbedFailedNotice };
+            }
+        }
+
+        RaiseChanged();
+        _logger.LogWarning(
+            "The {Serial} mirror could not be embedded in the app window; it floats over the pane.",
+            context.Info.Serial);
     }
 
     private async Task HideRecorderWindowAsync(int processId, CancellationToken cancellationToken)

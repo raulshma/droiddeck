@@ -153,6 +153,8 @@ internal sealed class FakeScreenWindowController : IScreenWindowController
 
     public bool CloseResult { get; set; }
 
+    public bool EmbedResult { get; set; } = true;
+
     public int MoveFailuresRemaining { get; set; }
 
     public int FocusFailuresRemaining { get; set; }
@@ -160,6 +162,8 @@ internal sealed class FakeScreenWindowController : IScreenWindowController
     public Action<int>? OnClose { get; set; }
 
     public List<(int ProcessId, ScreenBounds Bounds)> Moves { get; } = [];
+
+    public List<(int ProcessId, IntPtr Host, ScreenBounds Bounds)> Embeds { get; } = [];
 
     public List<int> Focused { get; } = [];
 
@@ -175,6 +179,12 @@ internal sealed class FakeScreenWindowController : IScreenWindowController
         }
 
         return MoveResult;
+    }
+
+    public bool TryEmbed(int processId, IntPtr host, ScreenBounds bounds)
+    {
+        Embeds.Add((processId, host, bounds));
+        return EmbedResult;
     }
 
     public bool TryFocus(int processId)

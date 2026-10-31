@@ -42,6 +42,13 @@ public sealed record ScreenStartOptions
     /// <summary>Gets the desktop rectangle used for a docked companion window.</summary>
     public ScreenBounds? Bounds { get; init; }
 
+    /// <summary>
+    /// Gets the parent window that a docked mirror is embedded into, so the
+    /// mirror lives inside the app like a tool window instead of floating as a
+    /// separate top-level window. Zero keeps the legacy overlay behavior.
+    /// </summary>
+    public IntPtr HostHandle { get; init; }
+
     /// <summary>Gets the maximum video dimension in pixels.</summary>
     public int? MaxSize { get; init; }
 
@@ -148,11 +155,18 @@ public enum DeviceControlKey
     Wake,
 }
 
-/// <summary>Moves and focuses the native scrcpy window.</summary>
+/// <summary>Moves, focuses, and embeds the native scrcpy window.</summary>
 public interface IScreenWindowController
 {
     /// <summary>Moves and resizes the top-level window owned by a process.</summary>
     bool TryMove(int processId, ScreenBounds bounds);
+
+    /// <summary>
+    /// Embeds the window owned by a process as a child of <paramref name="host"/>
+    /// and positions it over the docked bounds, so it stops being a separate
+    /// taskbar window.
+    /// </summary>
+    bool TryEmbed(int processId, IntPtr host, ScreenBounds bounds);
 
     /// <summary>Brings the window to the foreground.</summary>
     bool TryFocus(int processId);
