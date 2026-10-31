@@ -50,6 +50,42 @@ public sealed class ToolchainDoctorTests
     }
 
     [Fact]
+    public async Task ResolvesASpecDrivenToolAndParsesItsVersion()
+    {
+        using var temp = new TempDirectory();
+        var bin = temp.CreateDirectory("bin");
+        ToolchainTestEnvironment.WriteScript(temp, "bin/node.cmd", "v20.11.1");
+        using var configuration = await CreateConfigurationAsync(temp);
+        using var doctor = CreateDoctor(temp, configuration, [bin]);
+
+        var snapshot = await doctor.CheckAsync();
+        var node = Assert.IsType<ToolInfo>(snapshot.Get(ToolKind.Node));
+        var spec = ToolchainProbeTable.Get(ToolKind.Node);
+
+        Assert.True(node.IsAvailable, node.Error);
+        Assert.Equal(spec.DisplayName, node.DisplayName);
+        Assert.Contains(spec.PathNames, name => name.Equals("node.cmd", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal("20.11.1", node.Version);
+        Assert.EndsWith("node.cmd", node.Path, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ProbesScrcpyOnDemandThroughTheSpecTable()
+    {
+        using var temp = new TempDirectory();
+        var bin = temp.CreateDirectory("bin");
+        ToolchainTestEnvironment.WriteScript(temp, "bin/scrcpy.cmd", "scrcpy 2.4");
+        using var configuration = await CreateConfigurationAsync(temp);
+        using var doctor = CreateDoctor(temp, configuration, [bin]);
+
+        var scrcpy = await doctor.ProbeScrcpyAsync();
+
+        Assert.True(scrcpy.IsAvailable, scrcpy.Error);
+        Assert.Equal("2.4", scrcpy.Version);
+        Assert.EndsWith("scrcpy.cmd", scrcpy.Path, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task HonorsAnExecutableOverride()
     {
         using var temp = new TempDirectory();

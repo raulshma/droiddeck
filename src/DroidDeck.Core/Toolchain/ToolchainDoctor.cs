@@ -14,46 +14,6 @@ namespace DroidDeck.Core.Toolchain;
 /// </summary>
 public sealed class ToolchainDoctor : IToolchainService, IDisposable
 {
-    private const string AdbGuidance =
-        "Install Android SDK Platform-Tools through Android Studio's SDK Manager, or set the adb path in Settings > Tools.";
-
-    private const string Aapt2Guidance =
-        "Install Android SDK Build-Tools through Android Studio's SDK Manager, or set the aapt2 path in Settings > Tools.";
-
-    private const string EmulatorGuidance =
-        "Install the Android Emulator package through Android Studio's SDK Manager, or set the emulator path in Settings > Tools.";
-
-    private const string JavaGuidance =
-        "Install a JDK 17 or newer and set JAVA_HOME, or set the JDK path in Settings > Tools.";
-
-    private const string GradleGuidance =
-        "Use a project Gradle wrapper or install Gradle and add it to PATH, then set the Gradle path in Settings > Tools if needed.";
-
-    private const string FlutterGuidance =
-        "Install Flutter and add its bin folder to PATH, or set the Flutter path in Settings > Tools.";
-
-    private const string DartGuidance =
-        "Install the Flutter SDK (which bundles Dart) or the Dart SDK and add it to PATH, or set the Dart path in Settings > Tools.";
-
-    private const string NodeGuidance =
-        "Install Node.js and add it to PATH, or set the Node.js path in Settings > Tools.";
-
-    private const string ScrcpyGuidance =
-        "Install scrcpy and add it to PATH to use screen mirroring, or set the scrcpy path in Settings > Tools.";
-
-    private const string UnityGuidance =
-        "Install Unity Hub and an editor with Android Build Support, or set the Unity path in Settings > Tools.";
-
-    private const string DotNetGuidance =
-        "Install the .NET SDK and add it to PATH, or set the dotnet path in Settings > Tools.";
-
-    private const string MauiWorkloadGuidance =
-        "Install the .NET MAUI Android workload by running \"dotnet workload install maui-android\", then restart DroidDeck.";
-
-    private static readonly TimeSpan DefaultProbeTimeout = TimeSpan.FromSeconds(10);
-    private static readonly TimeSpan FlutterProbeTimeout = TimeSpan.FromSeconds(30);
-    private static readonly string[] DartExecutableNames = ["dart.exe", "dart.cmd", "dart.bat"];
-
     private readonly AppPaths _paths;
     private readonly IConfigurationService _configuration;
     private readonly IProcessRunner _runner;
@@ -127,25 +87,17 @@ public sealed class ToolchainDoctor : IToolchainService, IDisposable
             var androidSdk = ResolveAndroidSdk(tools.AndroidSdkPath);
             var sdkPath = androidSdk.IsAvailable ? androidSdk.Path : null;
 
-            var dotnetTask = ProbeDotNetAsync(tools.DotNetPath, cancellationToken);
-            var probes = new Task<ToolInfo>[]
-            {
-                Task.FromResult(androidSdk),
-                ProbeAdbAsync(tools.AdbPath, sdkPath, cancellationToken),
-                ProbeAapt2Async(tools.Aapt2Path, sdkPath, cancellationToken),
-                ProbeEmulatorAsync(tools.EmulatorPath, sdkPath, cancellationToken),
-                ProbeJavaAsync(tools.JavaHome, cancellationToken),
-                ProbeGradleAsync(tools.GradlePath, cancellationToken),
-                ProbeFlutterAsync(tools.FlutterPath, cancellationToken),
-                ProbeDartAsync(tools.DartPath, tools.FlutterPath, cancellationToken),
-                ProbeNodeAsync(tools.NodePath, cancellationToken),
-                ProbeNpmAsync(tools.NodePath, cancellationToken),
-                ProbeNpxAsync(tools.NodePath, cancellationToken),
-                ProbeScrcpyToolAsync(tools.ScrcpyPath, cancellationToken),
-                Task.FromResult(ProbeUnity(tools.UnityPath)),
-                dotnetTask,
-                ProbeMauiAndroidWorkloadAsync(dotnetTask, cancellationToken),
-            };
+            var context = new ToolProbeContext(tools, androidSdk, _environment);
+            var dotnetTask = ProbeAsync(ToolKind.DotNet, context, cancellationToken);
+            context = context with { DotNetTask = dotnetTask };
+
+            // The table is the single source of probe order; only the .NET SDK
+            // task is reused because the MAUI workload probe consumes it.
+            var probes = ToolchainProbeTable.All
+                .Select(spec => spec.Kind == ToolKind.DotNet
+                    ? dotnetTask
+                    : ProbeAsync(spec.Kind, context, cancellationToken))
+                .ToArray();
 
             var results = await Task.WhenAll(probes).ConfigureAwait(false);
             snapshot = new ToolchainSnapshot(results, _timeProvider.GetUtcNow(), sdkPath);
@@ -214,7 +166,7 @@ public sealed class ToolchainDoctor : IToolchainService, IDisposable
             DisplayName = "Android SDK",
             IsAvailable = false,
             Source = ToolDetectionSource.Missing,
-            Guidance = "Install Android Studio or the Android SDK command-line tools, then set the SDK path in Settings > Tools.",
+            Guidance = ToolchainProbeTable.AndroidSdkGuidance,
         };
     }
 
@@ -227,85 +179,31 @@ public sealed class ToolchainDoctor : IToolchainService, IDisposable
         Source = source,
     };
 
-    private Task<ToolInfo> ProbeAdbAsync(string? overridePath, string? sdkPath, CancellationToken cancellationToken)
+    /// <inheritdoc />
+    public async Task<ToolInfo> ProbeScrcpyAsync(CancellationToken cancellationToken = default)
     {
-        var extras = new List<string>();
-        AddUnderSdk(extras, sdkPath, "platform-tools", "adb");
-        return ProbeExecutableAsync(
-            ToolKind.Adb,
-            "adb",
-            overridePath,
-            ["adb.exe", "adb.cmd", "adb.bat"],
-            ["version"],
-            ToolVersionParser.Adb,
-            AdbGuidance,
-            extras,
-            DefaultProbeTimeout,
-            cancellationToken);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var context = new ToolProbeContext(
+                _configuration.Current.Settings.Tools,
+                AndroidSdk: null,
+                _environment);
+            return await ProbeAsync(ToolKind.Scrcpy, context, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
     }
 
-    private Task<ToolInfo> ProbeAapt2Async(string? overridePath, string? sdkPath, CancellationToken cancellationToken)
+    /// <summary>Probes Java, translating the JDK home override into an executable path.</summary>
+    internal Task<ToolInfo> ProbeJavaAsync(ToolProbeContext context, CancellationToken cancellationToken)
     {
-        var extras = new List<string>();
-        if (sdkPath is not null)
-        {
-            var latest = FindLatestBuildTool(sdkPath, "aapt2");
-            if (latest is not null)
-            {
-                extras.Add(latest);
-            }
-        }
-
-        return ProbeExecutableAsync(
-            ToolKind.Aapt2,
-            "aapt2",
-            overridePath,
-            ["aapt2.exe", "aapt2.cmd", "aapt2.bat"],
-            ["version"],
-            ToolVersionParser.LastTokenOfFirstLine,
-            Aapt2Guidance,
-            extras,
-            DefaultProbeTimeout,
-            cancellationToken);
-    }
-
-    private Task<ToolInfo> ProbeEmulatorAsync(string? overridePath, string? sdkPath, CancellationToken cancellationToken)
-    {
-        var extras = new List<string>();
-        AddUnderSdk(extras, sdkPath, "emulator", "emulator");
-        return ProbeExecutableAsync(
-            ToolKind.Emulator,
-            "Android emulator",
-            overridePath,
-            ["emulator.exe", "emulator.cmd", "emulator.bat"],
-            ["-version"],
-            ToolVersionParser.Emulator,
-            EmulatorGuidance,
-            extras,
-            DefaultProbeTimeout,
-            cancellationToken);
-    }
-
-    private Task<ToolInfo> ProbeJavaAsync(string? javaHome, CancellationToken cancellationToken)
-    {
-        var extras = new List<string>();
-        var javaHomeVariable = _environment.GetVariable("JAVA_HOME");
-        AddJavaHome(extras, javaHomeVariable);
-        if (!string.IsNullOrWhiteSpace(_environment.ProgramFiles))
-        {
-            AddJavaHome(extras, Path.Combine(_environment.ProgramFiles, "Android", "Android Studio", "jbr"));
-            AddJavaHome(extras, Path.Combine(_environment.ProgramFiles, "Android", "Android Studio Preview", "jbr"));
-        }
-
-        if (!string.IsNullOrWhiteSpace(_environment.LocalApplicationData))
-        {
-            AddJavaHome(extras, Path.Combine(_environment.LocalApplicationData, "Programs", "Android Studio", "jbr"));
-        }
-
         string? overrideJava = null;
-        if (!string.IsNullOrWhiteSpace(javaHome))
+        if (!string.IsNullOrWhiteSpace(context.Tools.JavaHome))
         {
-            var home = TryExpandPath(javaHome);
+            var home = TryExpandPath(context.Tools.JavaHome);
             if (home is null || !Directory.Exists(home))
             {
                 return Task.FromResult(new ToolInfo
@@ -313,7 +211,7 @@ public sealed class ToolchainDoctor : IToolchainService, IDisposable
                     Kind = ToolKind.Java,
                     DisplayName = "Java",
                     IsAvailable = false,
-                    Path = home ?? javaHome,
+                    Path = home ?? context.Tools.JavaHome,
                     Source = ToolDetectionSource.Override,
                     Error = "The configured JDK path does not exist.",
                     Guidance = "Update the JDK path in Settings > Tools, or clear it to detect Java automatically.",
@@ -324,223 +222,13 @@ public sealed class ToolchainDoctor : IToolchainService, IDisposable
         }
 
         return ProbeExecutableAsync(
-            ToolKind.Java,
-            "Java",
+            ToolchainProbeTable.Get(ToolKind.Java),
             overrideJava,
-            ["java.exe", "java.cmd", "java.bat"],
-            ["-version"],
-            ToolVersionParser.Java,
-            JavaGuidance,
-            extras,
-            DefaultProbeTimeout,
+            context,
             cancellationToken);
     }
 
-    private Task<ToolInfo> ProbeGradleAsync(string? overridePath, CancellationToken cancellationToken) => ProbeExecutableAsync(
-        ToolKind.Gradle,
-        "Gradle",
-        overridePath,
-        ["gradle.bat", "gradle.exe", "gradle"],
-        ["--version"],
-        ToolVersionParser.Gradle,
-        GradleGuidance,
-        [],
-        DefaultProbeTimeout,
-        cancellationToken);
-
-    private Task<ToolInfo> ProbeFlutterAsync(string? overridePath, CancellationToken cancellationToken)
-    {
-        var extras = FlutterBinDirectories()
-            .Select(directory => Path.Combine(directory, "flutter.bat"))
-            .ToList();
-
-        return ProbeExecutableAsync(
-            ToolKind.Flutter,
-            "Flutter",
-            overridePath,
-            ["flutter.bat", "flutter.exe", "flutter"],
-            ["--version"],
-            ToolVersionParser.Flutter,
-            FlutterGuidance,
-            extras,
-            FlutterProbeTimeout,
-            cancellationToken);
-    }
-
-    private Task<ToolInfo> ProbeDartAsync(
-        string? overridePath,
-        string? flutterPath,
-        CancellationToken cancellationToken)
-    {
-        var extras = new List<string>();
-        if (!string.IsNullOrWhiteSpace(flutterPath))
-        {
-            AddDartCandidates(extras, Path.GetDirectoryName(flutterPath));
-        }
-
-        foreach (var directory in FlutterBinDirectories())
-        {
-            AddDartCandidates(extras, directory);
-        }
-
-        return ProbeExecutableAsync(
-            ToolKind.Dart,
-            "Dart",
-            overridePath,
-            DartExecutableNames,
-            ["--version"],
-            ToolVersionParser.Dart,
-            DartGuidance,
-            extras,
-            DefaultProbeTimeout,
-            cancellationToken);
-    }
-
-    private IEnumerable<string> FlutterBinDirectories()
-    {
-        var flutterRoot = _environment.GetVariable("FLUTTER_ROOT");
-        if (!string.IsNullOrWhiteSpace(flutterRoot))
-        {
-            yield return Path.Combine(flutterRoot, "bin");
-        }
-
-        if (!string.IsNullOrWhiteSpace(_environment.LocalApplicationData))
-        {
-            yield return Path.Combine(_environment.LocalApplicationData, "flutter", "bin");
-        }
-
-        if (!string.IsNullOrWhiteSpace(_environment.UserProfile))
-        {
-            yield return Path.Combine(_environment.UserProfile, "flutter", "bin");
-        }
-    }
-
-    private static void AddDartCandidates(List<string> target, string? binDirectory)
-    {
-        if (string.IsNullOrWhiteSpace(binDirectory))
-        {
-            return;
-        }
-
-        foreach (var name in DartExecutableNames)
-        {
-            target.Add(Path.Combine(binDirectory, name));
-        }
-
-        target.Add(Path.Combine(binDirectory, "cache", "dart-sdk", "bin", "dart.exe"));
-    }
-
-    private Task<ToolInfo> ProbeNodeAsync(string? overridePath, CancellationToken cancellationToken) => ProbeExecutableAsync(
-        ToolKind.Node,
-        "Node.js",
-        overridePath,
-        ["node.exe", "node.cmd", "node.bat"],
-        ["--version"],
-        ToolVersionParser.Numeric,
-        NodeGuidance,
-        [],
-        DefaultProbeTimeout,
-        cancellationToken);
-
-    private Task<ToolInfo> ProbeNpmAsync(string? nodePath, CancellationToken cancellationToken)
-    {
-        var extras = new List<string>();
-        AddIfPresent(extras, ResolveNodeSibling(nodePath, "npm.cmd"));
-        return ProbeExecutableAsync(
-            ToolKind.Npm,
-            "npm",
-            null,
-            ["npm.cmd", "npm.exe"],
-            ["--version"],
-            ToolVersionParser.Numeric,
-            NodeGuidance,
-            extras,
-            DefaultProbeTimeout,
-            cancellationToken);
-    }
-
-    private Task<ToolInfo> ProbeNpxAsync(string? nodePath, CancellationToken cancellationToken)
-    {
-        var extras = new List<string>();
-        AddIfPresent(extras, ResolveNodeSibling(nodePath, "npx.cmd"));
-        return ProbeExecutableAsync(
-            ToolKind.Npx,
-            "npx",
-            null,
-            ["npx.cmd", "npx.exe"],
-            ["--version"],
-            ToolVersionParser.Numeric,
-            NodeGuidance,
-            extras,
-            DefaultProbeTimeout,
-            cancellationToken);
-    }
-
-    /// <inheritdoc />
-    public async Task<ToolInfo> ProbeScrcpyAsync(CancellationToken cancellationToken = default)
-    {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            return await ProbeScrcpyToolAsync(
-                _configuration.Current.Settings.Tools.ScrcpyPath,
-                cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
-
-    private Task<ToolInfo> ProbeScrcpyToolAsync(string? overridePath, CancellationToken cancellationToken)
-    {
-        var extras = new List<string>();
-        if (!string.IsNullOrWhiteSpace(_environment.LocalApplicationData))
-        {
-            extras.Add(Path.Combine(_environment.LocalApplicationData, "Microsoft", "WinGet", "Links", "scrcpy.exe"));
-        }
-
-        return ProbeExecutableAsync(
-            ToolKind.Scrcpy,
-            "scrcpy",
-            overridePath,
-            ["scrcpy.exe", "scrcpy.cmd", "scrcpy.bat"],
-            ["--version"],
-            ToolVersionParser.Scrcpy,
-            ScrcpyGuidance,
-            extras,
-            DefaultProbeTimeout,
-            cancellationToken);
-    }
-
-    private Task<ToolInfo> ProbeDotNetAsync(string? overridePath, CancellationToken cancellationToken)
-    {
-        var extras = new List<string>();
-        var dotnetRoot = _environment.GetVariable("DOTNET_ROOT");
-        if (!string.IsNullOrWhiteSpace(dotnetRoot))
-        {
-            extras.Add(Path.Combine(dotnetRoot, "dotnet.exe"));
-        }
-
-        if (!string.IsNullOrWhiteSpace(_environment.ProgramFiles))
-        {
-            extras.Add(Path.Combine(_environment.ProgramFiles, "dotnet", "dotnet.exe"));
-        }
-
-        return ProbeExecutableAsync(
-            ToolKind.DotNet,
-            ".NET SDK",
-            overridePath,
-            ["dotnet.exe", "dotnet.cmd", "dotnet.bat"],
-            ["--version"],
-            ToolVersionParser.Numeric,
-            DotNetGuidance,
-            extras,
-            DefaultProbeTimeout,
-            cancellationToken);
-    }
-
-    private async Task<ToolInfo> ProbeMauiAndroidWorkloadAsync(
+    internal async Task<ToolInfo> ProbeMauiAndroidWorkloadAsync(
         Task<ToolInfo> dotnetTask,
         CancellationToken cancellationToken)
     {
@@ -560,7 +248,7 @@ public sealed class ToolchainDoctor : IToolchainService, IDisposable
 
         var probe = await _runner
             .RunAsync(
-                CreateProbeRequest(dotnet.Path, ["workload", "list"], DefaultProbeTimeout),
+                CreateProbeRequest(dotnet.Path, ["workload", "list"], ToolchainProbeTable.DefaultProbeTimeout),
                 output: null,
                 cancellationToken)
             .ConfigureAwait(false);
@@ -578,7 +266,7 @@ public sealed class ToolchainDoctor : IToolchainService, IDisposable
                 Path = dotnet.Path,
                 Source = dotnet.Source,
                 Error = error,
-                Guidance = MauiWorkloadGuidance,
+                Guidance = ToolchainProbeTable.MauiWorkloadGuidance,
             };
         }
 
@@ -591,7 +279,7 @@ public sealed class ToolchainDoctor : IToolchainService, IDisposable
                 IsAvailable = false,
                 Path = dotnet.Path,
                 Source = dotnet.Source,
-                Guidance = MauiWorkloadGuidance,
+                Guidance = ToolchainProbeTable.MauiWorkloadGuidance,
             };
         }
 
@@ -624,7 +312,7 @@ public sealed class ToolchainDoctor : IToolchainService, IDisposable
         return false;
     }
 
-    private ToolInfo ProbeUnity(string? overridePath)
+    internal ToolInfo ProbeUnity(string? overridePath)
     {
         if (!string.IsNullOrWhiteSpace(overridePath))
         {
@@ -684,7 +372,7 @@ public sealed class ToolchainDoctor : IToolchainService, IDisposable
                 DisplayName = "Unity",
                 IsAvailable = false,
                 Source = ToolDetectionSource.Missing,
-                Guidance = UnityGuidance,
+                Guidance = ToolchainProbeTable.UnityGuidance,
             };
         }
 
@@ -710,16 +398,18 @@ public sealed class ToolchainDoctor : IToolchainService, IDisposable
         Source = source,
     };
 
+    private Task<ToolInfo> ProbeAsync(ToolKind kind, ToolProbeContext context, CancellationToken cancellationToken)
+    {
+        var spec = ToolchainProbeTable.Get(kind);
+        return spec.CustomProbe is { } customProbe
+            ? customProbe(this, context, cancellationToken)
+            : ProbeExecutableAsync(spec, spec.OverridePath(context.Tools), context, cancellationToken);
+    }
+
     private async Task<ToolInfo> ProbeExecutableAsync(
-        ToolKind kind,
-        string displayName,
+        ToolProbeSpec spec,
         string? overridePath,
-        string[] pathNames,
-        string[] versionArguments,
-        Func<string, string?> versionParser,
-        string guidance,
-        IReadOnlyList<string> extraCandidates,
-        TimeSpan timeout,
+        ToolProbeContext context,
         CancellationToken cancellationToken)
     {
         string? candidate;
@@ -731,13 +421,13 @@ public sealed class ToolchainDoctor : IToolchainService, IDisposable
             {
                 return new ToolInfo
                 {
-                    Kind = kind,
-                    DisplayName = displayName,
+                    Kind = spec.Kind,
+                    DisplayName = spec.DisplayName,
                     IsAvailable = false,
                     Path = expanded ?? overridePath,
                     Source = ToolDetectionSource.Override,
                     Error = "The configured path does not exist.",
-                    Guidance = $"Update the {displayName} path in Settings > Tools, or clear it to detect the tool automatically.",
+                    Guidance = $"Update the {spec.DisplayName} path in Settings > Tools, or clear it to detect the tool automatically.",
                 };
             }
 
@@ -746,51 +436,51 @@ public sealed class ToolchainDoctor : IToolchainService, IDisposable
         }
         else
         {
-            candidate = FindExecutable(pathNames, extraCandidates);
+            candidate = FindExecutable(spec.PathNames, spec.ExtraCandidates?.Invoke(context) ?? []);
         }
 
         if (candidate is null)
         {
             return new ToolInfo
             {
-                Kind = kind,
-                DisplayName = displayName,
+                Kind = spec.Kind,
+                DisplayName = spec.DisplayName,
                 IsAvailable = false,
                 Source = ToolDetectionSource.Missing,
-                Guidance = guidance,
+                Guidance = spec.Guidance,
             };
         }
 
         var probe = await _runner.RunAsync(
-                CreateProbeRequest(candidate, versionArguments, timeout),
+                CreateProbeRequest(candidate, spec.VersionArguments, spec.Timeout),
                 output: null,
                 cancellationToken)
             .ConfigureAwait(false);
 
-        var version = probe.StartError is null ? versionParser(probe.CombinedOutput) : null;
+        var version = probe.StartError is null ? spec.VersionParser(probe.CombinedOutput) : null;
         if (probe.StartError is not null || (!probe.Succeeded && version is null))
         {
             var error = probe.StartError
                 ?? FirstLine(probe.StandardError)
                 ?? FirstLine(probe.StandardOutput)
                 ?? $"The tool exited with code {probe.ExitCode}.";
-            _logger.LogWarning("{Tool} could not be queried: {Error}", displayName, error);
+            _logger.LogWarning("{Tool} could not be queried: {Error}", spec.DisplayName, error);
             return new ToolInfo
             {
-                Kind = kind,
-                DisplayName = displayName,
+                Kind = spec.Kind,
+                DisplayName = spec.DisplayName,
                 IsAvailable = false,
                 Path = candidate,
                 Source = source,
                 Error = error,
-                Guidance = $"The {displayName} executable was found but could not be queried. Verify the installation. {guidance}",
+                Guidance = $"The {spec.DisplayName} executable was found but could not be queried. Verify the installation. {spec.Guidance}",
             };
         }
 
         return new ToolInfo
         {
-            Kind = kind,
-            DisplayName = displayName,
+            Kind = spec.Kind,
+            DisplayName = spec.DisplayName,
             IsAvailable = true,
             Path = candidate,
             Version = version,
@@ -815,7 +505,7 @@ public sealed class ToolchainDoctor : IToolchainService, IDisposable
         }
     }
 
-    private string? FindExecutable(string[] pathNames, IReadOnlyList<string> extraCandidates)
+    private string? FindExecutable(IReadOnlyList<string> pathNames, IReadOnlyList<string> extraCandidates)
     {
         foreach (var extra in extraCandidates)
         {
@@ -850,106 +540,16 @@ public sealed class ToolchainDoctor : IToolchainService, IDisposable
         return null;
     }
 
-    private static void AddUnderSdk(List<string> target, string? sdkPath, string folder, string fileBase)
-    {
-        if (sdkPath is null)
-        {
-            return;
-        }
-
-        var directory = Path.Combine(sdkPath, folder);
-        foreach (var extension in new[] { "exe", "cmd", "bat" })
-        {
-            target.Add(Path.Combine(directory, fileBase + "." + extension));
-        }
-    }
-
-    private static void AddJavaHome(List<string> target, string? javaHome)
-    {
-        if (string.IsNullOrWhiteSpace(javaHome))
-        {
-            return;
-        }
-
-        target.Add(Path.Combine(javaHome, "bin", "java.exe"));
-    }
-
-    private static void AddIfPresent(List<string> target, string? path)
-    {
-        if (!string.IsNullOrEmpty(path))
-        {
-            target.Add(path);
-        }
-    }
-
-    private static string? ResolveNodeSibling(string? nodePath, string fileName)
-    {
-        if (string.IsNullOrWhiteSpace(nodePath))
-        {
-            return null;
-        }
-
-        var directory = Path.GetDirectoryName(nodePath);
-        return string.IsNullOrEmpty(directory) ? null : Path.Combine(directory, fileName);
-    }
-
-    private static string? FindLatestBuildTool(string sdkPath, string fileBase)
-    {
-        var buildTools = Path.Combine(sdkPath, "build-tools");
-        if (!Directory.Exists(buildTools))
-        {
-            return null;
-        }
-
-        try
-        {
-            var candidates = new List<(string File, SemanticVersion? Version)>();
-            foreach (var directory in Directory.EnumerateDirectories(buildTools))
-            {
-                var file = FindInDirectory(directory, fileBase);
-                if (file is not null)
-                {
-                    var name = Path.GetFileName(directory);
-                    candidates.Add((file, SemanticVersion.TryParse(name, out var version) ? version : null));
-                }
-            }
-
-            return candidates
-                .OrderByDescending(candidate => candidate.Version, NullSafeVersionComparer.Instance)
-                .ThenByDescending(candidate => candidate.File, StringComparer.OrdinalIgnoreCase)
-                .Select(candidate => candidate.File)
-                .FirstOrDefault();
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            return null;
-        }
-    }
-
-    private static string? FindInDirectory(string directory, string fileBase)
-    {
-        foreach (var extension in new[] { "exe", "cmd", "bat" })
-        {
-            var candidate = Path.Combine(directory, fileBase + "." + extension);
-            if (File.Exists(candidate))
-            {
-                return candidate;
-            }
-        }
-
-        return null;
-    }
-
     private static ProcessRequest CreateProbeRequest(
         string executable,
-        string[] arguments,
+        IReadOnlyList<string> arguments,
         TimeSpan timeout)
     {
         var extension = Path.GetExtension(executable);
         if (extension.Equals(".bat", StringComparison.OrdinalIgnoreCase) ||
             extension.Equals(".cmd", StringComparison.OrdinalIgnoreCase))
         {
-            var command = new List<string>(arguments.Length + 3) { "/d", "/c", executable };
+            var command = new List<string>(arguments.Count + 3) { "/d", "/c", executable };
             command.AddRange(arguments);
             return new ProcessRequest
             {
@@ -1003,14 +603,5 @@ public sealed class ToolchainDoctor : IToolchainService, IDisposable
 
         var line = text.Split('\n', 2)[0].Trim();
         return line.Length == 0 ? null : line.Length > 300 ? line[..300] : line;
-    }
-
-    private sealed class NullSafeVersionComparer : IComparer<SemanticVersion?>
-    {
-        public static readonly NullSafeVersionComparer Instance = new();
-
-        public int Compare(SemanticVersion? x, SemanticVersion? y) => x is null
-            ? y is null ? 0 : -1
-            : y is null ? 1 : x.CompareTo(y);
     }
 }
