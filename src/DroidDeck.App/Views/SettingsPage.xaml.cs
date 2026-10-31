@@ -179,6 +179,28 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         _ = RefreshProfilesAsync();
     }
 
+    private FrameworkElement[] SettingsTabPanels => new FrameworkElement[]
+    {
+        GeneralTabPanel,
+        ProfilesTabPanel,
+        ToolsTabPanel,
+        RunsTabPanel,
+        ShortcutsTabPanel,
+        DataTabPanel,
+        AdvancedTabPanel,
+        ExtensionsTabPanel,
+    };
+
+    private void OnSettingsTabChanged(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
+    {
+        var index = sender.Items.IndexOf(sender.SelectedItem);
+        var panels = SettingsTabPanels;
+        for (var i = 0; i < panels.Length; i++)
+        {
+            panels[i].Visibility = i == index ? Visibility.Visible : Visibility.Collapsed;
+        }
+    }
+
     private void OnCommandsChanged(object? sender, EventArgs e) =>
         _dispatcher.TryEnqueue(RefreshShortcutList);
 
@@ -271,6 +293,7 @@ public sealed partial class SettingsPage : Page, IRefreshablePage, IDisposable
         SearchResultsList.ItemsSource = matches.Take(50).Select(entry => CreateSearchRow(entry, snapshot)).ToArray();
 
         var searching = !string.IsNullOrWhiteSpace(text);
+        SearchResultsList.Visibility = searching ? Visibility.Visible : Visibility.Collapsed;
         SearchStatusText.Text = searching
             ? $"{matches.Count} setting(s) match \"{text.Trim()}\" at {level} level. Searches include names, descriptions, paths, and current values."
             : $"{matches.Count} setting(s) available at {level} level. Type to search by name, description, path, or current value.";
