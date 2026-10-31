@@ -109,7 +109,7 @@ public sealed class ConfigSnapshot
         foreach (var segment in path.Split('.'))
         {
             if (current is not JsonObject obj ||
-                !TryGetProperty(obj, segment, out var value))
+                !SettingsDocument.TryGetProperty(obj, segment, out var value))
             {
                 return null;
             }
@@ -155,20 +155,5 @@ public sealed class ConfigSnapshot
         {
             _valueCache[(path, typeof(T))] = value;
         }
-    }
-
-    internal static bool TryGetProperty(JsonObject obj, string name, out JsonNode? value)
-    {
-        foreach (var property in obj)
-        {
-            if (string.Equals(property.Key, name, StringComparison.OrdinalIgnoreCase))
-            {
-                value = property.Value;
-                return true;
-            }
-        }
-
-        value = null;
-        return false;
     }
 }

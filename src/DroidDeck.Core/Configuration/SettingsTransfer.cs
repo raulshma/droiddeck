@@ -223,36 +223,20 @@ internal static class SettingsTransfer
     /// </summary>
     public static void PreserveSensitive(JsonObject source, JsonObject target)
     {
-        foreach (var pair in Flatten(source))
+        foreach (var pair in SettingsDocument.Flatten(source))
         {
             if (IsSensitive(pair.Key))
             {
-                SetNode(target, pair.Key, pair.Value?.DeepClone());
+                SettingsDocument.Set(target, pair.Key, pair.Value);
             }
         }
     }
 
-    public static Dictionary<string, JsonNode?> Flatten(JsonObject document)
-    {
-        var leaves = new Dictionary<string, JsonNode?>(StringComparer.OrdinalIgnoreCase);
-        Flatten(document, string.Empty, leaves);
-        return leaves;
-    }
+    public static Dictionary<string, JsonNode?> Flatten(JsonObject document) =>
+        SettingsDocument.Flatten(document);
 
-    public static void Merge(JsonObject target, JsonObject overlay)
-    {
-        foreach (var property in overlay)
-        {
-            var key = FindKey(target, property.Key) ?? property.Key;
-            if (target[key] is JsonObject targetChild && property.Value is JsonObject overlayChild)
-            {
-                Merge(targetChild, overlayChild);
-                continue;
-            }
-
-            target[key] = property.Value?.DeepClone();
-        }
-    }
+    public static void Merge(JsonObject target, JsonObject overlay) =>
+        SettingsDocument.Merge(target, overlay);
 
     public static IReadOnlyList<SettingsChange> Diff(
         Dictionary<string, JsonNode?> current,
@@ -309,7 +293,7 @@ internal static class SettingsTransfer
                 !string.Equals(existing, property.Key, StringComparison.Ordinal))
             {
                 issues.Add(new SettingsValidationIssue(
-                    Combine(prefix, existing),
+                    SettingsDocument.Combine(prefix, existing),
                     $"Duplicate key \"{property.Key}\" differs only by case from \"{existing}\". Settings keys must be unique ignoring case.",
                     SettingsIssueSeverity.Error));
             }
@@ -318,13 +302,13 @@ internal static class SettingsTransfer
                 seen[property.Key] = property.Key;
             }
 
-            CollectCaseConflicts(property.Value, Combine(prefix, property.Key), issues);
+            CollectCaseConflicts(property.Value, SettingsDocument.Combine(prefix, property.Key), issues);
         }
     }
 
     public static void CollectUnknownKeys(JsonObject document, List<SettingsValidationIssue> issues)
     {
-        foreach (var path in Flatten(document).Keys)
+        foreach (var path in SettingsDocument.Flatten(document).Keys)
         {
             if (IsSchemaVersion(path) || SettingsCatalog.Default.Find(path) is not null)
             {
@@ -340,14 +324,14 @@ internal static class SettingsTransfer
 
     public static JsonObject? UnwrapBundle(JsonObject document, ConfigScope scope, out string? error)
     {
-        if (FindKey(document, "scopes") is not { } scopesKey || document[scopesKey] is not JsonObject scopes)
+        if (SettingsDocument.FindKey(document, "scopes") is not { } scopesKey || document[scopesKey] is not JsonObject scopes)
         {
             error = null;
             return document;
         }
 
         var scopeName = SettingsExport.ScopeName(scope);
-        var scopeKey = FindKey(scopes, scopeName);
+        var scopeKey = SettingsDocument.FindKey(scopes, scopeName);
         if (scopeKey is null)
         {
             error = $"The export does not contain the {scopeName} scope.";
@@ -396,22 +380,6 @@ internal static class SettingsTransfer
         return builder.ToString();
     }
 
-    public static string Combine(string prefix, string name) =>
-        prefix.Length == 0 ? name : prefix + "." + name;
-
-    public static string? FindKey(JsonObject obj, string name)
-    {
-        foreach (var property in obj)
-        {
-            if (string.Equals(property.Key, name, StringComparison.OrdinalIgnoreCase))
-            {
-                return property.Key;
-            }
-        }
-
-        return null;
-    }
-
     private static bool IsSchemaVersion(string path) =>
         string.Equals(path, "schemaVersion", StringComparison.OrdinalIgnoreCase);
 
@@ -419,7 +387,7 @@ internal static class SettingsTransfer
     {
         foreach (var key in obj.Select(static property => property.Key).ToArray())
         {
-            var path = Combine(prefix, key);
+            var path = SettingsDocument.Combine(prefix, key);
             if (IsSensitive(path))
             {
                 obj.Remove(key);
@@ -431,43 +399,6 @@ internal static class SettingsTransfer
             {
                 RemoveSensitive(child, path, excluded);
             }
-        }
-    }
-
-    private static void SetNode(JsonObject root, string path, JsonNode? value)
-    {
-        var segments = path.Split('.');
-        var current = root;
-        for (var index = 0; index < segments.Length - 1; index++)
-        {
-            var key = FindKey(current, segments[index]) ?? segments[index];
-            if (current[key] is not JsonObject child)
-            {
-                child = new JsonObject();
-                current[key] = child;
-            }
-
-            current = child;
-        }
-
-        current[segments[^1]] = value;
-    }
-
-    private static void Flatten(JsonNode? node, string prefix, Dictionary<string, JsonNode?> leaves)
-    {
-        if (node is JsonObject obj && obj.Count > 0)
-        {
-            foreach (var property in obj)
-            {
-                Flatten(property.Value, Combine(prefix, property.Key), leaves);
-            }
-
-            return;
-        }
-
-        if (prefix.Length > 0)
-        {
-            leaves[prefix] = node?.DeepClone();
         }
     }
 

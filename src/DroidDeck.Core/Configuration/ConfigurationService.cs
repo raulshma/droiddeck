@@ -100,32 +100,32 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
             {
                 case ConfigScope.Global:
                     var globalCandidate = (JsonObject)_global.DeepClone();
-                    SetNode(globalCandidate, path, node);
+                    SettingsDocument.Set(globalCandidate, path, node);
                     AddSchemaVersion(globalCandidate);
                     await SaveGlobalLockedAsync(globalCandidate, cancellationToken).ConfigureAwait(false);
                     break;
                 case ConfigScope.TeamProject:
                     RequireTeamProjectLocked();
                     var teamCandidate = (JsonObject)_teamProject.DeepClone();
-                    SetNode(teamCandidate, path, node);
+                    SettingsDocument.Set(teamCandidate, path, node);
                     AddSchemaVersion(teamCandidate);
                     await SaveTeamProjectLockedAsync(teamCandidate, cancellationToken).ConfigureAwait(false);
                     break;
                 case ConfigScope.LocalProject:
                     RequireLocalProjectLocked();
                     var localCandidate = (JsonObject)_localProject.DeepClone();
-                    SetNode(localCandidate, path, node);
+                    SettingsDocument.Set(localCandidate, path, node);
                     AddSchemaVersion(localCandidate);
                     await SaveLocalProjectLockedAsync(localCandidate, cancellationToken).ConfigureAwait(false);
                     break;
                 case ConfigScope.RunConfiguration:
                     var runCandidate = (JsonObject)_runConfiguration.DeepClone();
-                    SetNode(runCandidate, path, node);
+                    SettingsDocument.Set(runCandidate, path, node);
                     _runConfiguration = runCandidate;
                     break;
                 case ConfigScope.Session:
                     var sessionCandidate = (JsonObject)_session.DeepClone();
-                    SetNode(sessionCandidate, path, node);
+                    SettingsDocument.Set(sessionCandidate, path, node);
                     _session = sessionCandidate;
                     break;
             }
@@ -169,7 +169,7 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
             {
                 case ConfigScope.Global:
                     var globalCandidate = (JsonObject)_global.DeepClone();
-                    if (RemoveNode(globalCandidate, path))
+                    if (SettingsDocument.Remove(globalCandidate, path))
                     {
                         AddSchemaVersion(globalCandidate);
                         await SaveGlobalLockedAsync(globalCandidate, cancellationToken).ConfigureAwait(false);
@@ -179,7 +179,7 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
                 case ConfigScope.TeamProject:
                     RequireTeamProjectLocked();
                     var teamCandidate = (JsonObject)_teamProject.DeepClone();
-                    if (RemoveNode(teamCandidate, path))
+                    if (SettingsDocument.Remove(teamCandidate, path))
                     {
                         AddSchemaVersion(teamCandidate);
                         await SaveTeamProjectLockedAsync(teamCandidate, cancellationToken).ConfigureAwait(false);
@@ -189,7 +189,7 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
                 case ConfigScope.LocalProject:
                     RequireLocalProjectLocked();
                     var localCandidate = (JsonObject)_localProject.DeepClone();
-                    if (RemoveNode(localCandidate, path))
+                    if (SettingsDocument.Remove(localCandidate, path))
                     {
                         AddSchemaVersion(localCandidate);
                         await SaveLocalProjectLockedAsync(localCandidate, cancellationToken).ConfigureAwait(false);
@@ -198,17 +198,17 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
                     break;
                 case ConfigScope.RunConfiguration:
                     var runCandidate = (JsonObject)_runConfiguration.DeepClone();
-                    RemoveNode(runCandidate, path);
+                    SettingsDocument.Remove(runCandidate, path);
                     _runConfiguration = runCandidate;
                     break;
                 case ConfigScope.Profile:
                     var profileCandidate = (JsonObject)_profile.DeepClone();
-                    RemoveNode(profileCandidate, path);
+                    SettingsDocument.Remove(profileCandidate, path);
                     _profile = profileCandidate;
                     break;
                 case ConfigScope.Session:
                     var sessionCandidate = (JsonObject)_session.DeepClone();
-                    RemoveNode(sessionCandidate, path);
+                    SettingsDocument.Remove(sessionCandidate, path);
                     _session = sessionCandidate;
                     break;
             }
@@ -291,11 +291,11 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
             var candidate = (JsonObject)_global.DeepClone();
             if (profileId is null)
             {
-                RemoveNode(candidate, SettingsPaths.ActiveProfileId);
+                SettingsDocument.Remove(candidate, SettingsPaths.ActiveProfileId);
             }
             else
             {
-                SetNode(candidate, SettingsPaths.ActiveProfileId, JsonValue.Create(profileId));
+                SettingsDocument.Set(candidate, SettingsPaths.ActiveProfileId, JsonValue.Create(profileId));
             }
 
             if (!JsonNode.DeepEquals(candidate, _global))
@@ -380,7 +380,7 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
             foreach (var pair in pairs)
             {
                 ValidatePath(pair.Key);
-                SetNode(candidate, pair.Key, CliOverrides.ParseValue(pair.Value));
+                SettingsDocument.Set(candidate, pair.Key, CliOverrides.ParseValue(pair.Value));
             }
 
             _session = candidate;
@@ -445,7 +445,7 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
             ThrowIfDisposed();
             await EnsureLoadedLockedAsync(cancellationToken).ConfigureAwait(false);
             var candidate = (JsonObject)DeviceDocumentLocked(target).DeepClone();
-            SetNode(candidate, path, node);
+            SettingsDocument.Set(candidate, path, node);
             StoreDeviceDocumentLocked(target, candidate);
             _current = BuildSnapshot();
             NotifyTokensLocked();
@@ -479,7 +479,7 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
             ThrowIfDisposed();
             await EnsureLoadedLockedAsync(cancellationToken).ConfigureAwait(false);
             var candidate = (JsonObject)DeviceDocumentLocked(target).DeepClone();
-            RemoveNode(candidate, path);
+            SettingsDocument.Remove(candidate, path);
             StoreDeviceDocumentLocked(target, candidate);
             _current = BuildSnapshot();
             NotifyTokensLocked();
@@ -556,7 +556,12 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
             _ => null,
         };
 
-        return document is null ? null : GetNode(document, path);
+        if (document is null)
+        {
+            return null;
+        }
+
+        return SettingsDocument.TryGet(document, path, out var value) ? value : null;
     }
 
     /// <inheritdoc />
@@ -751,7 +756,7 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
             await EnsureLoadedLockedAsync(cancellationToken).ConfigureAwait(false);
             RequireWritableLayerLocked(scope);
             var current = ScopeDocumentLocked(scope) ?? new JsonObject();
-            var key = SettingsTransfer.FindKey(current, section);
+            var key = SettingsDocument.FindKey(current, section);
             var removed = SettingsTransfer.Flatten(current)
                 .Where(pair =>
                     pair.Key.Equals(section, StringComparison.OrdinalIgnoreCase) ||
@@ -1202,7 +1207,7 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
 
     private static int ReadSchemaVersion(JsonObject document)
     {
-        if (!ConfigSnapshot.TryGetProperty(document, "schemaVersion", out var versionNode) || versionNode is null)
+        if (!SettingsDocument.TryGetProperty(document, "schemaVersion", out var versionNode) || versionNode is null)
         {
             return 0;
         }
@@ -1223,7 +1228,10 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
         effective["schemaVersion"] = AppSettings.CurrentSchemaVersion;
         var sources = new Dictionary<string, ConfigSource>(StringComparer.OrdinalIgnoreCase);
         var contributions = new Dictionary<string, List<ConfigSource>>(StringComparer.OrdinalIgnoreCase);
-        RecordLeaves(effective, string.Empty, ConfigSource.Defaults, sources);
+        foreach (var path in SettingsDocument.Flatten(effective).Keys)
+        {
+            sources[path] = ConfigSource.Defaults;
+        }
 
         foreach (var (document, source) in Layers())
         {
@@ -1286,41 +1294,23 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
     /// </summary>
     private string? ResolveActiveProfileId()
     {
-        if (TryGetDocumentString(_session, SettingsPaths.ActiveProfileId, out var sessionProfile) &&
+        if (SettingsDocument.TryGetString(_session, SettingsPaths.ActiveProfileId, out var sessionProfile) &&
             !string.IsNullOrWhiteSpace(sessionProfile))
         {
             return sessionProfile;
         }
 
-        return TryGetDocumentString(_global, SettingsPaths.ActiveProfileId, out var globalProfile) &&
+        return SettingsDocument.TryGetString(_global, SettingsPaths.ActiveProfileId, out var globalProfile) &&
                !string.IsNullOrWhiteSpace(globalProfile)
             ? globalProfile
             : null;
     }
 
-    private static bool TryGetDocumentString(JsonObject document, string path, out string? value)
-    {
-        value = null;
-        JsonNode? current = document;
-        foreach (var segment in path.Split('.'))
-        {
-            if (current is not JsonObject obj || !ConfigSnapshot.TryGetProperty(obj, segment, out var next))
-            {
-                return false;
-            }
-
-            current = next;
-        }
-
-        if (current is not JsonValue jsonValue || !jsonValue.TryGetValue<string>(out var text))
-        {
-            return false;
-        }
-
-        value = text;
-        return true;
-    }
-
+    /// <summary>
+    /// Applies one layer's overrides and records the source and contribution of every
+    /// resulting leaf. A replaced node drops the sources at and below it and the
+    /// contribution history below it; an empty object counts as one leaf.
+    /// </summary>
     private static void MergeInto(
         JsonObject target,
         JsonObject overrides,
@@ -1329,53 +1319,30 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
         Dictionary<string, ConfigSource> sources,
         Dictionary<string, List<ConfigSource>> contributions)
     {
-        foreach (var property in overrides)
-        {
-            var path = Combine(prefix, property.Key);
-            var actualKey = FindKey(target, property.Key) ?? property.Key;
-            var existing = ConfigSnapshot.TryGetProperty(target, property.Key, out var existingValue) ? existingValue : null;
-
-            if (existing is JsonObject existingObject && property.Value is JsonObject overrideObject)
+        SettingsDocument.Merge(
+            target,
+            overrides,
+            prefix,
+            onReplaced: path =>
             {
-                MergeInto(existingObject, overrideObject, path, source, sources, contributions);
-                continue;
-            }
-
-            target[actualKey] = property.Value?.DeepClone();
-            RemoveSourcesUnder(path, sources);
-            RemoveContributionsBelow(path, contributions);
-            RecordLeaves(property.Value, path, source, sources, contributions);
-        }
+                RemoveSourcesUnder(path, sources);
+                RemoveContributionsBelow(path, contributions);
+            },
+            onLeaf: (path, _) => RecordLeaf(path, source, sources, contributions));
     }
 
-    private static void RecordLeaves(
-        JsonNode? node,
+    private static void RecordLeaf(
         string path,
         ConfigSource source,
         Dictionary<string, ConfigSource> sources,
-        Dictionary<string, List<ConfigSource>>? contributions = null)
+        Dictionary<string, List<ConfigSource>> contributions)
     {
-        if (node is JsonObject obj && obj.Count > 0)
-        {
-            foreach (var property in obj)
-            {
-                RecordLeaves(property.Value, Combine(path, property.Key), source, sources, contributions);
-            }
-
-            return;
-        }
-
-        if (string.IsNullOrEmpty(path))
+        if (path.Length == 0)
         {
             return;
         }
 
         sources[path] = source;
-        if (contributions is null)
-        {
-            return;
-        }
-
         if (!contributions.TryGetValue(path, out var list))
         {
             contributions[path] = list = [];
@@ -1411,64 +1378,6 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
         {
             contributions.Remove(key);
         }
-    }
-
-    private static string Combine(string prefix, string name) => prefix.Length == 0 ? name : prefix + "." + name;
-
-    private static string? FindKey(JsonObject obj, string name)
-    {
-        foreach (var property in obj)
-        {
-            if (string.Equals(property.Key, name, StringComparison.OrdinalIgnoreCase))
-            {
-                return property.Key;
-            }
-        }
-
-        return null;
-    }
-
-    private static void SetNode(JsonObject root, string path, JsonNode? value)
-    {
-        var segments = path.Split('.');
-        var current = root;
-        for (var index = 0; index < segments.Length - 1; index++)
-        {
-            var key = FindKey(current, segments[index]) ?? segments[index];
-            if (current[key] is not JsonObject child)
-            {
-                child = new JsonObject();
-                current[key] = child;
-            }
-
-            current = child;
-        }
-
-        current[segments[^1]] = value;
-    }
-
-    private static bool RemoveNode(JsonObject root, string path)
-    {
-        var segments = path.Split('.');
-        var current = root;
-        for (var index = 0; index < segments.Length - 1; index++)
-        {
-            var key = FindKey(current, segments[index]);
-            if (key is null || current[key] is not JsonObject child)
-            {
-                return false;
-            }
-
-            current = child;
-        }
-
-        var leaf = FindKey(current, segments[^1]);
-        if (leaf is null)
-        {
-            return false;
-        }
-
-        return current.Remove(leaf);
     }
 
     private static void AddSchemaVersion(JsonObject document)
@@ -1537,7 +1446,7 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
     private static void ValidateDocument(JsonObject document, List<SettingsValidationIssue> issues)
     {
         SettingsTransfer.CollectCaseConflicts(document, string.Empty, issues);
-        if (ConfigSnapshot.TryGetProperty(document, "schemaVersion", out var versionNode) && versionNode is not null)
+        if (SettingsDocument.TryGetProperty(document, "schemaVersion", out var versionNode) && versionNode is not null)
         {
             if (versionNode is not JsonValue versionValue ||
                 !versionValue.TryGetValue<int>(out var version) ||
@@ -1656,22 +1565,6 @@ public sealed class ConfigurationService : IConfigurationService, IDisposable
                     ? "Built-in defaults cannot be imported."
                     : "Use SetDeviceOverrideAsync for device and device group overrides.");
         }
-    }
-
-    private static JsonNode? GetNode(JsonObject document, string path)
-    {
-        JsonNode? current = document;
-        foreach (var segment in path.Split('.'))
-        {
-            if (current is not JsonObject obj || !ConfigSnapshot.TryGetProperty(obj, segment, out var next))
-            {
-                return null;
-            }
-
-            current = next;
-        }
-
-        return current;
     }
 
     private async Task SaveGlobalLockedAsync(JsonObject document, CancellationToken cancellationToken)
